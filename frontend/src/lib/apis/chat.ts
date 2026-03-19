@@ -120,7 +120,7 @@ export async function streamChat({
   temperatureOverride,
 }: StreamChatOptions): Promise<void> {
   const settings = loadSettings();
-  const { apiKeys, systemPrompt, temperature, maxTokens, inputLang, outputLang } = settings;
+  const { systemPrompt, temperature, maxTokens, inputLang, outputLang } = settings;
 
   const model = modelOverride ?? settings.selectedModel;
   const temp  = temperatureOverride !== undefined ? temperatureOverride : temperature;
@@ -152,11 +152,10 @@ export async function streamChat({
       body: JSON.stringify({
         provider,
         model,
-        messages:     processedMessages,
-        sysPrompt:    sysPrompt || undefined,
-        temperature:  temp,
+        messages:    processedMessages,
+        sysPrompt:   sysPrompt || undefined,
+        temperature: temp,
         maxTokens,
-        clientApiKey: apiKeys[provider as keyof typeof apiKeys] ?? "",
       }),
       signal,
     });

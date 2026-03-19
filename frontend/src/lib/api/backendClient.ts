@@ -71,6 +71,9 @@ function clearTokens() {
   window.dispatchEvent(new Event("umai:auth-change"));
 }
 
+// Shared promise so concurrent 401 responses share one refresh call.
+let refreshPromise: Promise<boolean> | null = null;
+
 async function apiFetch<T>(
   path: string,
   init: RequestInit = {},
@@ -86,9 +89,12 @@ async function apiFetch<T>(
     },
   });
 
-  // Token expired → try to refresh once
+  // Token expired → deduplicate concurrent refresh calls
   if (res.status === 401 && retry) {
-    const refreshed = await tryRefresh();
+    if (!refreshPromise) {
+      refreshPromise = tryRefresh().finally(() => { refreshPromise = null; });
+    }
+    const refreshed = await refreshPromise;
     if (refreshed) return apiFetch<T>(path, init, false);
     clearTokens();
     window.dispatchEvent(new Event("umai:logout"));
@@ -127,6 +133,25 @@ async function tryRefresh(): Promise<boolean> {
 
 export async function fetchMe(): Promise<UserOut> {
   return apiFetch<UserOut>("/api/v1/auth/me");
+}
+
+/** Exchange a one-time OAuth code for access + refresh tokens. */
+export async function apiTokenExchange(code: string): Promise<TokenResponse> {
+  const tokens = await apiFetch<TokenResponse>(
+    `/api/v1/auth/token/exchange?code=${encodeURIComponent(code)}`,
+    { method: "GET" },
+    false, // no retry — this IS the auth step
+  );
+  saveTokens(tokens);
+  return tokens;
+}
+
+/** Complete onboarding (name + notification email) after OAuth sign-up. */
+export async function apiOnboard(name: string, notificationEmail: string): Promise<UserOut> {
+  return apiFetch<UserOut>("/api/v1/auth/onboard", {
+    method: "POST",
+    body: JSON.stringify({ name, notification_email: notificationEmail }),
+  });
 }
 
 export async function apiLogin(email: string, password: string): Promise<TokenResponse> {
@@ -233,6 +258,7 @@ export type AdminStatsOut = {
   total_users: number;
   active_users: number;
   total_chats: number;
+  new_this_week: number;
 };
 
 export async function apiAdminStats(): Promise<AdminStatsOut> {

@@ -41,14 +41,13 @@ type RequestBody = {
   sysPrompt?: string;
   temperature?: number | null;
   maxTokens?: number | null;
-  clientApiKey?: string;
 };
 
 export async function POST(req: NextRequest) {
   const body = await req.json() as RequestBody;
-  const { provider, model, messages, sysPrompt, temperature, maxTokens, clientApiKey } = body;
+  const { provider, model, messages, sysPrompt, temperature, maxTokens } = body;
 
-  const apiKey = serverKey(provider) || clientApiKey || "";
+  const apiKey = serverKey(provider);
 
   if (!apiKey) {
     return NextResponse.json({ error: `__NO_KEY__:${provider}` }, { status: 401 });

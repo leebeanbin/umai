@@ -120,11 +120,9 @@ export default function SettingsModal({ open, onClose }: Props) {
   if (!open) return null;
 
   function handleSave() {
-    const existing = loadSettings();
     saveSettings({
       selectedModel, temperature: params.temperature, maxTokens: params.maxTokens,
       systemPrompt: params.systemPrompt, theme,
-      apiKeys: existing.apiKeys, // preserve existing keys
       inputLang, outputLang,
     });
     applyTheme(theme);

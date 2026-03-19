@@ -1,15 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { UserOut } from "@/lib/api/backendClient";
+import { UserOut, apiOnboard } from "@/lib/api/backendClient";
 import { getPastelColor, getInitials } from "@/lib/utils/avatar";
 
 interface Props {
   user: UserOut;
   onComplete: (updated: UserOut) => void;
 }
-
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function OnboardingModal({ user, onComplete }: Props) {
   const [name,  setName]  = useState(user.name ?? "");
@@ -27,20 +25,7 @@ export default function OnboardingModal({ user, onComplete }: Props) {
     setLoading(true);
     setError("");
     try {
-      const token = localStorage.getItem("umai_access_token") ?? "";
-      const res = await fetch(`${BASE}/api/v1/auth/onboard`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ name: name.trim(), notification_email: email.trim() }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail ?? "저장에 실패했습니다.");
-      }
-      const updated: UserOut = await res.json();
+      const updated = await apiOnboard(name.trim(), email.trim());
       onComplete(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : "오류가 발생했습니다.");
