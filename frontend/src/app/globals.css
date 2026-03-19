@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+/* ── Tailwind 토큰: 라이트 모드 기본값 ── */
+@theme {
+  /* 라이트 모드 기본값 (런타임에 .dark 클래스로 오버라이드됨) */
+  --color-base:           #f5f5f7;
+  --color-surface:        #ffffff;
+  --color-elevated:       #f0f0f5;
+  --color-hover:          #e8e8ef;
+  --color-border:         #d8d8e2;
+  --color-border-subtle:  #ebebf2;
+
+  --color-text-primary:   #111116;
+  --color-text-secondary: #4a4d62;
+  --color-text-muted:     #9395aa;
+
+  --color-accent:         #7c6af5;
+  --color-accent-hover:   #6b58e8;
+
+  --color-danger:         #f87171;
+  --color-success:        #4ade80;
+  --color-warning:        #fbbf24;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── 다크 테마: @theme의 CSS 변수를 오버라이드 ── */
+.dark {
+  --color-base:           #0e0f13;
+  --color-surface:        #16181f;
+  --color-elevated:       #1e2029;
+  --color-hover:          #252733;
+  --color-border:         #2a2d3a;
+  --color-border-subtle:  #1f2130;
+
+  --color-text-primary:   #e8eaf0;
+  --color-text-secondary: #8b8fa8;
+  --color-text-muted:     #555870;
+}
+
+html, body, #__next {
+  height: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+
+/* 스크롤바 */
+::-webkit-scrollbar         { width: 4px; height: 4px; }
+::-webkit-scrollbar-track   { background: transparent; }
+::-webkit-scrollbar-thumb   { background: var(--color-border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* 모달 등장 애니메이션 */
+@keyframes fly-and-scale {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+.animate-modal { animation: fly-and-scale 0.15s ease-out; }
+
+/* Suggested 칩 워터폴 */
+@keyframes waterfall-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.waterfall {
+  opacity: 0;
+  animation: waterfall-in 200ms ease forwards;
+}
