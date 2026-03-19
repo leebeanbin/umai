@@ -8,7 +8,7 @@ import {
   Server, BookOpen, Volume2, BarChart2, RefreshCw, Trash2,
 } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
-import { apiAdminOllamaModels } from "@/lib/api/backendClient";
+import { apiAdminOllamaModels, apiAdminOllamaModelCapabilities } from "@/lib/api/backendClient";
 
 type AdminSettingsTab =
   | "general"
@@ -193,6 +193,7 @@ export default function AdminSettingsPage() {
   const [ollamaEnabledModels, setOllamaEnabledModels] = useState<string[]>([]);
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
   const [ollamaModelsFetched, setOllamaModelsFetched] = useState(false);
+  const [ollamaCapabilities, setOllamaCapabilities] = useState<Record<string, string[]>>({});
 
   // Documents (RAG)
   const [embeddingEngine, setEmbeddingEngine] = useState<"ollama" | "openai">("openai");
@@ -246,15 +247,35 @@ export default function AdminSettingsPage() {
     setOllamaModelsLoading(true);
     try {
       const data = await apiAdminOllamaModels();
-      setOllamaModelNames(data.models.map((m) => m.name));
-      setOllamaEnabledModels(data.models.map((m) => m.name));
+      const names = data.models.map((m) => m.name);
+      setOllamaModelNames(names);
+      setOllamaEnabledModels(names);
       setOllamaModelsFetched(true);
+
+      // Fetch capabilities for each model in parallel (best-effort)
+      const capEntries = await Promise.all(
+        names.map(async (name) => {
+          try {
+            const c = await apiAdminOllamaModelCapabilities(name);
+            return [name, c.capabilities] as [string, string[]];
+          } catch {
+            return [name, []] as [string, string[]];
+          }
+        })
+      );
+      setOllamaCapabilities(Object.fromEntries(capEntries));
     } catch {
       // silently fail
     } finally {
       setOllamaModelsLoading(false);
     }
   }, []);
+
+  // Derive which capabilities are available in the currently-enabled Ollama models
+  const enabledOllamaCaps = ollamaEnabledModels.flatMap((name) => ollamaCapabilities[name] ?? []);
+  const hasVisionCapability = enabledOllamaCaps.includes("vision");
+  const hasOcrCapability    = enabledOllamaCaps.includes("ocr");
+  const hasToolsCapability  = enabledOllamaCaps.includes("tools");
 
   function handleSave() {
     setSaved(true);
@@ -500,27 +521,43 @@ export default function AdminSettingsPage() {
               </div>
               {ollamaModelsFetched && ollamaModelNames.length > 0 ? (
                 <div className="bg-surface rounded-2xl border border-border overflow-hidden">
-                  {ollamaModelNames.map((name, i) => (
-                    <label
-                      key={name}
-                      className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-hover transition-colors ${i < ollamaModelNames.length - 1 ? "border-b border-border-subtle" : ""}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={ollamaEnabledModels.includes(name)}
-                        onChange={() => toggleOllamaModel(name)}
-                        className="accent-accent size-4 rounded"
-                      />
-                      <div className="flex-1">
-                        <p className="text-sm text-text-primary font-mono">{name}</p>
-                        <p className="text-[10px] text-text-muted">Ollama · local</p>
-                      </div>
-                      {ollamaEnabledModels.includes(name)
-                        ? <span className="text-xs text-accent">Enabled</span>
-                        : <span className="text-xs text-text-muted">Disabled</span>
-                      }
-                    </label>
-                  ))}
+                  {ollamaModelNames.map((name, i) => {
+                    const caps = ollamaCapabilities[name] ?? [];
+                    const CAP_STYLE: Record<string, string> = {
+                      vision: "bg-purple-400/10 text-purple-400 border-purple-400/20",
+                      ocr:    "bg-blue-400/10 text-blue-400 border-blue-400/20",
+                      tools:  "bg-yellow-400/10 text-yellow-400 border-yellow-400/20",
+                      code:   "bg-green-400/10 text-green-400 border-green-400/20",
+                    };
+                    return (
+                      <label
+                        key={name}
+                        className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-hover transition-colors ${i < ollamaModelNames.length - 1 ? "border-b border-border-subtle" : ""}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={ollamaEnabledModels.includes(name)}
+                          onChange={() => toggleOllamaModel(name)}
+                          className="accent-accent size-4 rounded"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-text-primary font-mono truncate">{name}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            <span className="text-[10px] text-text-muted">Ollama · local</span>
+                            {caps.map((cap) => (
+                              <span key={cap} className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${CAP_STYLE[cap] ?? "bg-surface text-text-muted border-border"}`}>
+                                {cap}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        {ollamaEnabledModels.includes(name)
+                          ? <span className="text-xs text-accent shrink-0">Enabled</span>
+                          : <span className="text-xs text-text-muted shrink-0">Disabled</span>
+                        }
+                      </label>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="flex items-center gap-2 p-4 bg-surface rounded-2xl border border-border text-xs text-text-muted">
@@ -617,7 +654,19 @@ export default function AdminSettingsPage() {
         {/* ── Features ── */}
         {tab === "features" && (
           <div className="max-w-xl">
-            <h2 className="text-lg font-semibold text-text-primary mb-6">{lang === "ko" ? "기능 설정" : "Features"}</h2>
+            <h2 className="text-lg font-semibold text-text-primary mb-4">{lang === "ko" ? "기능 설정" : "Features"}</h2>
+
+            {hasToolsCapability && (
+              <div className="flex items-start gap-2 p-3 rounded-xl bg-yellow-400/5 border border-yellow-400/20 text-xs text-yellow-300 mb-6">
+                <Info size={12} className="shrink-0 mt-0.5" />
+                <span>
+                  {lang === "ko"
+                    ? `활성화된 Ollama 모델 중 Function Calling(도구 사용)을 지원하는 모델이 있습니다: ${ollamaEnabledModels.filter((n) => (ollamaCapabilities[n] ?? []).includes("tools")).join(", ")}. 웹 검색 기능을 활성화하면 해당 모델이 자동으로 도구를 호출합니다.`
+                    : `Tool-use (function calling) capable Ollama models are enabled: ${ollamaEnabledModels.filter((n) => (ollamaCapabilities[n] ?? []).includes("tools")).join(", ")}. Enable Web Search to let these models call tools automatically.`
+                  }
+                </span>
+              </div>
+            )}
 
             <Section title={lang === "ko" ? "채팅" : "Chat"}>
               <Toggle checked={webSearch}  onChange={setWebSearch}  label={lang === "ko" ? "웹 검색"         : "Web Search"}        description={lang === "ko" ? "채팅에서 실시간 웹 검색을 허용합니다."              : "Allow real-time web search from chat."} />
@@ -683,6 +732,17 @@ export default function AdminSettingsPage() {
               <Toggle checked={hybridSearch} onChange={setHybridSearch} label={lang === "ko" ? "하이브리드 검색" : "Hybrid Search"} description={lang === "ko" ? "벡터 검색과 키워드 검색(BM25)을 결합합니다." : "Combine vector search with keyword search (BM25)."} />
               <div className="pt-3">
                 <label className="block text-xs font-medium text-text-secondary mb-2">OCR {lang === "ko" ? "엔진" : "Engine"}</label>
+                {(hasVisionCapability || hasOcrCapability) && (
+                  <div className="flex items-start gap-2 p-3 rounded-xl bg-purple-400/5 border border-purple-400/20 text-xs text-purple-300 mb-2">
+                    <Info size={12} className="shrink-0 mt-0.5" />
+                    <span>
+                      {lang === "ko"
+                        ? `활성화된 Ollama 모델 중 이미지 인식(vision/ocr) 모델이 있습니다: ${ollamaEnabledModels.filter((n) => (ollamaCapabilities[n] ?? []).some((c) => c === "vision" || c === "ocr")).join(", ")}. 해당 모델로 이미지 내 텍스트를 직접 추출할 수 있습니다.`
+                        : `Vision-capable Ollama models are enabled: ${ollamaEnabledModels.filter((n) => (ollamaCapabilities[n] ?? []).some((c) => c === "vision" || c === "ocr")).join(", ")}. These models can extract text from images directly.`
+                      }
+                    </span>
+                  </div>
+                )}
                 <div className="flex gap-2">
                   {([
                     { val: "none"      as const, label: lang === "ko" ? "없음" : "None" },
