@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Shield, Users, Settings, Search, MoreHorizontal, Crown, User, Ban, Loader2, ChevronRight, BarChart3, BarChart2, Star } from "lucide-react";
+import { Shield, Users, Settings, Search, MoreHorizontal, Crown, User, Ban, Loader2, ChevronRight, BarChart3 } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
@@ -11,6 +11,7 @@ import {
 } from "@/lib/api/backendClient";
 import { getPastelColor, getInitials } from "@/lib/utils/avatar";
 import { type TranslationKey } from "@/lib/i18n";
+import { AdminNav } from "@/components/admin/AdminNav";
 
 type TFn = (key: TranslationKey) => string;
 
@@ -19,41 +20,6 @@ const ROLE_STYLES: Record<string, string> = {
   user:    "text-blue-400  bg-blue-400/10  border-blue-400/20",
   pending: "text-text-muted bg-hover border-border",
 };
-
-function AdminNav({ active }: { active: "users" | "analytics" | "evaluations" }) {
-  const { t } = useLanguage();
-  const navItems = [
-    { id: "users"       as const, href: "/admin",             icon: <Users size={14} />,    label: t("admin.tab.users") },
-    { id: "analytics"   as const, href: "/admin/analytics",   icon: <BarChart2 size={14} />, label: "Analytics" },
-    { id: "evaluations" as const, href: "/admin/evaluations", icon: <Star size={14} />,      label: "Evaluations" },
-  ];
-  return (
-    <nav className="w-44 shrink-0 border-r border-border bg-surface flex flex-col pt-4 gap-0.5 px-2">
-      <p className="text-[10px] font-semibold text-text-muted uppercase tracking-widest px-3 mb-2">Admin</p>
-      {navItems.map((item) => (
-        <Link
-          key={item.id}
-          href={item.href}
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm transition-colors ${
-            active === item.id
-              ? "bg-accent/10 text-accent font-medium"
-              : "text-text-secondary hover:bg-hover hover:text-text-primary"
-          }`}
-        >
-          <span className={active === item.id ? "text-accent" : "text-text-muted"}>{item.icon}</span>
-          {item.label}
-        </Link>
-      ))}
-      <Link
-        href="/admin/settings"
-        className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-text-secondary hover:bg-hover hover:text-text-primary transition-colors"
-      >
-        <span className="text-text-muted"><Settings size={14} /></span>
-        Settings
-      </Link>
-    </nav>
-  );
-}
 
 export default function AdminPage() {
   const { t } = useLanguage();
