@@ -8,13 +8,13 @@
 """
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -52,6 +52,7 @@ class StatsOut(BaseModel):
     total_users: int
     active_users: int
     total_chats: int
+    new_this_week: int
 
 
 # ── 통계 ──────────────────────────────────────────────────────────────────────
@@ -61,12 +62,22 @@ async def get_stats(
     _admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    total_users = (await db.execute(select(func.count(User.id)))).scalar_one()
-    active_users = (await db.execute(
-        select(func.count(User.id)).where(User.is_active == True)
-    )).scalar_one()
+    """Single-query stats using CASE/WHEN to avoid 3 separate round-trips."""
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    row = (await db.execute(
+        select(
+            func.count(User.id).label("total_users"),
+            func.count(case((User.is_active == True, 1))).label("active_users"),
+            func.count(case((User.created_at >= week_ago, 1))).label("new_this_week"),
+        )
+    )).one()
     total_chats = (await db.execute(select(func.count(Chat.id)))).scalar_one()
-    return StatsOut(total_users=total_users, active_users=active_users, total_chats=total_chats)
+    return StatsOut(
+        total_users=row.total_users,
+        active_users=row.active_users,
+        total_chats=total_chats,
+        new_this_week=row.new_this_week,
+    )
 
 
 # ── 유저 목록 ──────────────────────────────────────────────────────────────────
@@ -127,6 +138,8 @@ async def update_user(
         user.name = body.name
 
     await db.flush()
+    await db.commit()
+    await db.refresh(user)
     return user
 
 

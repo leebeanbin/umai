@@ -2,47 +2,13 @@
 
 import { useEffect, useState } from "react";
 import {
-  Users, MessageSquare, BarChart2, Star, TrendingUp,
-  TrendingDown, Activity, Calendar, Settings, BarChart3,
+  Users, MessageSquare, TrendingUp,
+  TrendingDown, Activity, Calendar, BarChart3, BarChart2,
 } from "lucide-react";
-import Link from "next/link";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
-import { apiAdminStats, apiAdminListUsers, type AdminStatsOut } from "@/lib/api/backendClient";
-
-function AdminNav({ active }: { active: "users" | "analytics" | "evaluations" }) {
-  const navItems = [
-    { id: "users"       as const, href: "/admin",             icon: <Users size={14} />,    label: "Users" },
-    { id: "analytics"   as const, href: "/admin/analytics",   icon: <BarChart2 size={14} />, label: "Analytics" },
-    { id: "evaluations" as const, href: "/admin/evaluations", icon: <Star size={14} />,      label: "Evaluations" },
-  ];
-  return (
-    <nav className="w-44 shrink-0 border-r border-border bg-surface flex flex-col pt-4 gap-0.5 px-2">
-      <p className="text-[10px] font-semibold text-text-muted uppercase tracking-widest px-3 mb-2">Admin</p>
-      {navItems.map((item) => (
-        <Link
-          key={item.id}
-          href={item.href}
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm transition-colors ${
-            active === item.id
-              ? "bg-accent/10 text-accent font-medium"
-              : "text-text-secondary hover:bg-hover hover:text-text-primary"
-          }`}
-        >
-          <span className={active === item.id ? "text-accent" : "text-text-muted"}>{item.icon}</span>
-          {item.label}
-        </Link>
-      ))}
-      <Link
-        href="/admin/settings"
-        className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-text-secondary hover:bg-hover hover:text-text-primary transition-colors"
-      >
-        <span className="text-text-muted"><Settings size={14} /></span>
-        Settings
-      </Link>
-    </nav>
-  );
-}
+import { apiAdminStats, type AdminStatsOut } from "@/lib/api/backendClient";
+import { AdminNav } from "@/components/admin/AdminNav";
 
 type UserGrowth = { label: string; value: number; change: number | null };
 
@@ -51,17 +17,10 @@ export default function AdminAnalyticsPage() {
   const { user: me } = useAuth();
   const [stats, setStats] = useState<AdminStatsOut | null>(null);
   const [loading, setLoading] = useState(true);
-  const [newUsersThisWeek, setNewUsersThisWeek] = useState(0);
 
   useEffect(() => {
-    Promise.all([apiAdminStats(), apiAdminListUsers(0, 200)])
-      .then(([s, users]) => {
-        setStats(s);
-        // Count users created in the last 7 days
-        const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        const recent = users.filter((u) => new Date(u.created_at).getTime() > weekAgo);
-        setNewUsersThisWeek(recent.length);
-      })
+    apiAdminStats()
+      .then(setStats)
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -98,7 +57,7 @@ export default function AdminAnalyticsPage() {
     },
     {
       label: lang === "ko" ? "이번 주 신규" : "New This Week",
-      value: newUsersThisWeek,
+      value: stats.new_this_week,
       icon: <Calendar size={16} className="text-purple-400" />,
       color: "text-purple-400",
       bg: "bg-purple-400/10",
@@ -168,7 +127,7 @@ export default function AdminAnalyticsPage() {
                 <h3 className="text-sm font-semibold text-text-primary mb-3">{lang === "ko" ? "성장 지표" : "Growth Indicators"}</h3>
                 <div className="bg-surface rounded-2xl border border-border overflow-hidden">
                   {([
-                    { label: lang === "ko" ? "유저 성장률 (7일)" : "User Growth (7d)",     trend: "up",   value: `+${newUsersThisWeek}` },
+                    { label: lang === "ko" ? "유저 성장률 (7일)" : "User Growth (7d)",     trend: "up",   value: `+${stats?.new_this_week ?? 0}` },
                     { label: lang === "ko" ? "채팅 활성도"       : "Chat Activity",        trend: "up",   value: "—" },
                     { label: lang === "ko" ? "평균 세션 길이"    : "Avg. Session Length",  trend: "flat", value: "—" },
                     { label: lang === "ko" ? "대기 유저 수"      : "Pending Users",        trend: "flat", value: `${stats ? stats.total_users - stats.active_users : "—"}` },
