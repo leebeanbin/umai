@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.database import create_tables
 from app.core.redis import close_redis
 from app.core.kafka import close_producer
-from app.routers import auth, chats, folders, admin
+from app.routers import auth, chats, folders, admin, workspace
 
 # ── Rate Limiter 설정 ─────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
@@ -54,10 +54,11 @@ app.add_middleware(
 )
 
 # ── 라우터 등록 ───────────────────────────────────────────────────────────────
-app.include_router(auth.router,    prefix="/api/v1")
-app.include_router(chats.router,   prefix="/api/v1")
-app.include_router(folders.router, prefix="/api/v1")
-app.include_router(admin.router,   prefix="/api/v1")
+app.include_router(auth.router,      prefix="/api/v1")
+app.include_router(chats.router,     prefix="/api/v1")
+app.include_router(folders.router,   prefix="/api/v1")
+app.include_router(admin.router,     prefix="/api/v1")
+app.include_router(workspace.router, prefix="/api/v1")
 
 
 @app.get("/health")

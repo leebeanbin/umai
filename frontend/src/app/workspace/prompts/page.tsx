@@ -3,42 +3,77 @@
 import { useEffect, useState } from "react";
 import { Search, Plus, X, Copy, Check } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
-import { loadWs, saveWs } from "@/lib/workspaceStore";
+import {
+  loadWs,
+  syncWorkspaceFromBackend,
+  createWorkspaceItem,
+  deleteWorkspaceItem,
+} from "@/lib/workspaceStore";
+import { type WorkspaceItem } from "@/lib/api/backendClient";
 
 type Prompt = {
   id: string;
-  command: string;   // /command 형식
+  command: string;
   title: string;
   content: string;
-  createdAt: Date;
+  createdAt: string;
 };
 
-const INITIAL_PROMPTS: Prompt[] = [
-  { id: "p1", command: "/배경교체", title: "배경 교체",    content: "선택된 영역의 배경을 {{배경 설명}}으로 자연스럽게 교체해줘. 피사체의 경계를 최대한 보존하고, 조명과 그림자가 어울리게 합성해줘.", createdAt: new Date(Date.now() - 86400000 * 2) },
-  { id: "p2", command: "/리터칭",   title: "피부 리터칭",  content: "선택 영역의 피부를 자연스럽게 리터칭해줘. 잡티와 주름을 줄이되 지나치게 인위적이지 않게 해줘.", createdAt: new Date(Date.now() - 86400000) },
-  { id: "p3", command: "/스타일",   title: "스타일 변환",  content: "선택 영역을 {{스타일}} 스타일로 변환해줘. 원본의 구도와 피사체 형태는 최대한 유지해줘.", createdAt: new Date() },
-];
+const INITIAL_PROMPTS: Prompt[] = [];
+const LOCAL_KEY = "prompts";
+
+function toLocal(item: WorkspaceItem): Prompt {
+  const d = item.data as Record<string, string>;
+  return {
+    id: item.id,
+    name: item.name,
+    command: d.command ?? `/${item.name}`,
+    title: item.name,
+    content: d.content ?? "",
+    createdAt: item.created_at,
+  } as Prompt & { name: string };
+}
 
 export default function PromptsPage() {
   const { t } = useLanguage();
   const [query, setQuery]           = useState("");
-  const [prompts, setPrompts]       = useState<Prompt[]>(() => loadWs<Prompt>("prompts", INITIAL_PROMPTS));
-
-  useEffect(() => { saveWs("prompts", prompts); }, [prompts]);
+  const [prompts, setPrompts]       = useState<Prompt[]>(() =>
+    loadWs<Prompt>(LOCAL_KEY, INITIAL_PROMPTS)
+  );
   const [showCreate, setShowCreate] = useState(false);
   const [copiedId, setCopiedId]     = useState<string | null>(null);
   const [form, setForm]             = useState({ command: "", title: "", content: "" });
+  const [saving, setSaving]         = useState(false);
+
+  useEffect(() => {
+    syncWorkspaceFromBackend("prompt", LOCAL_KEY, toLocal, INITIAL_PROMPTS).then(setPrompts);
+  }, []);
 
   const filtered = prompts.filter((p) =>
     !query || p.title.toLowerCase().includes(query.toLowerCase()) || p.command.includes(query.toLowerCase())
   );
 
-  function handleCreate() {
-    if (!form.title.trim() || !form.content.trim()) return;
+  async function handleCreate() {
+    if (!form.title.trim() || !form.content.trim() || saving) return;
+    setSaving(true);
     const command = form.command.startsWith("/") ? form.command : `/${form.command}`;
-    setPrompts((prev) => [...prev, { id: crypto.randomUUID(), command, title: form.title.trim(), content: form.content.trim(), createdAt: new Date() }]);
+    const updated = await createWorkspaceItem(
+      "prompt",
+      form.title.trim(),
+      { command, content: form.content.trim() },
+      LOCAL_KEY,
+      toLocal,
+      prompts,
+    );
+    setPrompts(updated);
     setForm({ command: "", title: "", content: "" });
     setShowCreate(false);
+    setSaving(false);
+  }
+
+  async function handleDelete(id: string) {
+    const updated = await deleteWorkspaceItem(id, LOCAL_KEY, prompts);
+    setPrompts(updated);
   }
 
   function handleCopy(p: Prompt) {
@@ -92,7 +127,7 @@ export default function PromptsPage() {
                   <button onClick={() => handleCopy(p)} className="p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-text-secondary transition">
                     {copiedId === p.id ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
                   </button>
-                  <button onClick={() => setPrompts((prev) => prev.filter((x) => x.id !== p.id))} className="p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-red-400 transition">
+                  <button onClick={() => handleDelete(p.id)} className="p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-red-400 transition">
                     <X size={13} />
                   </button>
                 </div>
@@ -128,7 +163,7 @@ export default function PromptsPage() {
             </div>
             <div className="flex justify-end gap-2 px-5 py-4 border-t border-border">
               <button onClick={() => setShowCreate(false)} className="px-4 py-2 rounded-xl text-sm text-text-secondary hover:bg-hover transition">{t("common.cancel")}</button>
-              <button onClick={handleCreate} disabled={!form.title.trim() || !form.content.trim()} className="px-5 py-2 rounded-full text-sm font-medium text-white bg-accent hover:bg-accent-hover disabled:opacity-50 transition">{t("common.save")}</button>
+              <button onClick={handleCreate} disabled={!form.title.trim() || !form.content.trim() || saving} className="px-5 py-2 rounded-full text-sm font-medium text-white bg-accent hover:bg-accent-hover disabled:opacity-50 transition">{t("common.save")}</button>
             </div>
           </div>
         </div>

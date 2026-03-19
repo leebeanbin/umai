@@ -1,9 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Plus, X, ExternalLink } from "lucide-react";
+import { Search, Plus, X } from "lucide-react";
 import { loadModels } from "@/lib/appStore";
-import { loadWs, saveWs } from "@/lib/workspaceStore";
+import {
+  loadWs,
+  syncWorkspaceFromBackend,
+  createWorkspaceItem,
+  deleteWorkspaceItem,
+} from "@/lib/workspaceStore";
+import {
+  type WorkspaceItem,
+} from "@/lib/api/backendClient";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 
 type CustomModel = {
@@ -12,29 +20,40 @@ type CustomModel = {
   baseModel: string;
   systemPrompt: string;
   description: string;
-  createdAt: Date;
+  createdAt: string;
 };
 
-const INITIAL_CUSTOM: CustomModel[] = [
-  {
-    id: "cm1",
-    name: "상품 사진 전문가",
-    baseModel: "gpt-4o",
-    systemPrompt: "당신은 상품 사진 편집 전문가입니다. 항상 구체적이고 실행 가능한 지시를 한국어로 제공하세요.",
-    description: "상품 사진 편집에 최적화된 커스텀 모델",
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3),
-  },
-];
+const INITIAL_CUSTOM: CustomModel[] = [];
+
+function toLocal(item: WorkspaceItem): CustomModel {
+  const d = item.data as Record<string, string>;
+  return {
+    id: item.id,
+    name: item.name,
+    baseModel: d.baseModel ?? "gpt-4o",
+    systemPrompt: d.systemPrompt ?? "",
+    description: d.description ?? "",
+    createdAt: item.created_at,
+  };
+}
+
+const LOCAL_KEY = "custom-models";
 
 export default function ModelsPage() {
   const { t } = useLanguage();
-  const [query, setQuery]             = useState("");
-  const [customModels, setCustom]     = useState<CustomModel[]>(() => loadWs<CustomModel>("custom-models", INITIAL_CUSTOM));
+  const [query, setQuery]           = useState("");
+  const [customModels, setCustom]   = useState<CustomModel[]>(() =>
+    loadWs<CustomModel>(LOCAL_KEY, INITIAL_CUSTOM)
+  );
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm]             = useState({ name: "", baseModel: "gpt-4o", systemPrompt: "", description: "" });
+  const [builtinModels]             = useState(() => loadModels());
+  const [saving, setSaving]         = useState(false);
 
-  useEffect(() => { saveWs("custom-models", customModels); }, [customModels]);
-  const [showCreate, setShowCreate]   = useState(false);
-  const [form, setForm]               = useState({ name: "", baseModel: "gpt-4o", systemPrompt: "", description: "" });
-  const [builtinModels]               = useState(() => loadModels());
+  // Sync from backend on mount
+  useEffect(() => {
+    syncWorkspaceFromBackend("model", LOCAL_KEY, toLocal, INITIAL_CUSTOM).then(setCustom);
+  }, []);
 
   const filteredBase = builtinModels.filter(
     (m) => !query || m.name.toLowerCase().includes(query.toLowerCase()) || m.provider.toLowerCase().includes(query.toLowerCase())
@@ -43,18 +62,26 @@ export default function ModelsPage() {
     (m) => !query || m.name.toLowerCase().includes(query.toLowerCase())
   );
 
-  function handleCreate() {
-    if (!form.name.trim()) return;
-    setCustom((prev) => [...prev, {
-      id: crypto.randomUUID(),
-      name: form.name.trim(),
-      baseModel: form.baseModel,
-      systemPrompt: form.systemPrompt,
-      description: form.description,
-      createdAt: new Date(),
-    }]);
+  async function handleCreate() {
+    if (!form.name.trim() || saving) return;
+    setSaving(true);
+    const updated = await createWorkspaceItem(
+      "model",
+      form.name.trim(),
+      { baseModel: form.baseModel, systemPrompt: form.systemPrompt, description: form.description },
+      LOCAL_KEY,
+      toLocal,
+      customModels,
+    );
+    setCustom(updated);
     setForm({ name: "", baseModel: "gpt-4o", systemPrompt: "", description: "" });
     setShowCreate(false);
+    setSaving(false);
+  }
+
+  async function handleDelete(id: string) {
+    const updated = await deleteWorkspaceItem(id, LOCAL_KEY, customModels);
+    setCustom(updated);
   }
 
   return (
@@ -142,7 +169,7 @@ export default function ModelsPage() {
                     <div className="text-xs text-text-muted truncate">{m.description || m.baseModel}</div>
                   </div>
                   <button
-                    onClick={() => setCustom((prev) => prev.filter((c) => c.id !== m.id))}
+                    onClick={() => handleDelete(m.id)}
                     className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-white/5 text-text-muted hover:text-red-400 transition"
                   >
                     <X size={13} />
@@ -210,7 +237,7 @@ export default function ModelsPage() {
             </div>
             <div className="flex justify-end gap-2 px-5 py-4 border-t border-border">
               <button onClick={() => setShowCreate(false)} className="px-4 py-2 rounded-xl text-sm text-text-secondary hover:bg-hover transition">{t("common.cancel")}</button>
-              <button onClick={handleCreate} disabled={!form.name.trim()} className="px-5 py-2 rounded-full text-sm font-medium text-white bg-accent hover:bg-accent-hover disabled:opacity-50 transition">
+              <button onClick={handleCreate} disabled={!form.name.trim() || saving} className="px-5 py-2 rounded-full text-sm font-medium text-white bg-accent hover:bg-accent-hover disabled:opacity-50 transition">
                 {t("common.create")}
               </button>
             </div>

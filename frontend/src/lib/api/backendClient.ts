@@ -286,3 +286,96 @@ export async function apiAdminDeleteUser(userId: string): Promise<void> {
 export async function apiAdminOllamaModels(): Promise<{ models: { name: string; size: number }[] }> {
   return apiFetch<{ models: { name: string; size: number }[] }>("/api/v1/admin/ollama/models");
 }
+
+export type OllamaModelCapabilities = {
+  name: string;
+  family: string;
+  families: string[];
+  parameter_size: string;
+  quantization: string;
+  context_length: number;
+  capabilities: string[]; // "vision" | "ocr" | "tools" | "code"
+};
+
+export async function apiAdminOllamaModelCapabilities(modelName: string): Promise<OllamaModelCapabilities> {
+  return apiFetch<OllamaModelCapabilities>(
+    `/api/v1/admin/ollama/models/${encodeURIComponent(modelName)}/capabilities`,
+  );
+}
+
+// ── Workspace ─────────────────────────────────────────────────────────────────
+
+export type WorkspaceItemType = "model" | "prompt" | "tool" | "skill";
+
+export type WorkspaceItem = {
+  id: string;
+  item_type: WorkspaceItemType;
+  name: string;
+  data: Record<string, unknown>;
+  is_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeItem = {
+  id: string;
+  name: string;
+  content_type: string;
+  file_size: number;
+  created_at: string;
+};
+
+export async function apiListWorkspaceItems(type?: WorkspaceItemType): Promise<WorkspaceItem[]> {
+  const qs = type ? `?item_type=${type}` : "";
+  return apiFetch<WorkspaceItem[]>(`/api/v1/workspace/items${qs}`);
+}
+
+export async function apiCreateWorkspaceItem(
+  item_type: WorkspaceItemType,
+  name: string,
+  data: Record<string, unknown> = {},
+  is_enabled = true,
+): Promise<WorkspaceItem> {
+  return apiFetch<WorkspaceItem>("/api/v1/workspace/items", {
+    method: "POST",
+    body: JSON.stringify({ item_type, name, data, is_enabled }),
+  });
+}
+
+export async function apiUpdateWorkspaceItem(
+  id: string,
+  patch: { name?: string; data?: Record<string, unknown>; is_enabled?: boolean },
+): Promise<WorkspaceItem> {
+  return apiFetch<WorkspaceItem>(`/api/v1/workspace/items/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function apiDeleteWorkspaceItem(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/workspace/items/${id}`, { method: "DELETE" });
+}
+
+export async function apiListKnowledge(): Promise<KnowledgeItem[]> {
+  return apiFetch<KnowledgeItem[]>("/api/v1/workspace/knowledge");
+}
+
+export async function apiUploadKnowledge(file: File): Promise<KnowledgeItem> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const { access } = getTokens();
+  const res = await fetch(`${BASE}/api/v1/workspace/knowledge`, {
+    method: "POST",
+    headers: access ? { Authorization: `Bearer ${access}` } : {},
+    body: fd,
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Upload failed ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<KnowledgeItem>;
+}
+
+export async function apiDeleteKnowledge(id: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/workspace/knowledge/${id}`, { method: "DELETE" });
+}

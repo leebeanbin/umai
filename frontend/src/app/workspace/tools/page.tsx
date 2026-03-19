@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import { Search, Plus, X, Globe, Code2, Zap, Wrench } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
-import { loadWs, saveWs } from "@/lib/workspaceStore";
+import {
+  loadWs,
+  syncWorkspaceFromBackend,
+  createWorkspaceItem,
+  updateWorkspaceItem,
+  deleteWorkspaceItem,
+} from "@/lib/workspaceStore";
+import { type WorkspaceItem } from "@/lib/api/backendClient";
 
 type Tool = {
   id: string;
@@ -20,6 +27,8 @@ const INITIAL_TOOLS: Tool[] = [
   { id: "t3", name: "이미지 생성", description: "텍스트로 이미지 생성 (DALL-E 3)",     type: "builtin", enabled: false, icon: "zap" },
 ];
 
+const LOCAL_KEY = "tools";
+
 const ICON_MAP = {
   web:    <Globe   size={16} className="text-sky-400" />,
   code:   <Code2   size={16} className="text-green-400" />,
@@ -27,31 +36,72 @@ const ICON_MAP = {
   wrench: <Wrench  size={16} className="text-text-muted" />,
 };
 
+function toLocal(item: WorkspaceItem): Tool {
+  const d = item.data as Record<string, string>;
+  return {
+    id: item.id,
+    name: item.name,
+    description: d.description ?? "",
+    type: (d.type as Tool["type"]) ?? "custom",
+    enabled: item.is_enabled,
+    icon: (d.icon as Tool["icon"]) ?? "wrench",
+  };
+}
+
+function applyPatch(tool: Tool, patch: { is_enabled?: boolean }): Tool {
+  return { ...tool, enabled: patch.is_enabled ?? tool.enabled };
+}
+
 export default function ToolsPage() {
   const { t } = useLanguage();
   const [query, setQuery]           = useState("");
-  const [tools, setTools]           = useState<Tool[]>(() => loadWs<Tool>("tools", INITIAL_TOOLS));
-
-  useEffect(() => { saveWs("tools", tools); }, [tools]);
+  const [tools, setTools]           = useState<Tool[]>(() =>
+    loadWs<Tool>(LOCAL_KEY, INITIAL_TOOLS)
+  );
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm]             = useState({ name: "", description: "" });
+  const [saving, setSaving]         = useState(false);
+
+  useEffect(() => {
+    syncWorkspaceFromBackend("tool", LOCAL_KEY, toLocal, INITIAL_TOOLS).then(setTools);
+  }, []);
 
   const filtered = tools.filter((tool) =>
     !query || tool.name.toLowerCase().includes(query.toLowerCase())
   );
 
-  function toggleTool(id: string) {
-    setTools((prev) => prev.map((tool) => tool.id === id ? { ...tool, enabled: !tool.enabled } : tool));
+  async function toggleTool(tool: Tool) {
+    const updated = await updateWorkspaceItem(
+      tool.id,
+      { is_enabled: !tool.enabled },
+      LOCAL_KEY,
+      toLocal,
+      tools,
+      applyPatch,
+    );
+    setTools(updated);
   }
 
-  function handleCreate() {
-    if (!form.name.trim()) return;
-    setTools((prev) => [...prev, {
-      id: crypto.randomUUID(), name: form.name.trim(), description: form.description,
-      type: "custom", enabled: false, icon: "wrench",
-    }]);
+  async function handleCreate() {
+    if (!form.name.trim() || saving) return;
+    setSaving(true);
+    const updated = await createWorkspaceItem(
+      "tool",
+      form.name.trim(),
+      { description: form.description, type: "custom", icon: "wrench" },
+      LOCAL_KEY,
+      toLocal,
+      tools,
+    );
+    setTools(updated);
     setForm({ name: "", description: "" });
     setShowCreate(false);
+    setSaving(false);
+  }
+
+  async function handleDelete(id: string) {
+    const updated = await deleteWorkspaceItem(id, LOCAL_KEY, tools);
+    setTools(updated);
   }
 
   return (
@@ -104,7 +154,7 @@ export default function ToolsPage() {
               <div className="flex items-center gap-2 shrink-0">
                 {tool.type === "custom" && (
                   <button
-                    onClick={() => setTools((prev) => prev.filter((x) => x.id !== tool.id))}
+                    onClick={() => handleDelete(tool.id)}
                     className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-red-400 transition"
                   >
                     <X size={13} />
@@ -112,7 +162,7 @@ export default function ToolsPage() {
                 )}
                 {/* 토글 스위치 */}
                 <button
-                  onClick={() => toggleTool(tool.id)}
+                  onClick={() => toggleTool(tool)}
                   title={tool.enabled ? t("workspace.toolDisable") : t("workspace.toolEnable")}
                   className={`flex items-center h-[1.125rem] min-h-[1.125rem] w-8 shrink-0 cursor-pointer rounded-full px-0.5 mx-px transition-colors outline outline-1 ${
                     tool.enabled ? "bg-accent outline-accent/50" : "bg-hover outline-border"
@@ -169,7 +219,7 @@ export default function ToolsPage() {
               <button onClick={() => setShowCreate(false)} className="px-4 py-2 rounded-xl text-sm text-text-secondary hover:bg-hover transition">{t("common.cancel")}</button>
               <button
                 onClick={handleCreate}
-                disabled={!form.name.trim()}
+                disabled={!form.name.trim() || saving}
                 className="px-5 py-2 rounded-full text-sm font-medium text-white bg-accent hover:bg-accent-hover disabled:opacity-50 transition"
               >
                 {t("common.add")}

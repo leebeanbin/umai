@@ -4,7 +4,14 @@ import { useEffect, useState } from "react";
 import { Search, Plus, X, Code2, Check, ToggleLeft, ToggleRight, Copy } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { type TranslationKey } from "@/lib/i18n";
-import { loadWs, saveWs } from "@/lib/workspaceStore";
+import {
+  loadWs,
+  syncWorkspaceFromBackend,
+  createWorkspaceItem,
+  updateWorkspaceItem,
+  deleteWorkspaceItem,
+} from "@/lib/workspaceStore";
+import { type WorkspaceItem } from "@/lib/api/backendClient";
 
 type Skill = {
   id: string;
@@ -14,7 +21,7 @@ type Skill = {
   code: string;
   enabled: boolean;
   builtin: boolean;
-  createdAt: Date;
+  createdAt: string;
 };
 
 const INITIAL_SKILLS: Skill[] = [
@@ -40,7 +47,7 @@ function resizeImage(imageDataUrl, maxSize = 2048) {
 }`,
     enabled: true,
     builtin: true,
-    createdAt: new Date(Date.now() - 86400000 * 7),
+    createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
   },
   {
     id: "s2",
@@ -58,49 +65,88 @@ function enhancePrompt(prompt) {
 }`,
     enabled: false,
     builtin: true,
-    createdAt: new Date(Date.now() - 86400000 * 3),
+    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
   },
 ];
+
+const LOCAL_KEY = "skills";
 
 const LANG_COLORS: Record<string, string> = {
   javascript: "text-yellow-400 bg-yellow-400/10 border-yellow-400/20",
   python:     "text-blue-400 bg-blue-400/10 border-blue-400/20",
 };
 
+function toLocal(item: WorkspaceItem): Skill {
+  const d = item.data as Record<string, unknown>;
+  return {
+    id: item.id,
+    name: item.name,
+    description: (d.description as string) ?? "",
+    language: (d.language as Skill["language"]) ?? "javascript",
+    code: (d.code as string) ?? "",
+    enabled: item.is_enabled,
+    builtin: (d.builtin as boolean) ?? false,
+    createdAt: item.created_at,
+  };
+}
+
+function applyPatch(skill: Skill, patch: { is_enabled?: boolean }): Skill {
+  return { ...skill, enabled: patch.is_enabled ?? skill.enabled };
+}
+
 export default function SkillsPage() {
   const { t } = useLanguage();
   const [query, setQuery]           = useState("");
-  const [skills, setSkills]         = useState<Skill[]>(() => loadWs<Skill>("skills", INITIAL_SKILLS));
-
-  useEffect(() => { saveWs("skills", skills); }, [skills]);
+  const [skills, setSkills]         = useState<Skill[]>(() =>
+    loadWs<Skill>(LOCAL_KEY, INITIAL_SKILLS)
+  );
   const [showCreate, setShowCreate] = useState(false);
   const [copiedId, setCopiedId]     = useState<string | null>(null);
   const [form, setForm]             = useState({
     name: "", description: "", language: "javascript" as "javascript" | "python", code: "",
   });
+  const [saving, setSaving]         = useState(false);
+
+  useEffect(() => {
+    syncWorkspaceFromBackend("skill", LOCAL_KEY, toLocal, INITIAL_SKILLS).then(setSkills);
+  }, []);
 
   const filtered = skills.filter((s) =>
     !query || s.name.toLowerCase().includes(query.toLowerCase()) || s.description.toLowerCase().includes(query.toLowerCase())
   );
 
-  function toggleSkill(id: string) {
-    setSkills((prev) => prev.map((s) => s.id === id ? { ...s, enabled: !s.enabled } : s));
+  async function toggleSkill(skill: Skill) {
+    const updated = await updateWorkspaceItem(
+      skill.id,
+      { is_enabled: !skill.enabled },
+      LOCAL_KEY,
+      toLocal,
+      skills,
+      applyPatch,
+    );
+    setSkills(updated);
   }
 
-  function handleCreate() {
-    if (!form.name.trim()) return;
-    setSkills((prev) => [...prev, {
-      id: crypto.randomUUID(),
-      name: form.name.trim(),
-      description: form.description,
-      language: form.language,
-      code: form.code,
-      enabled: true,
-      builtin: false,
-      createdAt: new Date(),
-    }]);
+  async function handleCreate() {
+    if (!form.name.trim() || saving) return;
+    setSaving(true);
+    const updated = await createWorkspaceItem(
+      "skill",
+      form.name.trim(),
+      { description: form.description, language: form.language, code: form.code, builtin: false },
+      LOCAL_KEY,
+      toLocal,
+      skills,
+    );
+    setSkills(updated);
     setForm({ name: "", description: "", language: "javascript", code: "" });
     setShowCreate(false);
+    setSaving(false);
+  }
+
+  async function handleDelete(id: string) {
+    const updated = await deleteWorkspaceItem(id, LOCAL_KEY, skills);
+    setSkills(updated);
   }
 
   function handleCopy(skill: Skill) {
@@ -157,9 +203,9 @@ export default function SkillsPage() {
                     key={skill.id}
                     skill={skill}
                     copiedId={copiedId}
-                    onToggle={() => toggleSkill(skill.id)}
+                    onToggle={() => toggleSkill(skill)}
                     onCopy={() => handleCopy(skill)}
-                    onDelete={() => setSkills((prev) => prev.filter((s) => s.id !== skill.id))}
+                    onDelete={() => handleDelete(skill.id)}
                     t={t}
                   />
                 ))}
@@ -179,9 +225,9 @@ export default function SkillsPage() {
                     key={skill.id}
                     skill={skill}
                     copiedId={copiedId}
-                    onToggle={() => toggleSkill(skill.id)}
+                    onToggle={() => toggleSkill(skill)}
                     onCopy={() => handleCopy(skill)}
-                    onDelete={() => setSkills((prev) => prev.filter((s) => s.id !== skill.id))}
+                    onDelete={() => handleDelete(skill.id)}
                     t={t}
                   />
                 ))}
@@ -270,7 +316,7 @@ export default function SkillsPage() {
               </button>
               <button
                 onClick={handleCreate}
-                disabled={!form.name.trim()}
+                disabled={!form.name.trim() || saving}
                 className="px-5 py-2 rounded-full text-sm font-medium text-white bg-accent hover:bg-accent-hover disabled:opacity-50 transition"
               >
                 {t("common.create")}
