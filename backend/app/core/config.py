@@ -18,16 +18,17 @@ class Settings(BaseSettings):
     # ── Database (PostgreSQL) ─────────────────────────────────────────────────
     DATABASE_URL: str = "postgresql+asyncpg://umai:umai@localhost:5432/umai"
 
-    # ── Redis ─────────────────────────────────────────────────────────────────
+    # ── Redis (session cache + Celery broker) ─────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    # ── Kafka (Upstash Kafka) ─────────────────────────────────────────────────
-    KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
-    KAFKA_SASL_USERNAME: str = ""       # Upstash SASL username
-    KAFKA_SASL_PASSWORD: str = ""       # Upstash SASL password
-    KAFKA_USE_SASL: bool = False        # True for Upstash / Confluent Cloud
-    KAFKA_TOPIC_IMAGE_TASKS: str = "umai-image-tasks"
-    KAFKA_TOPIC_CHAT_EVENTS: str = "umai-chat-events"
+    # ── Celery ────────────────────────────────────────────────────────────────
+    # broker = Redis db 1, result backend = Redis db 2 (분리)
+    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
+    CELERY_TASK_RESULT_EXPIRES: int = 3600  # 결과 1시간 보관
+
+    # ── Ollama ────────────────────────────────────────────────────────────────
+    OLLAMA_URL: str = "http://localhost:11434"
 
     # ── OAuth ─────────────────────────────────────────────────────────────────
     GOOGLE_CLIENT_ID: str = ""

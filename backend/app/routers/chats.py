@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.core.kafka import publish_chat_event
 from app.models.chat import Chat, Message
 from app.models.user import User
 from app.routers.deps import get_current_user
@@ -71,7 +70,6 @@ async def create_chat(
     )
     db.add(chat)
     await db.flush()
-    await publish_chat_event(str(chat.id), "created", {"user_id": str(user.id)})
     return chat
 
 

@@ -50,6 +50,8 @@ class KnowledgeItem(Base):
     file_size: Mapped[int] = mapped_column(nullable=False, default=0)
     # 추출된 텍스트 (RAG 용)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 청크 + 임베딩 벡터 JSON (pgvector 도입 전 임시 저장)
+    embeddings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

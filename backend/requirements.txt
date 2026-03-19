@@ -1,8 +1,8 @@
 # Web
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
-uvloop>=0.19.0          # 고성능 이벤트 루프 (Linux/macOS)
-httptools>=0.6.0        # 고성능 HTTP 파서
+uvloop>=0.19.0
+httptools>=0.6.0
 pydantic[email]>=2.0.0
 pydantic-settings>=2.0.0
 python-multipart
@@ -12,19 +12,29 @@ sqlalchemy[asyncio]>=2.0.0
 asyncpg>=0.29.0
 alembic>=1.13.0
 
-# Redis
+# Redis (session/cache + Celery broker)
 redis[hiredis]>=5.0.0
 
-# Kafka
-aiokafka>=0.11.0
+# Task queue (Kafka 대체)
+celery[redis]>=5.4.0
+kombu>=5.3.0
 
 # Auth / Security
 python-jose[cryptography]>=3.3.0
 bcrypt>=4.0.0
-authlib>=1.3.0          # OAuth (Google, GitHub)
-httpx>=0.27.0           # OAuth HTTP client
-itsdangerous>=2.1.0     # Starlette SessionMiddleware
-slowapi>=0.1.9          # FastAPI rate limiting
-
-# HTTP (LLM proxy)
+authlib>=1.3.0
 httpx>=0.27.0
+itsdangerous>=2.1.0
+slowapi>=0.1.9
+
+# Image processing
+Pillow>=10.4.0
+
+# Document processing (Knowledge base)
+pymupdf>=1.24.0
+python-docx>=1.1.0
+tiktoken>=0.7.0
+
+# AI / LLM SDK (Celery worker에서 sync 호출)
+openai>=1.40.0
+anthropic>=0.34.0

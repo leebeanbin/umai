@@ -12,8 +12,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.core.config import settings
 from app.core.database import create_tables
 from app.core.redis import close_redis
-from app.core.kafka import close_producer
 from app.routers import auth, chats, folders, admin, workspace
+from app.routers import tasks as tasks_router
 
 # ── Rate Limiter 설정 ─────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
@@ -26,7 +26,6 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     await close_redis()
-    await close_producer()
 
 
 app = FastAPI(
@@ -58,7 +57,8 @@ app.include_router(auth.router,      prefix="/api/v1")
 app.include_router(chats.router,     prefix="/api/v1")
 app.include_router(folders.router,   prefix="/api/v1")
 app.include_router(admin.router,     prefix="/api/v1")
-app.include_router(workspace.router, prefix="/api/v1")
+app.include_router(workspace.router,      prefix="/api/v1")
+app.include_router(tasks_router.router,   prefix="/api/v1")
 
 
 @app.get("/health")
