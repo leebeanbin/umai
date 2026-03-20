@@ -74,16 +74,17 @@ export function createSession(id: string, title: string, type: SessionType = "ch
   }
 }
 
-/** 세션 제목 업데이트 */
-export function updateSessionTitle(id: string, title: string) {
+/** 세션 제목 업데이트
+ * @param sync  false = localStorage만 업데이트 (스트리밍 중 호출), true(기본) = 백엔드도 동기화
+ */
+export function updateSessionTitle(id: string, title: string, sync = true) {
   if (typeof window === "undefined") return;
   const sessions = loadSessions().map((s) =>
     s.id === id ? { ...s, title, updatedAt: new Date() } : s
   );
   saveSessions(sessions);
   window.dispatchEvent(new Event("umai:sessions-change"));
-  // Sync to backend (fire-and-forget)
-  if (localStorage.getItem("umai_access_token")) {
+  if (sync && localStorage.getItem("umai_access_token")) {
     apiUpdateChat(id, { title }).catch(() => {});
   }
 }
