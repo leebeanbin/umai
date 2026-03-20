@@ -1,5 +1,8 @@
-from pydantic_settings import BaseSettings
+import warnings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
+
+_INSECURE_DEFAULT = "change-me-in-production"
 
 
 class Settings(BaseSettings):
@@ -10,10 +13,13 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"
 
     # ── Security ─────────────────────────────────────────────────────────────
-    SECRET_KEY: str = "change-me-in-production"
+    SECRET_KEY: str = _INSECURE_DEFAULT
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15             # 15분 (보안 표준)
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30               # 30일 (리프레시)
+
+    # ── File Upload ──────────────────────────────────────────────────────────
+    MAX_UPLOAD_SIZE_MB: int = 10  # 10 MB hard limit
 
     # ── Database (PostgreSQL) ─────────────────────────────────────────────────
     DATABASE_URL: str = "postgresql+asyncpg://umai:umai@localhost:5432/umai"
@@ -29,6 +35,10 @@ class Settings(BaseSettings):
 
     # ── Ollama ────────────────────────────────────────────────────────────────
     OLLAMA_URL: str = "http://localhost:11434"
+
+    # ── 이미지 생성 백엔드 ────────────────────────────────────────────────────
+    COMFYUI_URL: str = "http://localhost:8188"
+    A1111_URL: str = "http://localhost:7860"
 
     # ── OAuth ─────────────────────────────────────────────────────────────────
     GOOGLE_CLIENT_ID: str = ""
@@ -46,9 +56,16 @@ class Settings(BaseSettings):
     def CORS_ORIGINS(self) -> List[str]:
         return [self.FRONTEND_URL, "http://localhost:3000"]
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
 
 settings = Settings()
+
+# Warn loudly if the default SECRET_KEY is still in use outside of tests/DEBUG.
+if settings.SECRET_KEY == _INSECURE_DEFAULT and not settings.DEBUG:
+    warnings.warn(
+        "SECRET_KEY is set to the insecure default. "
+        "Set SECRET_KEY to a random value (e.g. `secrets.token_hex(32)`) "
+        "via the .env file or environment variable before deploying.",
+        stacklevel=1,
+    )
