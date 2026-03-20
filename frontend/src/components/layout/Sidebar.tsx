@@ -7,7 +7,7 @@ import {
   MessageSquare, ImageIcon, Plus, Search, Settings,
   ChevronRight, Folder, FolderOpen, MoreHorizontal,
   PenLine, Trash2, FolderPlus, X, LayoutGrid, PanelLeft,
-  FlaskConical, Shield, ChevronUp, Share2,
+  FlaskConical, Shield, ChevronUp, Share2, FolderInput,
 } from "lucide-react";
 import ChatShareModal from "@/components/chat/ChatShareModal";
 import {
@@ -118,6 +118,16 @@ export default function Sidebar() {
     }
   }, []);
 
+  const moveSessionToFolder = useCallback((sessionId: string, folderId: string | null) => {
+    setSessions((prev) => prev.map((s) =>
+      s.id === sessionId ? { ...s, folderId, updatedAt: new Date() } : s
+    ));
+    setContextMenu(null);
+    if (folderId) {
+      setFolders((prev) => prev.map((f) => f.id === folderId ? { ...f, open: true } : f));
+    }
+  }, []);
+
   const deleteFolder = useCallback((id: string) => {
     setSessions((prev) => prev.map((s) => s.folderId === id ? { ...s, folderId: null } : s));
     setFolders((prev) => prev.filter((f) => f.id !== id));
@@ -187,7 +197,7 @@ export default function Sidebar() {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
           <div
-            className="fixed z-50 w-44 bg-elevated border border-border rounded-xl shadow-xl overflow-hidden py-1"
+            className="fixed z-50 w-52 bg-elevated border border-border rounded-xl shadow-xl overflow-hidden py-1"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
             {contextMenu.type === "session" ? (
@@ -204,6 +214,44 @@ export default function Sidebar() {
                 >
                   <Share2 size={13} />공유 및 내보내기
                 </button>
+
+                {/* 폴더로 이동 */}
+                {folders.length > 0 && (
+                  <>
+                    <div className="my-1 mx-2 border-t border-border" />
+                    <p className="px-3 pt-1 pb-0.5 text-xs text-text-muted font-medium flex items-center gap-1.5">
+                      <FolderInput size={11} />폴더로 이동
+                    </p>
+                    {(() => {
+                      const currentFolderId = sessions.find((s) => s.id === contextMenu.id)?.folderId ?? null;
+                      return (
+                        <>
+                          {folders.map((f) => (
+                            <button
+                              key={f.id}
+                              onClick={() => moveSessionToFolder(contextMenu.id, f.id)}
+                              disabled={currentFolderId === f.id}
+                              className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-text-secondary hover:bg-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <Folder size={12} className="text-accent/60 shrink-0" />
+                              <span className="truncate">{f.name}</span>
+                              {currentFolderId === f.id && <span className="ml-auto text-xs text-text-muted">현재</span>}
+                            </button>
+                          ))}
+                          {currentFolderId && (
+                            <button
+                              onClick={() => moveSessionToFolder(contextMenu.id, null)}
+                              className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-text-muted hover:bg-hover transition-colors"
+                            >
+                              <X size={12} className="shrink-0" />폴더 해제
+                            </button>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </>
+                )}
+
                 <div className="my-1 mx-2 border-t border-border" />
                 <button
                   onClick={() => { deleteSession(contextMenu.id); setContextMenu(null); }}

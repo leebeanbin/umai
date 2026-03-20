@@ -45,23 +45,144 @@ export default function EditorSession() {
   }
 
   async function runEdit() {
+    if (!sourceImage) return;
     setPhase("queued");
     addLog(t("editor.log.sending"));
-    await new Promise((r) => setTimeout(r, 800));
+
+    // 1) OpenAI 키 확인
+    const capRes = await fetch("/api/image").catch(() => null);
+    const caps = capRes?.ok ? await capRes.json() as { openai: boolean } : null;
+    if (!caps?.openai) {
+      setPhase("failed");
+      addLog("❌ 이미지 편집에는 OpenAI API 키(DALL-E 2)가 필요합니다. 관리자 설정 → Connections에서 키를 추가해주세요.");
+      return;
+    }
+
+    // 2) 마스크 추출 및 DALL-E 형식으로 반전
+    //    Canvas mask: 흰색 = 편집 영역, 투명 = 유지 영역
+    //    DALL-E mask: 투명 = 편집 영역, 불투명 = 유지 영역  → 색상 반전 필요
+    const maskDataUrl = maskRef.current?.exportMaskDataUrl();
+    if (!maskDataUrl) {
+      setPhase("failed");
+      addLog("❌ 마스크를 그려주세요.");
+      return;
+    }
 
     setPhase("processing");
     addLog(t("editor.log.processing"));
-    await new Promise((r) => setTimeout(r, 1500));
 
-    const mockVariants: Variant[] = Array.from({ length: 2 }, (_, i) => ({
-      id: crypto.randomUUID(),
-      rank: i + 1,
-      url: `https://picsum.photos/seed/${Math.random().toString(36).slice(2)}/720/480`,
-    }));
-    setVariants(mockVariants);
-    setSelectedVariant(mockVariants[0].id);
-    setPhase("succeeded");
-    addLog(t("editor.log.done").replace("{n}", String(mockVariants.length)));
+    try {
+      // 3) 마스크 반전: 흰색↔투명 교환, 512x512로 크롭/패드 (DALL-E 2는 정사각형 요구)
+      const SIZE = 1024;
+      const invertedMaskBlob = await invertAndSquareMask(maskDataUrl, SIZE);
+      const squaredImageBlob = await squareImage(sourceImage.dataUrl, SIZE);
+
+      // 4) API 호출
+      const fd = new FormData();
+      fd.append("image",  squaredImageBlob, "image.png");
+      fd.append("mask",   invertedMaskBlob, "mask.png");
+      fd.append("prompt", instruction.trim());
+      fd.append("n",      "2");
+      fd.append("size",   `${SIZE}x${SIZE}`);
+
+      const res = await fetch("/api/image/edit", { method: "POST", body: fd });
+      const data = await res.json() as { images?: { url: string }[]; error?: string };
+
+      if (!res.ok || data.error) {
+        setPhase("failed");
+        addLog(`❌ ${data.error ?? "편집 실패"}`);
+        return;
+      }
+
+      const newVariants: Variant[] = (data.images ?? []).map((img, i) => ({
+        id: crypto.randomUUID(),
+        rank: i + 1,
+        url: img.url,
+      }));
+      setVariants(newVariants);
+      setSelectedVariant(newVariants[0]?.id ?? null);
+      setPhase("succeeded");
+      addLog(t("editor.log.done").replace("{n}", String(newVariants.length)));
+    } catch (err) {
+      setPhase("failed");
+      addLog(`❌ ${(err as Error).message}`);
+    }
+  }
+
+  /** DALL-E 2 마스크: 흰색→투명(편집 영역), 투명→흰색(유지 영역), 정사각형으로 맞춤 */
+  async function invertAndSquareMask(dataUrl: string, size: number): Promise<Blob> {
+    const img = await loadImage(dataUrl);
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext("2d")!;
+
+    // 이미지를 정사각형에 맞게 그림 (letterbox)
+    const scale = Math.min(size / img.width, size / img.height);
+    const sw = img.width * scale, sh = img.height * scale;
+    const ox = (size - sw) / 2, oy = (size - sh) / 2;
+
+    // 먼저 전체를 흰색 불투명으로 채움 (유지 영역 기본값)
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, size, size);
+
+    // 원본 마스크 그림
+    const tmpCanvas = document.createElement("canvas");
+    tmpCanvas.width = img.width; tmpCanvas.height = img.height;
+    tmpCanvas.getContext("2d")!.drawImage(img, 0, 0);
+    const { data: px } = tmpCanvas.getContext("2d")!.getImageData(0, 0, img.width, img.height);
+
+    // 흰색 픽셀(r>128 && a>0) → 대상 canvas에 투명으로
+    const scaledCanvas = document.createElement("canvas");
+    scaledCanvas.width = img.width; scaledCanvas.height = img.height;
+    const sCtx = scaledCanvas.getContext("2d")!;
+    const id = sCtx.createImageData(img.width, img.height);
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i] > 128 && px[i + 3] > 0) {
+        // 편집 영역 → DALL-E 마스크에서 투명
+        id.data[i] = id.data[i+1] = id.data[i+2] = 0;
+        id.data[i+3] = 0;
+      } else {
+        // 유지 영역 → 흰색 불투명
+        id.data[i] = id.data[i+1] = id.data[i+2] = 255;
+        id.data[i+3] = 255;
+      }
+    }
+    sCtx.putImageData(id, 0, 0);
+
+    // 정사각형 캔버스에 그림 (배경은 이미 흰색이므로 letterbox 바깥은 유지 영역)
+    // letterbox 안을 반전 마스크로 덮음
+    ctx.drawImage(scaledCanvas, ox, oy, sw, sh);
+
+    return await canvasToBlob(canvas);
+  }
+
+  /** 이미지를 정사각형(size×size)에 맞게 letterbox */
+  async function squareImage(dataUrl: string, size: number): Promise<Blob> {
+    const img = await loadImage(dataUrl);
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, size, size);
+    const scale = Math.min(size / img.width, size / img.height);
+    const sw = img.width * scale, sh = img.height * scale;
+    ctx.drawImage(img, (size - sw) / 2, (size - sh) / 2, sw, sh);
+    return await canvasToBlob(canvas);
+  }
+
+  function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => res(img);
+      img.onerror = rej;
+      img.src = src;
+    });
+  }
+
+  function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+    return new Promise((res, rej) =>
+      canvas.toBlob((b) => b ? res(b) : rej(new Error("canvas toBlob failed")), "image/png")
+    );
   }
 
   const displayImage = variants.find((v) => v.id === selectedVariant)?.url ?? sourceImage?.dataUrl ?? null;
