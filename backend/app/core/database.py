@@ -62,5 +62,5 @@ def sync_session() -> Session:
 async def create_tables():
     """개발용: 테이블 자동 생성 (프로덕션은 Alembic 사용)"""
     async with engine.begin() as conn:
-        from app.models import user, chat  # noqa: F401
+        from app.models import user, chat, workspace, settings  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)

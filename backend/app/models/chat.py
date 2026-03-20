@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -43,6 +43,9 @@ class Chat(Base):
         "Message", back_populates="chat", cascade="all, delete-orphan",
         order_by="Message.created_at"
     )
+    members: Mapped[list["ChatMember"]] = relationship(
+        "ChatMember", back_populates="chat", cascade="all, delete-orphan",
+    )
     user = relationship("User", foreign_keys=[user_id])
     folder = relationship("Folder", foreign_keys=[folder_id])
 
@@ -66,6 +69,39 @@ class Message(Base):
     )
 
     chat: Mapped["Chat"] = relationship("Chat", back_populates="messages")
+
+
+class ChatMember(Base):
+    """채팅 멤버십 — 오너 외 초대된 유저의 역할을 관리한다."""
+    __tablename__ = "chat_members"
+    __table_args__ = (
+        UniqueConstraint("chat_id", "user_id", name="uq_chat_members_chat_user"),
+        Index("ix_chat_members_user", "user_id"),   # 내가 속한 채팅 목록 조회용
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    chat_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("chats.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    # owner: 채팅 생성자 (전체 권한)
+    # editor: 메시지 읽기/쓰기 가능, 설정 변경 불가
+    # viewer: 읽기만 가능
+    role: Mapped[str] = mapped_column(
+        Enum("owner", "editor", "viewer", name="chat_member_role_enum"),
+        nullable=False,
+        default="editor",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    chat: Mapped["Chat"] = relationship("Chat", back_populates="members")
+    user = relationship("User", foreign_keys=[user_id])
 
 
 class Folder(Base):
