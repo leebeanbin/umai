@@ -1,38 +1,41 @@
 """
-워크스페이스 라우터 (로그인 유저 전용)
-- GET/POST/PATCH/DELETE /workspace/items   커스텀 모델·프롬프트·툴·스킬
+워크스페이스 라우터 — HTTP 관심사만 담당.
+비즈니스 로직은 WorkspaceService에 위임.
+
+- GET/POST/PATCH/DELETE /workspace/items     커스텀 모델·프롬프트·툴·스킬
 - GET/POST/DELETE       /workspace/knowledge  지식 베이스 파일
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from pydantic import BaseModel
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from pydantic import BaseModel, ConfigDict, field_serializer
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User
-from app.models.workspace import KnowledgeItem, WorkspaceItem
 from app.routers.deps import get_current_user
+from app.services.workspace_service import WorkspaceService, WorkspaceItemType
+
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 
-WorkspaceItemType = Literal["model", "prompt", "tool", "skill"]
 
-ALLOWED_CONTENT_TYPES = {
-    "text/plain":       "txt",
-    "text/markdown":    "md",
-    "application/pdf":  "pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-}
+def get_workspace_service(db: AsyncSession = Depends(get_db)) -> WorkspaceService:
+    return WorkspaceService(db)
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class WorkspaceItemOut(BaseModel):
-    id: str
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
     item_type: str
     name: str
     data: dict
@@ -40,7 +43,9 @@ class WorkspaceItemOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = {"from_attributes": True}
+    @field_serializer("id")
+    def _id(self, v: uuid.UUID) -> str:
+        return str(v)
 
 
 class WorkspaceItemCreate(BaseModel):
@@ -57,43 +62,17 @@ class WorkspaceItemPatch(BaseModel):
 
 
 class KnowledgeItemOut(BaseModel):
-    id: str
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
     name: str
     content_type: str
     file_size: int
     created_at: datetime
 
-    model_config = {"from_attributes": True}
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _serialize(item: WorkspaceItem) -> WorkspaceItemOut:
-    return WorkspaceItemOut(
-        id=str(item.id),
-        item_type=item.item_type,
-        name=item.name,
-        data=item.data or {},
-        is_enabled=item.is_enabled,
-        created_at=item.created_at,
-        updated_at=item.updated_at,
-    )
-
-
-async def _get_item_or_404(
-    db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID
-) -> WorkspaceItem:
-    row = (
-        await db.execute(
-            select(WorkspaceItem).where(
-                WorkspaceItem.id == item_id,
-                WorkspaceItem.user_id == user_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if not row:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace item not found")
-    return row
+    @field_serializer("id")
+    def _id(self, v: uuid.UUID) -> str:
+        return str(v)
 
 
 # ── Workspace Items ───────────────────────────────────────────────────────────
@@ -101,154 +80,91 @@ async def _get_item_or_404(
 @router.get("/items", response_model=list[WorkspaceItemOut])
 async def list_items(
     item_type: Optional[WorkspaceItemType] = None,
+    svc: WorkspaceService = Depends(get_workspace_service),
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    q = select(WorkspaceItem).where(WorkspaceItem.user_id == user.id)
-    if item_type:
-        q = q.where(WorkspaceItem.item_type == item_type)
-    q = q.order_by(WorkspaceItem.created_at.desc())
-    rows = (await db.execute(q)).scalars().all()
-    return [_serialize(r) for r in rows]
+    items = await svc.list_items(user.id, item_type)
+    return [WorkspaceItemOut.model_validate(i) for i in items]
 
 
 @router.post("/items", response_model=WorkspaceItemOut, status_code=201)
 async def create_item(
     body: WorkspaceItemCreate,
+    svc: WorkspaceService = Depends(get_workspace_service),
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    item = WorkspaceItem(
+    item = await svc.create_item(
         user_id=user.id,
         item_type=body.item_type,
         name=body.name,
         data=body.data,
         is_enabled=body.is_enabled,
     )
-    db.add(item)
-    await db.flush()
-    await db.commit()
-    await db.refresh(item)
-    return _serialize(item)
+    return WorkspaceItemOut.model_validate(item)
 
 
 @router.patch("/items/{item_id}", response_model=WorkspaceItemOut)
 async def update_item(
     item_id: uuid.UUID,
     body: WorkspaceItemPatch,
+    svc: WorkspaceService = Depends(get_workspace_service),
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    item = await _get_item_or_404(db, item_id, user.id)
-    if body.name is not None:
-        item.name = body.name
-    if body.data is not None:
-        item.data = body.data
-    if body.is_enabled is not None:
-        item.is_enabled = body.is_enabled
-    item.updated_at = datetime.now(timezone.utc)
-    await db.flush()
-    await db.commit()
-    await db.refresh(item)
-    return _serialize(item)
+    item = await svc.get_item(item_id, user.id)
+    item = await svc.update_item(item, body.name, body.data, body.is_enabled)
+    return WorkspaceItemOut.model_validate(item)
 
 
 @router.delete("/items/{item_id}", status_code=204)
 async def delete_item(
     item_id: uuid.UUID,
+    svc: WorkspaceService = Depends(get_workspace_service),
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    item = await _get_item_or_404(db, item_id, user.id)
-    await db.delete(item)
-    await db.commit()
+    item = await svc.get_item(item_id, user.id)
+    await svc.delete_item(item)
 
 
 # ── Knowledge ─────────────────────────────────────────────────────────────────
 
 @router.get("/knowledge", response_model=list[KnowledgeItemOut])
 async def list_knowledge(
+    svc: WorkspaceService = Depends(get_workspace_service),
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    rows = (
-        await db.execute(
-            select(KnowledgeItem)
-            .where(KnowledgeItem.user_id == user.id)
-            .order_by(KnowledgeItem.created_at.desc())
-        )
-    ).scalars().all()
-    return [
-        KnowledgeItemOut(
-            id=str(r.id),
-            name=r.name,
-            content_type=r.content_type,
-            file_size=r.file_size,
-            created_at=r.created_at,
-        )
-        for r in rows
-    ]
+    items = await svc.list_knowledge(user.id)
+    return [KnowledgeItemOut.model_validate(i) for i in items]
 
 
 @router.post("/knowledge", response_model=KnowledgeItemOut, status_code=201)
+@limiter.limit("20/minute")
 async def upload_knowledge(
+    request: Request,
     file: UploadFile = File(...),
+    svc: WorkspaceService = Depends(get_workspace_service),
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    ct = file.content_type or "text/plain"
-    if ct not in ALLOWED_CONTENT_TYPES:
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    raw = await file.read(max_bytes + 1)
+    if len(raw) > max_bytes:
         raise HTTPException(
-            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            f"Unsupported file type: {ct}. Allowed: txt, md, pdf, docx",
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f"File exceeds the {settings.MAX_UPLOAD_SIZE_MB} MB limit.",
         )
-
-    raw = await file.read()
-    file_size = len(raw)
-
-    # Simple text extraction (PDF/DOCX extraction can be added later)
-    content: Optional[str] = None
-    if ct in ("text/plain", "text/markdown"):
-        try:
-            content = raw.decode("utf-8", errors="replace")
-        except Exception:
-            content = None
-
-    item = KnowledgeItem(
+    item = await svc.upload_knowledge(
         user_id=user.id,
-        name=file.filename or "Untitled",
-        content_type=ct,
-        file_size=file_size,
-        content=content,
+        filename=file.filename or "Untitled",
+        content_type=file.content_type or "text/plain",
+        raw_bytes=raw,
     )
-    db.add(item)
-    await db.flush()
-    await db.commit()
-    await db.refresh(item)
-    return KnowledgeItemOut(
-        id=str(item.id),
-        name=item.name,
-        content_type=item.content_type,
-        file_size=item.file_size,
-        created_at=item.created_at,
-    )
+    return KnowledgeItemOut.model_validate(item)
 
 
 @router.delete("/knowledge/{item_id}", status_code=204)
 async def delete_knowledge(
     item_id: uuid.UUID,
+    svc: WorkspaceService = Depends(get_workspace_service),
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    row = (
-        await db.execute(
-            select(KnowledgeItem).where(
-                KnowledgeItem.id == item_id,
-                KnowledgeItem.user_id == user.id,
-            )
-        )
-    ).scalar_one_or_none()
-    if not row:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Knowledge item not found")
-    await db.delete(row)
-    await db.commit()
+    item = await svc.get_knowledge_or_404(item_id, user.id)
+    await svc.delete_knowledge(item)

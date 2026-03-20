@@ -1,31 +1,57 @@
-from datetime import datetime
-from pydantic import BaseModel
 import uuid
+from datetime import datetime
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, EmailStr, field_serializer
 
 
 class MessageOut(BaseModel):
-    id: str
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
     role: str
     content: str
     images: list[str] | None = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    @field_serializer("id")
+    def _id(self, v: uuid.UUID) -> str:
+        return str(v)
+
+
+ChatMemberRole = Literal["owner", "editor", "viewer"]
+
+
+class ChatMemberOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: uuid.UUID
+    name: str
+    email: str
+    avatar_url: str | None
+    role: ChatMemberRole
+    created_at: datetime
+
+    @field_serializer("user_id")
+    def _user_id(self, v: uuid.UUID) -> str:
+        return str(v)
 
 
 class ChatOut(BaseModel):
-    id: str
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
     title: str
-    folder_id: str | None = None
+    folder_id: uuid.UUID | None = None
     is_pinned: bool
     is_archived: bool
     model: str | None
     created_at: datetime
     updated_at: datetime
+    my_role: ChatMemberRole = "owner"
 
-    class Config:
-        from_attributes = True
+    @field_serializer("id", "folder_id")
+    def _uuid(self, v: uuid.UUID | None) -> str | None:
+        return str(v) if v else None
 
 
 class ChatDetailOut(ChatOut):
@@ -56,6 +82,8 @@ class AddMessageRequest(BaseModel):
 # ── Folder ────────────────────────────────────────────────────────────────────
 
 class FolderOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: uuid.UUID
     name: str
     description: str | None = None
@@ -63,8 +91,9 @@ class FolderOut(BaseModel):
     is_open: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    @field_serializer("id")
+    def _id(self, v: uuid.UUID) -> str:
+        return str(v)
 
 
 class CreateFolderRequest(BaseModel):
@@ -78,3 +107,18 @@ class UpdateFolderRequest(BaseModel):
     description: str | None = None
     system_prompt: str | None = None
     is_open: bool | None = None
+
+
+class FolderDetailOut(FolderOut):
+    chats: list["ChatOut"] = []
+
+
+# ── Chat Member ────────────────────────────────────────────────────────────────
+
+class InviteMemberRequest(BaseModel):
+    email: EmailStr
+    role: ChatMemberRole = "editor"
+
+
+class UpdateMemberRoleRequest(BaseModel):
+    role: ChatMemberRole

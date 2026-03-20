@@ -5,22 +5,29 @@
 - GET  /admin/users/{id}         유저 상세
 - PATCH /admin/users/{id}        유저 역할/상태 변경
 - DELETE /admin/users/{id}       유저 삭제
+- GET  /admin/settings           시스템 설정 전체 (admin only)
+- PATCH /admin/settings          시스템 설정 부분 업데이트 (admin only)
+- GET  /admin/settings/public    OAuth 활성화 여부 (인증 불필요)
 """
-import os
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, field_serializer
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.errors import ErrCode
 from app.models.user import User
 from app.models.chat import Chat
-from app.routers.deps import require_admin
+from app.models.settings import SystemSettings, DEFAULT_SETTINGS
+from app.routers.deps import require_admin, get_current_user
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -28,7 +35,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 # ── 스키마 ─────────────────────────────────────────────────────────────────────
 
 class AdminUserOut(BaseModel):
-    id: str
+    id: uuid.UUID
     email: str
     name: str
     avatar_url: Optional[str] = None
@@ -38,8 +45,11 @@ class AdminUserOut(BaseModel):
     created_at: datetime
     last_seen_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
+
+    @field_serializer("id")
+    def serialize_id(self, v: uuid.UUID) -> str:
+        return str(v)
 
 
 class UpdateUserRequest(BaseModel):
@@ -103,10 +113,9 @@ async def get_user(
     _admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+        ErrCode.USER_NOT_FOUND.raise_it()
     return user
 
 
@@ -119,10 +128,9 @@ async def update_user(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+        ErrCode.USER_NOT_FOUND.raise_it()
 
     # 자신의 role은 변경 불가 (잠금 방지)
     if str(user.id) == str(admin.id) and body.role and body.role != "admin":
@@ -138,8 +146,6 @@ async def update_user(
         user.name = body.name
 
     await db.flush()
-    await db.commit()
-    await db.refresh(user)
     return user
 
 
@@ -154,20 +160,43 @@ async def delete_user(
     if str(user_id) == str(admin.id):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot delete yourself")
 
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+        ErrCode.USER_NOT_FOUND.raise_it()
 
     await db.delete(user)
 
 
 # ── Ollama 프록시 ───────────────────────────────────────────────────────────────
 
+def _infer_capabilities(name: str, families: list[str]) -> list[str]:
+    """모델 이름과 family 기반으로 지원 기능 추론."""
+    caps: list[str] = []
+    nl = name.lower()
+    fl = [f.lower() for f in families]
+
+    # Vision / multimodal
+    if any(f in fl for f in ("clip", "llava")) or any(
+        k in nl for k in ("llava", "moondream", "minicpm-v", "bakllava", "vision")
+    ):
+        caps.append("vision")
+        caps.append("ocr")  # vision 모델은 OCR도 가능
+
+    # Function calling / tool use
+    if any(k in nl for k in ("mistral", "qwen2.5", "qwen2", "llama3.1", "llama3.2", "llama3.3", "functionary", "firefunction")):
+        caps.append("tools")
+
+    # Code generation
+    if any(k in nl for k in ("codellama", "deepseek-coder", "starcoder", "qwen2.5-coder", "codegemma", "codeqwen", "phind")):
+        caps.append("code")
+
+    return caps
+
+
 @router.get("/ollama/models")
 async def list_ollama_models(_admin: User = Depends(require_admin)):
     """Proxy GET /api/tags from the local Ollama server."""
-    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    ollama_url = settings.OLLAMA_URL
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(f"{ollama_url}/api/tags")
@@ -175,3 +204,231 @@ async def list_ollama_models(_admin: User = Depends(require_admin)):
         return r.json()  # {"models": [{"name": "llama3.2", "size": ...}, ...]}
     except Exception:
         raise HTTPException(503, "Ollama unreachable")
+
+
+@router.get("/ollama/models/{model_name:path}/capabilities")
+async def get_ollama_model_capabilities(
+    model_name: str,
+    _admin: User = Depends(require_admin),
+):
+    """Proxy GET /api/show and return enriched capability metadata."""
+    ollama_url = settings.OLLAMA_URL
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{ollama_url}/api/show",
+                json={"name": model_name},
+            )
+            r.raise_for_status()
+        raw = r.json()
+    except Exception:
+        raise HTTPException(503, "Ollama unreachable")
+
+    details = raw.get("details", {})
+    model_info = raw.get("model_info", {})
+
+    families: list[str] = details.get("families") or []
+    if isinstance(families, str):
+        families = [families]
+
+    # context_length: 모델 아키텍처에 따라 필드명 다름
+    context_length = 0
+    for key, val in model_info.items():
+        if key.endswith(".context_length") and isinstance(val, int):
+            context_length = val
+            break
+
+    return {
+        "name": model_name,
+        "family": details.get("family", ""),
+        "families": families,
+        "parameter_size": details.get("parameter_size", ""),
+        "quantization": details.get("quantization_level", ""),
+        "context_length": context_length,
+        "capabilities": _infer_capabilities(model_name, families),
+    }
+
+
+@router.post("/ollama/pull")
+async def pull_ollama_model(
+    body: dict,
+    _admin: User = Depends(require_admin),
+):
+    """
+    Proxy POST /api/pull to Ollama and stream progress as NDJSON.
+    body: {"name": "llama3.2"}
+    Streams: {"status": "pulling manifest"} ... {"status": "success"}
+    """
+    model_name = body.get("name", "").strip()
+    if not model_name:
+        raise HTTPException(400, "model name required")
+
+    ollama_url = settings.OLLAMA_URL
+
+    async def _stream():
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(
+                    "POST",
+                    f"{ollama_url}/api/pull",
+                    json={"name": model_name, "stream": True},
+                ) as r:
+                    async for line in r.aiter_lines():
+                        if line:
+                            yield line + "\n"
+        except Exception as e:
+            yield json.dumps({"error": str(e)}) + "\n"
+
+    return StreamingResponse(_stream(), media_type="application/x-ndjson")
+
+
+@router.delete("/ollama/models/{model_name:path}", status_code=204)
+async def delete_ollama_model(
+    model_name: str,
+    _admin: User = Depends(require_admin),
+):
+    """Proxy DELETE /api/delete to Ollama."""
+    ollama_url = settings.OLLAMA_URL
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.delete(
+                f"{ollama_url}/api/delete",
+                json={"name": model_name},
+            )
+            if r.status_code == 404:
+                raise HTTPException(404, "Model not found")
+            r.raise_for_status()
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, "Ollama unreachable")
+
+
+# ── 시스템 설정 헬퍼 ─────────────────────────────────────────────────────────────
+
+async def _get_settings_row(db: AsyncSession) -> SystemSettings:
+    result = await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = SystemSettings(id=1, data=json.dumps(DEFAULT_SETTINGS))
+        db.add(row)
+        await db.flush()
+    return row
+
+
+def _parse_settings(row: SystemSettings) -> dict:
+    try:
+        data = json.loads(row.data)
+    except Exception:
+        data = {}
+    # Deep merge with defaults to handle missing keys from older schemas
+    merged: dict = {}
+    for section, defaults in DEFAULT_SETTINGS.items():
+        merged[section] = {**defaults, **(data.get(section) or {})}
+    return merged
+
+
+def _deep_merge(base: dict, patch: dict) -> dict:
+    result = dict(base)
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(result.get(k), dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
+# ── GET /models (인증 유저) ───────────────────────────────────────────────────────
+
+@router.get("/models")
+async def list_enabled_models(
+    _user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    시스템 설정의 활성화된 모델 목록 반환.
+    Ollama는 설정된 URL로 live query.
+    """
+    row = await _get_settings_row(db)
+    data = _parse_settings(row)
+    models_cfg = data.get("models", {})
+    connections = data.get("connections", {})
+
+    result = []
+
+    # OpenAI
+    for mid in models_cfg.get("openai_enabled", []):
+        result.append({"id": mid, "name": mid, "provider": "OpenAI"})
+
+    # Anthropic
+    for mid in models_cfg.get("anthropic_enabled", []):
+        result.append({"id": mid, "name": mid, "provider": "Anthropic"})
+
+    # Google
+    for mid in models_cfg.get("google_enabled", []):
+        result.append({"id": mid, "name": mid, "provider": "Google"})
+
+    # Ollama — live query
+    ollama_url = connections.get("ollama_url", "") or settings.OLLAMA_URL
+    if ollama_url:
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                r = await client.get(f"{ollama_url}/api/tags")
+                r.raise_for_status()
+            raw = r.json()
+            enabled_ollama = set(models_cfg.get("ollama_enabled", []))
+            for m in raw.get("models", []):
+                name = m["name"]
+                # Only include if in ollama_enabled (or if list is empty = all enabled)
+                if not enabled_ollama or name in enabled_ollama:
+                    result.append({"id": name, "name": name, "provider": "Ollama"})
+        except Exception:
+            pass  # Ollama unreachable — skip silently
+
+    return result
+
+
+# ── GET /admin/settings/public (인증 불필요) ─────────────────────────────────────
+
+@router.get("/settings/public")
+async def get_public_settings(db: AsyncSession = Depends(get_db)):
+    """OAuth 활성화 여부 및 회원가입 허용 여부 반환 (로그인 화면에서 사용)."""
+    row = await _get_settings_row(db)
+    data = _parse_settings(row)
+    oauth = data.get("oauth", {})
+    general = data.get("general", {})
+    return {
+        "google_oauth_enabled": bool(oauth.get("google_enabled", False)),
+        "github_oauth_enabled": bool(oauth.get("github_enabled", False)),
+        "allow_signup": bool(general.get("allow_signup", True)),
+    }
+
+
+# ── GET /admin/settings (admin only) ────────────────────────────────────────────
+
+@router.get("/settings")
+async def get_settings(
+    _admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """전체 시스템 설정 반환."""
+    row = await _get_settings_row(db)
+    return _parse_settings(row)
+
+
+# ── PATCH /admin/settings (admin only) ──────────────────────────────────────────
+
+@router.patch("/settings")
+async def patch_settings(
+    body: dict,
+    _admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """시스템 설정 부분 업데이트 (섹션 단위 또는 필드 단위)."""
+    row = await _get_settings_row(db)
+    current = _parse_settings(row)
+    merged = _deep_merge(current, body)
+    row.data = json.dumps(merged)
+    row.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    return merged

@@ -1,4 +1,5 @@
 """FastAPI 공통 의존성"""
+import asyncio
 import json
 import uuid
 from types import SimpleNamespace
@@ -7,12 +8,17 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.errors import ErrCode
 from app.core.security import get_subject
-from app.core.redis import user_cache_get, user_cache_set
+from app.core.redis import user_cache_get, user_cache_set, access_get
 from app.models.user import User
 
 bearer = HTTPBearer(auto_error=False)
+
+# Dev bypass — only active when DEBUG=True
+_DEV_TOKEN = "dev"
 
 
 async def get_current_user(
@@ -20,29 +26,48 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     if not creds:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+        ErrCode.NOT_AUTHENTICATED.raise_it()
+
+    # Dev bypass — Bearer dev → first admin in DB (DEBUG mode only)
+    if settings.DEBUG and creds.credentials == _DEV_TOKEN:
+        result = await db.execute(
+            select(User).where(User.role == "admin", User.is_active == True).limit(1)
+        )
+        dev_user = result.scalar_one_or_none()
+        if dev_user:
+            return dev_user
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "No admin user in DB")
+
+    # ── Step 1: JWT 서명 검증 (변조 여부) ────────────────────────────────────
     user_id = get_subject(creds.credentials)
     if not user_id:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+        ErrCode.INVALID_TOKEN.raise_it()
 
-    # ── Redis 캐시에서 먼저 조회 (DB hit 방지) ───────────────────────────────
-    cached = await user_cache_get(user_id)
+    # ── Step 2 + 3: Redis 검증 & 유저 캐시 조회 (병렬) ───────────────────────
+    # access_get: 토큰 유효성 확인 (만료/로그아웃 여부)
+    # user_cache_get: 캐시 히트 시 DB 조회 불필요
+    redis_uid, cached = await asyncio.gather(
+        access_get(creds.credentials),
+        user_cache_get(user_id),
+    )
+
+    if not redis_uid:
+        ErrCode.TOKEN_EXPIRED.raise_it()
+
     if cached:
         data = json.loads(cached)
         if not data.get("is_active", True):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User suspended")
-        # UUID 문자열 → uuid.UUID 복원 (SQLAlchemy 쿼리 파라미터 호환)
+            ErrCode.USER_SUSPENDED.raise_it()
         data["id"] = uuid.UUID(data["id"])
         return SimpleNamespace(**data)  # type: ignore[return-value]
 
-    # ── DB 조회 (캐시 miss) ──────────────────────────────────────────────────
+    # ── Step 4: DB 조회 (캐시 miss) ──────────────────────────────────────────
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user or not user.is_active:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found or suspended")
+        ErrCode.USER_SUSPENDED.raise_it()
 
-    # 캐시에 저장 (직렬화: id는 str로)
-    payload = {
+    await user_cache_set(user_id, json.dumps({
         "id": str(user.id),
         "email": user.email,
         "name": user.name,
@@ -52,12 +77,11 @@ async def get_current_user(
         "oauth_provider": user.oauth_provider,
         "is_onboarded": user.is_onboarded,
         "notification_email": user.notification_email,
-    }
-    await user_cache_set(user_id, json.dumps(payload))
+    }))
     return user
 
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin only")
+        ErrCode.FORBIDDEN.raise_it()
     return user
