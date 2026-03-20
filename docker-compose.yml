@@ -192,8 +192,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # 브라우저가 접근할 백엔드 주소 (도메인 or IP)
-        NEXT_PUBLIC_API_URL: ${BACKEND_URL:?BACKEND_URL required}
+        # Next.js rewrite proxy 대상 — internal Docker 네트워크 주소
+        INTERNAL_API_URL: http://backend:8000
     container_name: umai-frontend
     restart: unless-stopped
     # 외부 포트 미노출 (nginx 경유)

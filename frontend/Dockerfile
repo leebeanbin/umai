@@ -13,9 +13,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-# NEXT_PUBLIC_* 변수는 빌드 타임에 번들에 포함됨 → ARG로 주입
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# INTERNAL_API_URL: server-side only — backend URL for Next.js rewrite proxy.
+# Set to the internal Docker network name (e.g. http://umai-backend:8000).
+ARG INTERNAL_API_URL=http://localhost:8000
+ENV INTERNAL_API_URL=$INTERNAL_API_URL
 RUN npm run build
 
 # ── 런타임 ────────────────────────────────────────────────────────────────────
