@@ -53,9 +53,16 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     return () => window.removeEventListener("umai:auth-change", onAuthChange);
   }, [loadUser]);
 
-  // Forced logout from token refresh failure
+  // Forced logout from token refresh failure (access token 만료 + refresh token 만료)
   useEffect(() => {
-    function onLogout() { setUser(null); }
+    function onLogout() {
+      setUser(null);
+      setLoading(false);
+      // 현재 경로가 auth bypass가 아니면 루트로 리다이렉트 → AuthModal 표시
+      if (!AUTH_BYPASS.some((p) => window.location.pathname.startsWith(p))) {
+        window.location.replace("/");
+      }
+    }
     window.addEventListener("umai:logout", onLogout);
     return () => window.removeEventListener("umai:logout", onLogout);
   }, []);

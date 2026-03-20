@@ -1,11 +1,14 @@
 /**
  * Typed fetch wrappers for the Umai FastAPI backend.
- * Base URL comes from NEXT_PUBLIC_API_URL (default: http://localhost:8000).
+ *
+ * All requests use relative paths (/api/v1/...) so they go through the
+ * Next.js rewrite proxy → backend. No CORS issues, no hardcoded ports.
+ * The backend URL is configured server-side via INTERNAL_API_URL in next.config.ts.
  *
  * All functions throw on non-2xx responses.
  */
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BASE = "";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -48,11 +51,13 @@ export type FolderOut = {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+const IS_DEV = process.env.NODE_ENV === "development";
+
 function getTokens() {
-  return {
-    access:  localStorage.getItem("umai_access_token")  ?? "",
-    refresh: localStorage.getItem("umai_refresh_token") ?? "",
-  };
+  // In dev mode, use the bypass token if no real token is stored
+  const access  = localStorage.getItem("umai_access_token")  || (IS_DEV ? "dev" : "");
+  const refresh = localStorage.getItem("umai_refresh_token") || "";
+  return { access, refresh };
 }
 
 function saveTokens(tokens: TokenResponse) {
@@ -154,23 +159,6 @@ export async function apiOnboard(name: string, notificationEmail: string): Promi
   });
 }
 
-export async function apiLogin(email: string, password: string): Promise<TokenResponse> {
-  const tokens = await apiFetch<TokenResponse>("/api/v1/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  }, false);
-  saveTokens(tokens);
-  return tokens;
-}
-
-export async function apiRegister(email: string, name: string, password: string): Promise<TokenResponse> {
-  const tokens = await apiFetch<TokenResponse>("/api/v1/auth/register", {
-    method: "POST",
-    body: JSON.stringify({ email, name, password }),
-  }, false);
-  saveTokens(tokens);
-  return tokens;
-}
 
 export async function apiLogout(): Promise<void> {
   const { refresh } = getTokens();
@@ -303,6 +291,49 @@ export async function apiAdminOllamaModelCapabilities(modelName: string): Promis
   );
 }
 
+/**
+ * Pull an Ollama model. Returns a ReadableStream of NDJSON progress lines.
+ * Each line: { status: string, completed?: number, total?: number, error?: string }
+ */
+export async function apiAdminOllamaPull(
+  modelName: string,
+  onProgress: (line: { status: string; completed?: number; total?: number; error?: string }) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const { access } = getTokens();
+  const res = await fetch(`${BASE}/api/v1/admin/ollama/pull`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(access ? { Authorization: `Bearer ${access}` } : {}),
+    },
+    body: JSON.stringify({ name: modelName }),
+    signal,
+  });
+  if (!res.ok || !res.body) throw new Error(`Pull failed: ${res.status}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.trim()) {
+        try { onProgress(JSON.parse(line)); } catch { /* ignore */ }
+      }
+    }
+  }
+}
+
+export async function apiAdminOllamaDelete(modelName: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/ollama/models/${encodeURIComponent(modelName)}`, {
+    method: "DELETE",
+  });
+}
+
 // ── Workspace ─────────────────────────────────────────────────────────────────
 
 export type WorkspaceItemType = "model" | "prompt" | "tool" | "skill";
@@ -378,4 +409,185 @@ export async function apiUploadKnowledge(file: File): Promise<KnowledgeItem> {
 
 export async function apiDeleteKnowledge(id: string): Promise<void> {
   return apiFetch<void>(`/api/v1/workspace/knowledge/${id}`, { method: "DELETE" });
+}
+
+// ── Tasks ─────────────────────────────────────────────────────────────────────
+
+export type TaskResponse = {
+  task_id: string;
+  status: "queued" | "pending" | "running" | "success" | "failed" | string;
+  result: unknown;
+  error: string | null;
+};
+
+export async function apiGetTask(taskId: string): Promise<TaskResponse> {
+  return apiFetch<TaskResponse>(`/api/v1/tasks/${taskId}`);
+}
+
+export async function apiEnqueueKnowledgeProcess(
+  knowledgeId: string,
+  file: File,
+  embeddingProvider: "openai" | "ollama" = "ollama",
+  embeddingModel = "nomic-embed-text",
+): Promise<TaskResponse> {
+  const fd = new FormData();
+  fd.append("knowledge_id", knowledgeId);
+  fd.append("embedding_provider", embeddingProvider);
+  fd.append("embedding_model", embeddingModel);
+  fd.append("file", file);
+  const { access } = getTokens();
+  const res = await fetch(`${BASE}/api/v1/tasks/knowledge/process`, {
+    method: "POST",
+    headers: access ? { Authorization: `Bearer ${access}` } : {},
+    body: fd,
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Enqueue failed ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<TaskResponse>;
+}
+
+export async function apiEnqueueAgentTask(body: {
+  messages: { role: string; content: string }[];
+  model: string;
+  provider?: "openai" | "anthropic" | "ollama";
+  enabled_tools?: string[];
+  max_steps?: number;
+  temperature?: number;
+  chat_id?: string;
+}): Promise<TaskResponse> {
+  return apiFetch<TaskResponse>("/api/v1/tasks/ai/agent", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function apiEnqueueWebSearch(query: string, maxResults = 5): Promise<TaskResponse> {
+  return apiFetch<TaskResponse>("/api/v1/tasks/ai/search", {
+    method: "POST",
+    body: JSON.stringify({ query, max_results: maxResults }),
+  });
+}
+
+// ── Admin Settings ─────────────────────────────────────────────────────────────
+
+export type AdminSettingsGeneral = {
+  instance_name: string;
+  instance_url: string;
+  allow_signup: boolean;
+  default_role: string;
+  show_admin_on_pending: boolean;
+  admin_email: string;
+  max_users: number;
+  jwt_expiry: string;
+};
+
+export type AdminSettingsConnections = {
+  ollama_url: string;
+  openai_key: string;
+  openai_base_url: string;
+  anthropic_key: string;
+  google_key: string;
+  custom_name: string;
+  custom_base_url: string;
+  custom_key: string;
+};
+
+export type AdminSettingsModels = {
+  openai_enabled: string[];
+  anthropic_enabled: string[];
+  google_enabled: string[];
+  ollama_enabled: string[];
+};
+
+export type AdminSettingsOAuth = {
+  google_enabled: boolean;
+  google_client_id: string;
+  google_client_secret: string;
+  github_enabled: boolean;
+  github_client_id: string;
+  github_client_secret: string;
+};
+
+export type AdminSettingsFeatures = {
+  web_search: boolean;
+  file_upload: boolean;
+  temp_chats: boolean;
+  memories: boolean;
+  user_api_keys: boolean;
+  user_webhooks: boolean;
+  community_sharing: boolean;
+  message_rating: boolean;
+};
+
+export type AdminSettingsDocuments = {
+  embedding_engine: string;
+  embedding_model: string;
+  chunk_size: number;
+  chunk_overlap: number;
+  top_k: number;
+  hybrid_search: boolean;
+  ocr_engine: string;
+};
+
+export type AdminSettingsAudio = {
+  stt_provider: string;
+  stt_key: string;
+  stt_language: string;
+  vad_auto_send: boolean;
+  tts_provider: string;
+  tts_key: string;
+  tts_voice: string;
+};
+
+export type AdminSettingsImages = {
+  engine: string;
+  dalle_key: string;
+  dalle_model: string;
+  comfyui_url: string;
+  a1111_url: string;
+};
+
+export type AdminSettingsEvaluations = {
+  arena_mode: boolean;
+  message_rating: boolean;
+};
+
+export type AdminSettings = {
+  general: AdminSettingsGeneral;
+  connections: AdminSettingsConnections;
+  models: AdminSettingsModels;
+  oauth: AdminSettingsOAuth;
+  features: AdminSettingsFeatures;
+  documents: AdminSettingsDocuments;
+  audio: AdminSettingsAudio;
+  images: AdminSettingsImages;
+  evaluations: AdminSettingsEvaluations;
+};
+
+export type PublicSettings = {
+  google_oauth_enabled: boolean;
+  github_oauth_enabled: boolean;
+  allow_signup: boolean;
+};
+
+export async function apiGetAdminSettings(): Promise<AdminSettings> {
+  return apiFetch<AdminSettings>("/api/v1/admin/settings");
+}
+
+export async function apiPatchAdminSettings(patch: Partial<AdminSettings>): Promise<AdminSettings> {
+  return apiFetch<AdminSettings>("/api/v1/admin/settings", {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function apiGetPublicSettings(): Promise<PublicSettings> {
+  const res = await fetch("/api/v1/admin/settings/public");
+  if (!res.ok) {
+    // Graceful fallback — if settings endpoint not available, assume defaults
+    return { google_oauth_enabled: true, github_oauth_enabled: true, allow_signup: true };
+  }
+  return res.json() as Promise<PublicSettings>;
 }
