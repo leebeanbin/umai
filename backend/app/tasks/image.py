@@ -16,10 +16,12 @@ from celery import shared_task
 from celery.utils.log import get_task_logger
 from PIL import Image
 
+from app.core.config import settings
+
 logger = get_task_logger(__name__)
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OLLAMA_URL     = settings.OLLAMA_URL
+OPENAI_API_KEY = settings.OPENAI_API_KEY
 
 
 # ── 헬퍼 ─────────────────────────────────────────────────────────────────────
@@ -209,7 +211,7 @@ def generate_image(
             return {"b64": b64, "url": None, "provider": "openai"}
 
         elif provider == "comfyui":
-            base = comfyui_url or os.getenv("COMFYUI_URL", "http://localhost:8188")
+            base = comfyui_url or settings.COMFYUI_URL
             with httpx.Client(timeout=300) as client:
                 r = client.post(f"{base}/prompt", json={
                     "prompt": {
@@ -227,7 +229,7 @@ def generate_image(
             return {"b64": None, "url": None, "provider": "comfyui", "prompt_id": r.json().get("prompt_id")}
 
         elif provider == "automatic1111":
-            base = a1111_url or os.getenv("A1111_URL", "http://localhost:7860")
+            base = a1111_url or settings.A1111_URL
             with httpx.Client(timeout=300) as client:
                 r = client.post(f"{base}/sdapi/v1/txt2img", json={
                     "prompt": prompt,

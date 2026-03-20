@@ -17,10 +17,12 @@ import tiktoken
 from celery import shared_task
 from celery.utils.log import get_task_logger
 
+from app.core.config import settings
+
 logger = get_task_logger(__name__)
 
-OLLAMA_URL     = os.getenv("OLLAMA_URL",    "http://localhost:11434")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OLLAMA_URL     = settings.OLLAMA_URL
+OPENAI_API_KEY = settings.OPENAI_API_KEY
 
 
 # ── 텍스트 추출 ────────────────────────────────────────────────────────────────

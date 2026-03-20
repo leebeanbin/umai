@@ -23,12 +23,14 @@ import httpx
 from celery import shared_task
 from celery.utils.log import get_task_logger
 
+from app.core.config import settings
+
 logger = get_task_logger(__name__)
 
-OLLAMA_URL      = os.getenv("OLLAMA_URL",      "http://localhost:11434")
-OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY",  "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-GOOGLE_API_KEY  = os.getenv("GOOGLE_API_KEY",  "")
+OLLAMA_URL        = settings.OLLAMA_URL
+OPENAI_API_KEY    = settings.OPENAI_API_KEY
+ANTHROPIC_API_KEY = settings.ANTHROPIC_API_KEY
+GOOGLE_API_KEY    = settings.GOOGLE_API_KEY
 
 # ── 도구 정의 (OpenAI function-calling 형식) ──────────────────────────────────
 
@@ -125,9 +127,15 @@ def _execute_python(code: str, timeout: int = 10) -> dict:
     제한된 Python 실행 환경.
     subprocess + 타임아웃으로 실행 시간 제한.
     """
-    # 위험 패턴 차단
-    BLOCKED = ["import os", "import sys", "import subprocess", "open(", "__import__",
-               "eval(", "exec(", "compile("]
+    # 위험 패턴 차단 (보안: 파일 시스템/프로세스 접근 차단)
+    BLOCKED = [
+        "import os", "import sys", "import subprocess", "import socket",
+        "import importlib", "import ctypes", "import multiprocessing",
+        "open(", "file(", "__import__", "__builtins__", "__dict__", "__class__",
+        "eval(", "exec(", "compile(", "getattr(", "setattr(", "hasattr(",
+        "globals(", "locals(", "vars(", "dir(",
+        "exit(", "quit(", "input(", "breakpoint(",
+    ]
     for pattern in BLOCKED:
         if pattern in code:
             return {"error": f"Blocked pattern: '{pattern}'", "stdout": "", "stderr": ""}
@@ -242,11 +250,17 @@ def _call_anthropic(messages: list, model: str, tools: list | None, temperature:
     # OpenAI 형식으로 정규화
     tool_calls = None
     if tool_uses:
-        tool_calls = [
-            {"id": t["id"], "type": "function",
-             "function": {"name": t["name"], "arguments": json.dumps(t["input"])}}
-            for t in tool_uses
-        ]
+        tool_calls = []
+        for t in tool_uses:
+            try:
+                args_str = json.dumps(t["input"]) if isinstance(t["input"], dict) else str(t["input"])
+            except (TypeError, ValueError):
+                args_str = "{}"
+            tool_calls.append({
+                "id": t.get("id", f"call_{len(tool_calls)}"),
+                "type": "function",
+                "function": {"name": t["name"], "arguments": args_str},
+            })
     return {
         "content": text_content,
         "tool_calls": tool_calls,
@@ -266,11 +280,32 @@ def _call_ollama(messages: list, model: str, tools: list | None, temperature: fl
     with httpx.Client(timeout=120) as client:
         r = client.post(f"{OLLAMA_URL}/api/chat", json=body)
         r.raise_for_status()
-    msg = r.json().get("message", {})
+    data = r.json()
+    msg = data.get("message", {})
+
+    # Normalize Ollama tool_calls → OpenAI format
+    # Ollama: arguments is dict, no id field
+    # OpenAI: arguments is JSON string, has id field
+    ollama_tcs = msg.get("tool_calls")
+    tool_calls = None
+    if ollama_tcs:
+        tool_calls = []
+        for i, tc in enumerate(ollama_tcs):
+            fn = tc.get("function", {})
+            args = fn.get("arguments", {})
+            tool_calls.append({
+                "id": tc.get("id", f"call_{i}"),
+                "type": "function",
+                "function": {
+                    "name": fn.get("name", ""),
+                    "arguments": json.dumps(args) if isinstance(args, dict) else args,
+                },
+            })
+
     return {
         "content": msg.get("content"),
-        "tool_calls": msg.get("tool_calls"),
-        "finish_reason": r.json().get("done_reason", "stop"),
+        "tool_calls": tool_calls,
+        "finish_reason": data.get("done_reason", "stop"),
     }
 
 
@@ -375,7 +410,10 @@ def web_search(self, query: str, max_results: int = 5) -> dict:
 @shared_task(bind=True, name="app.tasks.ai.execute_python", max_retries=1)
 def execute_python_task(self, code: str, timeout: int = 10) -> dict:
     """독립 Python 실행 태스크"""
-    return _execute_python(code, timeout)
+    try:
+        return _execute_python(code, timeout)
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=3)
 
 
 @shared_task(bind=True, name="app.tasks.ai.chat_completion", max_retries=1)
