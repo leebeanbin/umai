@@ -1,6 +1,11 @@
 "use client";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { useEffect, useState } from "react";
+import { apiGetPublicSettings, type PublicSettings } from "@/lib/api/backendClient";
+
+// OAuth links use relative paths — Next.js rewrites proxy them to the backend.
+// This avoids exposing the backend URL in browser JS and eliminates CORS.
+const BACKEND_URL = "";
 
 function GoogleIcon() {
   return (
@@ -21,7 +26,25 @@ function GitHubIcon() {
   );
 }
 
+const DEFAULT_PUBLIC: PublicSettings = {
+  google_oauth_enabled: true,
+  github_oauth_enabled: true,
+  allow_signup: true,
+};
+
 export default function AuthModal() {
+  const [publicSettings, setPublicSettings] = useState<PublicSettings>(DEFAULT_PUBLIC);
+
+  useEffect(() => {
+    apiGetPublicSettings()
+      .then(setPublicSettings)
+      .catch(() => { /* 실패 시 기본값 유지 */ });
+  }, []);
+
+  const showGoogle = publicSettings.google_oauth_enabled;
+  const showGithub = publicSettings.github_oauth_enabled;
+  const hasOAuth   = showGoogle || showGithub;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-base/70 backdrop-blur-xl px-4">
       {/* Radial glow */}
@@ -37,26 +60,34 @@ export default function AuthModal() {
             <span className="text-xl font-bold text-accent">U</span>
           </div>
           <h1 className="text-base font-semibold text-text-primary">Umai에 오신 것을 환영합니다</h1>
-          <p className="text-xs text-text-muted mt-1">소셜 계정으로 빠르게 시작하세요</p>
+          <p className="text-xs text-text-muted mt-1">
+            {hasOAuth ? "소셜 계정으로 빠르게 시작하세요" : "관리자에게 접근 권한을 요청하세요"}
+          </p>
         </div>
 
         {/* Social buttons */}
-        <div className="flex flex-col gap-2.5">
-          <a
-            href={`${BACKEND_URL}/api/v1/auth/oauth/google`}
-            className="flex items-center justify-center gap-2.5 w-full px-4 py-3 rounded-xl border border-border bg-surface hover:bg-hover text-text-secondary text-sm font-medium transition-colors"
-          >
-            <GoogleIcon />
-            Google로 계속하기
-          </a>
-          <a
-            href={`${BACKEND_URL}/api/v1/auth/oauth/github`}
-            className="flex items-center justify-center gap-2.5 w-full px-4 py-3 rounded-xl border border-border bg-surface hover:bg-hover text-text-secondary text-sm font-medium transition-colors"
-          >
-            <GitHubIcon />
-            GitHub로 계속하기
-          </a>
-        </div>
+        {hasOAuth && (
+          <div className="flex flex-col gap-2.5">
+            {showGoogle && (
+              <a
+                href={`${BACKEND_URL}/api/v1/auth/oauth/google`}
+                className="flex items-center justify-center gap-2.5 w-full px-4 py-3 rounded-xl border border-border bg-surface hover:bg-hover text-text-secondary text-sm font-medium transition-colors"
+              >
+                <GoogleIcon />
+                Google로 계속하기
+              </a>
+            )}
+            {showGithub && (
+              <a
+                href={`${BACKEND_URL}/api/v1/auth/oauth/github`}
+                className="flex items-center justify-center gap-2.5 w-full px-4 py-3 rounded-xl border border-border bg-surface hover:bg-hover text-text-secondary text-sm font-medium transition-colors"
+              >
+                <GitHubIcon />
+                GitHub로 계속하기
+              </a>
+            )}
+          </div>
+        )}
 
         <p className="mt-6 text-center text-[11px] text-text-muted leading-relaxed">
           계속 진행하면 Umai의{" "}

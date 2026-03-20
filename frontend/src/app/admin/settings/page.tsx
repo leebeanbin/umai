@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Settings, Globe, Zap, ImageIcon, Database,
   Cpu, Check, Eye, EyeOff, Info, AlertCircle, Download,
@@ -8,7 +8,11 @@ import {
   Server, BookOpen, Volume2, BarChart2, RefreshCw, Trash2,
 } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
-import { apiAdminOllamaModels, apiAdminOllamaModelCapabilities } from "@/lib/api/backendClient";
+import {
+  apiAdminOllamaModels, apiAdminOllamaModelCapabilities,
+  apiAdminOllamaPull, apiAdminOllamaDelete,
+  apiGetAdminSettings, apiPatchAdminSettings,
+} from "@/lib/api/backendClient";
 
 type AdminSettingsTab =
   | "general"
@@ -124,9 +128,14 @@ function Slider({ label, value, onChange, min, max, step, hint }: {
 }
 
 // ── SaveBar ───────────────────────────────────────────────────────────────────
-function SaveBar({ onSave, saved }: { onSave: () => void; saved: boolean }) {
+function SaveBar({ onSave, saved, error }: { onSave: () => void; saved: boolean; error?: string | null }) {
   return (
-    <div className="sticky bottom-0 left-0 right-0 flex justify-end pt-4 pb-2 bg-gradient-to-t from-base to-transparent pointer-events-none">
+    <div className="sticky bottom-0 left-0 right-0 flex items-center justify-end gap-3 pt-4 pb-2 bg-gradient-to-t from-base to-transparent pointer-events-none">
+      {error && (
+        <span className="pointer-events-auto text-xs text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-full">
+          {error}
+        </span>
+      )}
       <button
         onClick={onSave}
         className="pointer-events-auto flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium text-white bg-accent hover:bg-accent-hover transition-colors shadow-lg"
@@ -142,6 +151,8 @@ export default function AdminSettingsPage() {
   const { lang } = useLanguage();
   const [tab, setTab] = useState<AdminSettingsTab>("general");
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   // General
   const [instanceName, setInstanceName] = useState("Umai-bin");
@@ -183,17 +194,21 @@ export default function AdminSettingsPage() {
   const [messageRating, setMessageRating]     = useState(false);
   const [userWebhooks, setUserWebhooks]       = useState(false);
 
-  // Models — allowed list per provider
-  const OPENAI_MODELS    = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"];
-  const ANTHROPIC_MODELS = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-opus-4-6"];
-  const GOOGLE_MODELS    = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"];
-  const [enabledModels, setEnabledModels] = useState<string[]>([
-    ...OPENAI_MODELS, ...ANTHROPIC_MODELS, ...GOOGLE_MODELS,
-  ]);
+  // Models — editable per-provider lists
+  const [openaiModels, setOpenaiModels]       = useState<string[]>(["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]);
+  const [anthropicModels, setAnthropicModels] = useState<string[]>(["claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-opus-4-6"]);
+  const [googleModels, setGoogleModels]       = useState<string[]>(["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]);
+  const [openaiInput, setOpenaiInput]         = useState("");
+  const [anthropicInput, setAnthropicInput]   = useState("");
+  const [googleInput, setGoogleInput]         = useState("");
   const [ollamaEnabledModels, setOllamaEnabledModels] = useState<string[]>([]);
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
   const [ollamaModelsFetched, setOllamaModelsFetched] = useState(false);
   const [ollamaCapabilities, setOllamaCapabilities] = useState<Record<string, string[]>>({});
+  const [ollamaPullInput, setOllamaPullInput]       = useState("");
+  const [ollamaPulling, setOllamaPulling]           = useState(false);
+  const [ollamaPullProgress, setOllamaPullProgress] = useState<{ status: string; pct?: number } | null>(null);
+  const [ollamaDeleting, setOllamaDeleting]         = useState<string | null>(null);
 
   // Documents (RAG)
   const [embeddingEngine, setEmbeddingEngine] = useState<"ollama" | "openai">("openai");
@@ -225,9 +240,6 @@ export default function AdminSettingsPage() {
   const [arenaMode, setArenaMode]             = useState(false);
   const [evalMessageRating, setEvalMessageRating] = useState(false);
 
-  const toggleModel = (id: string) => setEnabledModels((prev) =>
-    prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
-  );
   const toggleOllamaModel = (id: string) => setOllamaEnabledModels((prev) =>
     prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
   );
@@ -271,15 +283,267 @@ export default function AdminSettingsPage() {
     }
   }, []);
 
+  const pullOllamaModel = useCallback(async () => {
+    const name = ollamaPullInput.trim();
+    if (!name || ollamaPulling) return;
+    setOllamaPulling(true);
+    setOllamaPullProgress({ status: "Starting…" });
+    try {
+      await apiAdminOllamaPull(name, (line) => {
+        const pct = (line.completed && line.total)
+          ? Math.round((line.completed / line.total) * 100)
+          : undefined;
+        setOllamaPullProgress({ status: line.error ?? line.status ?? "Pulling…", pct });
+      });
+      setOllamaPullInput("");
+      setOllamaPullProgress({ status: "Done!" });
+      // Refresh model list
+      await fetchOllamaModels();
+    } catch (e: unknown) {
+      setOllamaPullProgress({ status: `Error: ${e instanceof Error ? e.message : "unknown"}` });
+    } finally {
+      setOllamaPulling(false);
+    }
+  }, [ollamaPullInput, ollamaPulling, fetchOllamaModels]);
+
+  const deleteOllamaModel = useCallback(async (name: string) => {
+    if (ollamaDeleting) return;
+    setOllamaDeleting(name);
+    try {
+      await apiAdminOllamaDelete(name);
+      setOllamaModelNames((prev) => prev.filter((n) => n !== name));
+      setOllamaEnabledModels((prev) => prev.filter((n) => n !== name));
+    } catch {
+      // silently fail
+    } finally {
+      setOllamaDeleting(null);
+    }
+  }, [ollamaDeleting]);
+
   // Derive which capabilities are available in the currently-enabled Ollama models
   const enabledOllamaCaps = ollamaEnabledModels.flatMap((name) => ollamaCapabilities[name] ?? []);
   const hasVisionCapability = enabledOllamaCaps.includes("vision");
   const hasOcrCapability    = enabledOllamaCaps.includes("ocr");
   const hasToolsCapability  = enabledOllamaCaps.includes("tools");
 
-  function handleSave() {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+  // ── 초기 설정 로드 ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    apiGetAdminSettings()
+      .then((s) => {
+        if (cancelled) return;
+        // General
+        if (s.general) {
+          setInstanceName(s.general.instance_name ?? "Umai");
+          setInstanceUrl(s.general.instance_url || "http://localhost:3000");
+          setAllowSignups(s.general.allow_signup ?? true);
+          setDefaultRole((s.general.default_role as "user" | "pending") ?? "pending");
+          setShowAdminOnPending(s.general.show_admin_on_pending ?? true);
+          setAdminEmail(s.general.admin_email || "");
+          setJwtExpiry(s.general.jwt_expiry ?? "7d");
+          setMaxUsers(String(s.general.max_users ?? 0));
+        }
+        // Connections
+        if (s.connections) {
+          setOllamaUrl(s.connections.ollama_url || "http://localhost:11434");
+          setOpenaiKey(s.connections.openai_key || "");
+          setOpenaiBase(s.connections.openai_base_url || "https://api.openai.com/v1");
+          setAnthropicKey(s.connections.anthropic_key || "");
+          setGoogleAiKey(s.connections.google_key || "");
+          setCustomName(s.connections.custom_name || "");
+          setCustomBase(s.connections.custom_base_url || "");
+          setCustomKey(s.connections.custom_key || "");
+        }
+        // Models
+        if (s.models) {
+          if (s.models.openai_enabled?.length)    setOpenaiModels(s.models.openai_enabled);
+          if (s.models.anthropic_enabled?.length) setAnthropicModels(s.models.anthropic_enabled);
+          if (s.models.google_enabled?.length)    setGoogleModels(s.models.google_enabled);
+          setOllamaEnabledModels(s.models.ollama_enabled ?? []);
+        }
+        // OAuth
+        if (s.oauth) {
+          setGoogleEnabled(s.oauth.google_enabled ?? false);
+          setGoogleClientId(s.oauth.google_client_id || "");
+          setGoogleClientSecret(s.oauth.google_client_secret || "");
+          setGithubEnabled(s.oauth.github_enabled ?? false);
+          setGithubClientId(s.oauth.github_client_id || "");
+          setGithubClientSecret(s.oauth.github_client_secret || "");
+        }
+        // Features
+        if (s.features) {
+          setWebSearch(s.features.web_search ?? false);
+          setFileUpload(s.features.file_upload ?? true);
+          setTempChat(s.features.temp_chats ?? true);
+          setMemories(s.features.memories ?? false);
+          setUserApiKeys(s.features.user_api_keys ?? false);
+          setUserWebhooks(s.features.user_webhooks ?? false);
+          setCommunitySharing(s.features.community_sharing ?? false);
+          setMessageRating(s.features.message_rating ?? false);
+        }
+        // Documents
+        if (s.documents) {
+          setEmbeddingEngine((s.documents.embedding_engine as "ollama" | "openai") ?? "openai");
+          setEmbeddingModel(s.documents.embedding_model || "text-embedding-3-small");
+          setChunkSize(s.documents.chunk_size ?? 1500);
+          setChunkOverlap(s.documents.chunk_overlap ?? 100);
+          setTopK(s.documents.top_k ?? 5);
+          setHybridSearch(s.documents.hybrid_search ?? false);
+          setOcrEngine((s.documents.ocr_engine as "none" | "tesseract") ?? "none");
+        }
+        // Audio
+        if (s.audio) {
+          setSttProvider((s.audio.stt_provider as "none" | "openai") ?? "none");
+          setSttApiKey(s.audio.stt_key || "");
+          setSttDefaultLang(s.audio.stt_language || "auto");
+          setVadAutoSend(s.audio.vad_auto_send ?? false);
+          setTtsProvider((s.audio.tts_provider as "none" | "openai") ?? "none");
+          setTtsApiKey(s.audio.tts_key || "");
+          setTtsDefaultVoice(s.audio.tts_voice || "alloy");
+        }
+        // Images
+        if (s.images) {
+          setImageEngine((s.images.engine as "openai" | "comfyui" | "a1111" | "none") ?? "none");
+          setDalleApiKey(s.images.dalle_key || "");
+          setDalleModel(s.images.dalle_model || "dall-e-3");
+          setComfyuiUrl(s.images.comfyui_url || "http://127.0.0.1:8188");
+          setA1111Url(s.images.a1111_url || "http://127.0.0.1:7860");
+        }
+        // Evaluations
+        if (s.evaluations) {
+          setArenaMode(s.evaluations.arena_mode ?? false);
+          setEvalMessageRating(s.evaluations.message_rating ?? false);
+        }
+      })
+      .catch(() => { /* 로드 실패 시 초기값 유지 */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── 현재 탭 데이터 수집 ──────────────────────────────────────────────────────
+  function getCurrentTabPatch() {
+    switch (tab) {
+      case "general":
+        return {
+          general: {
+            instance_name: instanceName,
+            instance_url: instanceUrl,
+            allow_signup: allowSignups,
+            default_role: defaultRole,
+            show_admin_on_pending: showAdminOnPending,
+            admin_email: adminEmail,
+            max_users: parseInt(maxUsers, 10) || 0,
+            jwt_expiry: jwtExpiry,
+          },
+        };
+      case "connections":
+        return {
+          connections: {
+            ollama_url: ollamaUrl,
+            openai_key: openaiKey,
+            openai_base_url: openaiBase,
+            anthropic_key: anthropicKey,
+            google_key: googleAiKey,
+            custom_name: customName,
+            custom_base_url: customBase,
+            custom_key: customKey,
+          },
+        };
+      case "models":
+        return {
+          models: {
+            openai_enabled: openaiModels,
+            anthropic_enabled: anthropicModels,
+            google_enabled: googleModels,
+            ollama_enabled: ollamaEnabledModels,
+          },
+        };
+      case "oauth":
+        return {
+          oauth: {
+            google_enabled: googleEnabled,
+            google_client_id: googleClientId,
+            google_client_secret: googleClientSecret,
+            github_enabled: githubEnabled,
+            github_client_id: githubClientId,
+            github_client_secret: githubClientSecret,
+          },
+        };
+      case "features":
+        return {
+          features: {
+            web_search: webSearch,
+            file_upload: fileUpload,
+            temp_chats: tempChat,
+            memories,
+            user_api_keys: userApiKeys,
+            user_webhooks: userWebhooks,
+            community_sharing: communitySharing,
+            message_rating: messageRating,
+          },
+        };
+      case "documents":
+        return {
+          documents: {
+            embedding_engine: embeddingEngine,
+            embedding_model: embeddingModel,
+            chunk_size: chunkSize,
+            chunk_overlap: chunkOverlap,
+            top_k: topK,
+            hybrid_search: hybridSearch,
+            ocr_engine: ocrEngine,
+          },
+        };
+      case "audio":
+        return {
+          audio: {
+            stt_provider: sttProvider,
+            stt_key: sttApiKey,
+            stt_language: sttDefaultLang,
+            vad_auto_send: vadAutoSend,
+            tts_provider: ttsProvider,
+            tts_key: ttsApiKey,
+            tts_voice: ttsDefaultVoice,
+          },
+        };
+      case "images":
+        return {
+          images: {
+            engine: imageEngine,
+            dalle_key: dalleApiKey,
+            dalle_model: dalleModel,
+            comfyui_url: comfyuiUrl,
+            a1111_url: a1111Url,
+          },
+        };
+      case "evaluations":
+        return {
+          evaluations: {
+            arena_mode: arenaMode,
+            message_rating: evalMessageRating,
+          },
+        };
+      default:
+        return {};
+    }
+  }
+
+  async function handleSave() {
+    setSaveError(null);
+    const patch = getCurrentTabPatch();
+    if (Object.keys(patch).length === 0) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+      return;
+    }
+    try {
+      await apiPatchAdminSettings(patch);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "저장에 실패했습니다.");
+    }
   }
 
   const TABS: { id: AdminSettingsTab; label: string; icon: React.ReactNode }[] = [
@@ -294,6 +558,17 @@ export default function AdminSettingsPage() {
     { id: "evaluations", label: lang === "ko" ? "평가"         : "Evaluations", icon: <BarChart2 size={14} /> },
     { id: "database",    label: lang === "ko" ? "데이터베이스" : "Database",    icon: <Database size={14} /> },
   ];
+
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center bg-base">
+        <div className="flex flex-col items-center gap-3 text-text-muted">
+          <RefreshCw size={20} className="animate-spin opacity-50" />
+          <p className="text-xs">설정을 불러오는 중...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full bg-base overflow-hidden">
@@ -379,7 +654,7 @@ export default function AdminSettingsPage() {
               <Field label={lang === "ko" ? "최대 유저 수" : "Max Users"} value={maxUsers} onChange={setMaxUsers} placeholder="0" hint={lang === "ko" ? "0 = 무제한" : "0 = unlimited"} type="number" />
             </Section>
 
-            <SaveBar onSave={handleSave} saved={saved} />
+            <SaveBar onSave={handleSave} saved={saved} error={saveError} />
           </div>
         )}
 
@@ -491,7 +766,7 @@ export default function AdminSettingsPage() {
               </div>
             </Section>
 
-            <SaveBar onSave={handleSave} saved={saved} />
+            <SaveBar onSave={handleSave} saved={saved} error={saveError} />
           </div>
         )}
 
@@ -551,10 +826,21 @@ export default function AdminSettingsPage() {
                             ))}
                           </div>
                         </div>
-                        {ollamaEnabledModels.includes(name)
-                          ? <span className="text-xs text-accent shrink-0">Enabled</span>
-                          : <span className="text-xs text-text-muted shrink-0">Disabled</span>
-                        }
+                        <div className="flex items-center gap-2 shrink-0">
+                          {ollamaEnabledModels.includes(name)
+                            ? <span className="text-xs text-accent">Enabled</span>
+                            : <span className="text-xs text-text-muted">Disabled</span>
+                          }
+                          <button
+                            type="button"
+                            onClick={() => deleteOllamaModel(name)}
+                            disabled={ollamaDeleting === name}
+                            className="p-1 rounded-lg text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-40"
+                            aria-label={`Delete ${name}`}
+                          >
+                            <Trash2 size={12} className={ollamaDeleting === name ? "animate-pulse" : ""} />
+                          </button>
+                        </div>
                       </label>
                     );
                   })}
@@ -567,42 +853,116 @@ export default function AdminSettingsPage() {
                     : "Click Refresh to load models from Ollama. Configure the Ollama URL in the Connections tab first."}
                 </div>
               )}
+
+              {/* Pull a new model */}
+              <div className="mt-4">
+                <p className="text-xs font-medium text-text-secondary mb-2">
+                  {lang === "ko" ? "모델 다운로드 (Pull)" : "Download Model (Pull)"}
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={ollamaPullInput}
+                    onChange={(e) => setOllamaPullInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") pullOllamaModel(); }}
+                    placeholder="llama3.2, mistral, phi3…"
+                    disabled={ollamaPulling}
+                    className="flex-1 px-3 py-1.5 rounded-xl bg-base border border-border text-xs font-mono text-text-primary placeholder:text-text-muted outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/10 transition disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    onClick={pullOllamaModel}
+                    disabled={!ollamaPullInput.trim() || ollamaPulling}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-accent/10 text-accent border border-accent/20 hover:bg-accent/20 transition-colors disabled:opacity-40"
+                  >
+                    <Download size={11} className={ollamaPulling ? "animate-bounce" : ""} />
+                    {ollamaPulling ? (lang === "ko" ? "다운로드 중…" : "Pulling…") : (lang === "ko" ? "Pull" : "Pull")}
+                  </button>
+                </div>
+                {ollamaPullProgress && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-border rounded-full overflow-hidden">
+                      {ollamaPullProgress.pct != null && (
+                        <div
+                          className="h-full bg-accent transition-all duration-300 rounded-full"
+                          style={{ width: `${ollamaPullProgress.pct}%` }}
+                        />
+                      )}
+                    </div>
+                    <span className="text-[10px] text-text-muted font-mono shrink-0 w-52 truncate">
+                      {ollamaPullProgress.status}
+                      {ollamaPullProgress.pct != null ? ` (${ollamaPullProgress.pct}%)` : ""}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* OpenAI */}
+            {/* Per-provider editable chip lists */}
             {([
-              { name: "OpenAI", models: OPENAI_MODELS },
-              { name: "Anthropic", models: ANTHROPIC_MODELS },
-              { name: "Google AI", models: GOOGLE_MODELS },
-            ]).map(({ name, models }) => (
+              { name: "OpenAI",     providerModels: openaiModels,    setModels: setOpenaiModels,    input: openaiInput,    setInput: setOpenaiInput,    placeholder: "e.g. gpt-4o-mini" },
+              { name: "Anthropic",  providerModels: anthropicModels, setModels: setAnthropicModels, input: anthropicInput, setInput: setAnthropicInput, placeholder: "e.g. claude-opus-4-6" },
+              { name: "Google AI",  providerModels: googleModels,    setModels: setGoogleModels,    input: googleInput,    setInput: setGoogleInput,    placeholder: "e.g. gemini-1.5-pro" },
+            ]).map(({ name, providerModels, setModels, input, setInput, placeholder }) => (
               <div key={name} className="mb-6">
                 <h3 className="text-sm font-semibold text-text-primary mb-3">{name}</h3>
-                <div className="bg-surface rounded-2xl border border-border overflow-hidden">
-                  {models.map((modelId, i) => (
-                    <label
-                      key={modelId}
-                      className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-hover transition-colors ${i < models.length - 1 ? "border-b border-border-subtle" : ""}`}
+                <div className="bg-surface rounded-2xl border border-border p-4">
+                  {/* Chip list */}
+                  <div className="flex flex-wrap gap-2 mb-3 min-h-[32px]">
+                    {providerModels.length === 0 && (
+                      <span className="text-xs text-text-muted italic">{lang === "ko" ? "활성화된 모델 없음" : "No models enabled"}</span>
+                    )}
+                    {providerModels.map((id) => (
+                      <span key={id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 border border-accent/20 text-xs font-mono text-accent">
+                        {id}
+                        <button
+                          type="button"
+                          onClick={() => setModels((prev) => prev.filter((m) => m !== id))}
+                          className="hover:text-red-400 transition-colors leading-none"
+                          aria-label={`Remove ${id}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  {/* Add new model ID */}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && input.trim()) {
+                          const id = input.trim();
+                          if (!providerModels.includes(id)) setModels((prev) => [...prev, id]);
+                          setInput("");
+                          e.preventDefault();
+                        }
+                      }}
+                      placeholder={placeholder}
+                      className="flex-1 px-3 py-1.5 rounded-xl bg-base border border-border text-xs font-mono text-text-primary placeholder:text-text-muted outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/10 transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = input.trim();
+                        if (id && !providerModels.includes(id)) {
+                          setModels((prev) => [...prev, id]);
+                          setInput("");
+                        }
+                      }}
+                      disabled={!input.trim()}
+                      className="px-3 py-1.5 rounded-xl text-xs font-medium bg-accent/10 text-accent border border-accent/20 hover:bg-accent/20 transition-colors disabled:opacity-40"
                     >
-                      <input
-                        type="checkbox"
-                        checked={enabledModels.includes(modelId)}
-                        onChange={() => toggleModel(modelId)}
-                        className="accent-accent size-4 rounded"
-                      />
-                      <div className="flex-1">
-                        <p className="text-sm text-text-primary font-mono">{modelId}</p>
-                      </div>
-                      {enabledModels.includes(modelId)
-                        ? <span className="text-xs text-accent">Enabled</span>
-                        : <span className="text-xs text-text-muted">Disabled</span>
-                      }
-                    </label>
-                  ))}
+                      {lang === "ko" ? "추가" : "Add"}
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
 
-            <SaveBar onSave={handleSave} saved={saved} />
+            <SaveBar onSave={handleSave} saved={saved} error={saveError} />
           </div>
         )}
 
@@ -647,7 +1007,7 @@ export default function AdminSettingsPage() {
               )}
             </Section>
 
-            <SaveBar onSave={handleSave} saved={saved} />
+            <SaveBar onSave={handleSave} saved={saved} error={saveError} />
           </div>
         )}
 
@@ -685,7 +1045,7 @@ export default function AdminSettingsPage() {
               <Toggle checked={messageRating}    onChange={setMessageRating}    label={lang === "ko" ? "메시지 평가" : "Message Rating"}    description={lang === "ko" ? "유저가 AI 응답에 좋아요/싫어요를 누를 수 있습니다." : "Allow users to rate AI responses."} />
             </Section>
 
-            <SaveBar onSave={handleSave} saved={saved} />
+            <SaveBar onSave={handleSave} saved={saved} error={saveError} />
           </div>
         )}
 
@@ -782,7 +1142,7 @@ export default function AdminSettingsPage() {
               )}
             </Section>
 
-            <SaveBar onSave={handleSave} saved={saved} />
+            <SaveBar onSave={handleSave} saved={saved} error={saveError} />
           </div>
         )}
 
@@ -875,7 +1235,7 @@ export default function AdminSettingsPage() {
               )}
             </Section>
 
-            <SaveBar onSave={handleSave} saved={saved} />
+            <SaveBar onSave={handleSave} saved={saved} error={saveError} />
           </div>
         )}
 
@@ -970,7 +1330,7 @@ export default function AdminSettingsPage() {
               </Section>
             )}
 
-            <SaveBar onSave={handleSave} saved={saved} />
+            <SaveBar onSave={handleSave} saved={saved} error={saveError} />
           </div>
         )}
 
@@ -1021,7 +1381,7 @@ export default function AdminSettingsPage() {
               </Section>
             )}
 
-            <SaveBar onSave={handleSave} saved={saved} />
+            <SaveBar onSave={handleSave} saved={saved} error={saveError} />
           </div>
         )}
 
