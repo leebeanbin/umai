@@ -41,11 +41,12 @@ type RequestBody = {
   sysPrompt?: string;
   temperature?: number | null;
   maxTokens?: number | null;
+  topP?: number | null;
 };
 
 export async function POST(req: NextRequest) {
   const body = await req.json() as RequestBody;
-  const { provider, model, messages, sysPrompt, temperature, maxTokens } = body;
+  const { provider, model, messages, sysPrompt, temperature, maxTokens, topP } = body;
 
   const apiKey = serverKey(provider);
 
@@ -53,9 +54,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `__NO_KEY__:${provider}` }, { status: 401 });
   }
 
-  if (provider === "openai")    return proxyOpenAI({ model, messages, apiKey, sysPrompt, temperature, maxTokens });
-  if (provider === "anthropic") return proxyAnthropic({ model, messages, apiKey, sysPrompt, temperature, maxTokens });
-  if (provider === "google")    return proxyGoogle({ model, messages, apiKey, sysPrompt, temperature, maxTokens });
+  if (provider === "openai")    return proxyOpenAI({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP });
+  if (provider === "anthropic") return proxyAnthropic({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP });
+  if (provider === "google")    return proxyGoogle({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP });
 
   return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
 }
@@ -110,6 +111,7 @@ type ProxyArgs = {
   sysPrompt?: string;
   temperature?: number | null;
   maxTokens?: number | null;
+  topP?: number | null;
 };
 
 const SSE_HEADERS = {
@@ -120,7 +122,7 @@ const SSE_HEADERS = {
 
 // ─ OpenAI ────────────────────────────────────────────────────────────────────
 
-async function proxyOpenAI({ model, messages, apiKey, sysPrompt, temperature, maxTokens }: ProxyArgs) {
+async function proxyOpenAI({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP }: ProxyArgs) {
   const body: Record<string, unknown> = {
     model,
     stream: true,
@@ -130,6 +132,7 @@ async function proxyOpenAI({ model, messages, apiKey, sysPrompt, temperature, ma
   };
   if (temperature != null) body.temperature = temperature;
   if (maxTokens   != null) body.max_tokens  = maxTokens;
+  if (topP        != null) body.top_p       = topP;
 
   const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -154,15 +157,16 @@ async function proxyOpenAI({ model, messages, apiKey, sysPrompt, temperature, ma
 
 // ─ Anthropic ─────────────────────────────────────────────────────────────────
 
-async function proxyAnthropic({ model, messages, apiKey, sysPrompt, temperature, maxTokens }: ProxyArgs) {
+async function proxyAnthropic({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP }: ProxyArgs) {
   const body: Record<string, unknown> = {
     model,
     stream: true,
     max_tokens: maxTokens ?? 1024,
     messages:   messages.filter((m) => m.role !== "system"),
   };
-  if (sysPrompt)       body.system      = sysPrompt;
+  if (sysPrompt)           body.system      = sysPrompt;
   if (temperature != null) body.temperature = temperature;
+  if (topP        != null) body.top_p       = topP;
 
   const upstream = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -200,7 +204,7 @@ async function proxyAnthropic({ model, messages, apiKey, sysPrompt, temperature,
 
 // ─ Google ─────────────────────────────────────────────────────────────────────
 
-async function proxyGoogle({ model, messages, apiKey, sysPrompt, temperature, maxTokens }: ProxyArgs) {
+async function proxyGoogle({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP }: ProxyArgs) {
   const contents = messages
     .filter((m) => m.role !== "system")
     .map((m) => ({
@@ -209,8 +213,9 @@ async function proxyGoogle({ model, messages, apiKey, sysPrompt, temperature, ma
     }));
 
   const generationConfig: Record<string, unknown> = {};
-  if (temperature != null) generationConfig.temperature      = temperature;
-  if (maxTokens   != null) generationConfig.maxOutputTokens  = maxTokens;
+  if (temperature != null) generationConfig.temperature     = temperature;
+  if (maxTokens   != null) generationConfig.maxOutputTokens = maxTokens;
+  if (topP        != null) generationConfig.topP            = topP;
 
   const body: Record<string, unknown> = { contents };
   if (Object.keys(generationConfig).length) body.generationConfig   = generationConfig;
