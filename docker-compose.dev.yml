@@ -75,6 +75,8 @@ services:
       BACKEND_URL: http://localhost:8001
       # FRONTEND_URL은 .env 에서 읽음 — 포트는 자동 감지되므로 별도 지정 불필요
       DEBUG: "true"
+      # host.docker.internal → macOS/Windows Docker Desktop에서 호스트 머신 접근
+      OLLAMA_URL: http://host.docker.internal:11434
     # 소스 마운트 → uvicorn --reload 로 코드 변경 즉시 반영
     volumes:
       - ./backend:/app
