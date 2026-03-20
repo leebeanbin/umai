@@ -100,6 +100,34 @@ services:
       retries: 5
       start_period: 20s
 
+  # ── Celery Worker ────────────────────────────────────────────────────────────
+  umai-celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: umai-celery
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://umai:umai@umai-postgres:5432/umai
+      REDIS_URL: redis://umai-redis:6379/0
+      CELERY_BROKER_URL: redis://umai-redis:6379/1
+      CELERY_RESULT_BACKEND: redis://umai-redis:6379/2
+      OLLAMA_URL: http://host.docker.internal:11434
+      DEBUG: "true"
+    volumes:
+      - ./backend:/app
+    command: >
+      celery -A app.core.celery_app worker
+        -Q image,ai,knowledge,default
+        -c 4
+        --loglevel=info
+    depends_on:
+      umai-postgres:
+        condition: service_healthy
+      umai-redis:
+        condition: service_healthy
+
   # ── Next.js Frontend ──────────────────────────────────────────────────────────
   umai-frontend:
     build:
