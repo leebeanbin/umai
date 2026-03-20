@@ -19,13 +19,15 @@ export type ChatMessage = {
 };
 
 type StreamChatOptions = {
-  messages:            ChatMessage[];
-  onChunk:             (text: string) => void;
-  onDone:              () => void;
-  onError:             (err: string) => void;
-  signal?:             AbortSignal;
-  modelOverride?:      string;
+  messages:             ChatMessage[];
+  onChunk:              (text: string) => void;
+  onDone:               () => void;
+  onError:              (err: string) => void;
+  signal?:              AbortSignal;
+  modelOverride?:       string;
   temperatureOverride?: number;
+  maxTokensOverride?:   number | null;
+  topPOverride?:        number | null;
 };
 
 // ── Provider resolution ───────────────────────────────────────────────────────
@@ -118,12 +120,16 @@ export async function streamChat({
   signal,
   modelOverride,
   temperatureOverride,
+  maxTokensOverride,
+  topPOverride,
 }: StreamChatOptions): Promise<void> {
   const settings = loadSettings();
   const { systemPrompt, temperature, maxTokens, inputLang, outputLang } = settings;
 
-  const model = modelOverride ?? settings.selectedModel;
-  const temp  = temperatureOverride !== undefined ? temperatureOverride : temperature;
+  const model      = modelOverride ?? settings.selectedModel;
+  const temp       = temperatureOverride !== undefined ? temperatureOverride : temperature;
+  const finalMaxTokens = maxTokensOverride !== undefined ? maxTokensOverride : maxTokens;
+  const finalTopP      = topPOverride !== undefined ? topPOverride : null;
 
   const provider = getProvider(model);
   if (!provider) {
@@ -155,7 +161,8 @@ export async function streamChat({
         messages:    processedMessages,
         sysPrompt:   sysPrompt || undefined,
         temperature: temp,
-        maxTokens,
+        maxTokens:   finalMaxTokens,
+        topP:        finalTopP,
       }),
       signal,
     });

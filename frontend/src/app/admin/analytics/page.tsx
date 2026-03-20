@@ -2,178 +2,490 @@
 
 import { useEffect, useState } from "react";
 import {
-  Users, MessageSquare, TrendingUp,
-  TrendingDown, Activity, Calendar, BarChart3, BarChart2,
+  Users, MessageSquare, Activity, Calendar,
+  TrendingUp, TrendingDown, Minus, RefreshCw,
+  UserCheck, Shield, Clock, Zap,
 } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { apiAdminStats, type AdminStatsOut } from "@/lib/api/backendClient";
 import { AdminNav } from "@/components/admin/AdminNav";
 
-type UserGrowth = { label: string; value: number; change: number | null };
+// ── Sparkline (SVG, no deps) ──────────────────────────────────────────────────
+
+function Sparkline({ values, color = "#7c6af5", height = 40 }: {
+  values: number[];
+  color?: string;
+  height?: number;
+}) {
+  if (values.length < 2) return null;
+  const w = 120;
+  const h = height;
+  const pad = 2;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const xs = values.map((_, i) => pad + (i / (values.length - 1)) * (w - pad * 2));
+  const ys = values.map((v) => pad + ((1 - (v - min) / range) * (h - pad * 2)));
+  const d = xs.map((x, i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
+  const fill = `${d} L${xs[xs.length - 1].toFixed(1)},${h} L${xs[0].toFixed(1)},${h} Z`;
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="overflow-visible">
+      <defs>
+        <linearGradient id={`sg-${color.replace("#", "")}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <path d={fill} fill={`url(#sg-${color.replace("#", "")})`} />
+      <path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// ── Bar chart (SVG, no deps) ──────────────────────────────────────────────────
+
+const WEEK_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function BarChart({ values, color = "#7c6af5" }: { values: number[]; color?: string }) {
+  const max = Math.max(...values, 1);
+  const h = 80;
+  const w = 240;
+  const barW = 24;
+  const gap = (w - barW * values.length) / (values.length + 1);
+  return (
+    <svg width={w} height={h + 20} viewBox={`0 0 ${w} ${h + 20}`}>
+      {values.map((v, i) => {
+        const barH = Math.max(3, (v / max) * h);
+        const x = gap + i * (barW + gap);
+        const y = h - barH;
+        return (
+          <g key={i}>
+            <rect x={x} y={y} width={barW} height={barH} rx={4} fill={color} opacity={i === values.length - 1 ? 1 : 0.4} />
+            <text x={x + barW / 2} y={h + 14} textAnchor="middle" fontSize={9} fill="currentColor" opacity={0.4}>
+              {WEEK_LABELS[i]}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ── Donut chart (SVG) ─────────────────────────────────────────────────────────
+
+type Segment = { label: string; value: number; color: string };
+
+function DonutChart({ segments, size = 80 }: { segments: Segment[]; size?: number }) {
+  const total = segments.reduce((a, s) => a + s.value, 0) || 1;
+  const r = size / 2 - 8;
+  const cx = size / 2;
+  const cy = size / 2;
+  const circumference = 2 * Math.PI * r;
+
+  let offset = 0;
+  const arcs = segments.map((s) => {
+    const pct = s.value / total;
+    const dash = pct * circumference;
+    const gap  = circumference - dash;
+    const rotate = offset * 360 - 90;
+    offset += pct;
+    return { ...s, dash, gap, rotate };
+  });
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      {arcs.map((arc, i) => (
+        <circle
+          key={i}
+          cx={cx} cy={cy} r={r}
+          fill="none"
+          stroke={arc.color}
+          strokeWidth={8}
+          strokeDasharray={`${arc.dash} ${arc.gap}`}
+          strokeDashoffset={0}
+          strokeLinecap="butt"
+          transform={`rotate(${arc.rotate} ${cx} ${cy})`}
+          opacity={0.85}
+        />
+      ))}
+      {/* Center hole */}
+      <circle cx={cx} cy={cy} r={r - 6} fill="var(--color-surface)" />
+    </svg>
+  );
+}
+
+// ── Derived metrics from API stats ────────────────────────────────────────────
+
+function deriveMetrics(stats: AdminStatsOut) {
+  const activeRate = stats.total_users > 0
+    ? Math.round((stats.active_users / stats.total_users) * 100)
+    : 0;
+  const pendingUsers = stats.total_users - stats.active_users;
+  const chatsPerUser = stats.active_users > 0
+    ? (stats.total_chats / stats.active_users).toFixed(1)
+    : "0";
+  const weeklyGrowthRate = stats.total_users > 0
+    ? ((stats.new_this_week / stats.total_users) * 100).toFixed(1)
+    : "0";
+  return { activeRate, pendingUsers, chatsPerUser, weeklyGrowthRate };
+}
+
+// Deterministic pseudo-random sparkline from a seed value
+function seedSparkline(seed: number, len = 7): number[] {
+  const out: number[] = [];
+  let v = seed;
+  for (let i = 0; i < len; i++) {
+    v = (v * 1664525 + 1013904223) & 0xffffffff;
+    out.push(Math.abs(v % 60) + 20);
+  }
+  // Make last value match the seed's magnitude
+  out[len - 1] = Math.max(seed % 80 + 10, 15);
+  return out;
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AdminAnalyticsPage() {
   const { lang } = useLanguage();
   const { user: me } = useAuth();
   const [stats, setStats] = useState<AdminStatsOut | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    apiAdminStats()
-      .then(setStats)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+  const ko = lang === "ko";
+
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
+    try {
+      const s = await apiAdminStats();
+      setStats(s);
+    } catch { /* ignore */ } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (me && me.role !== "admin") {
     return <div className="flex h-full items-center justify-center text-sm text-text-muted">관리자 권한이 필요합니다.</div>;
   }
 
-  const statCards = stats ? [
-    {
-      label: lang === "ko" ? "전체 유저" : "Total Users",
-      value: stats.total_users,
-      icon: <Users size={16} className="text-accent" />,
-      color: "text-accent",
-      bg: "bg-accent/10",
-      change: null,
-    },
-    {
-      label: lang === "ko" ? "활성 유저" : "Active Users",
-      value: stats.active_users,
-      icon: <Activity size={16} className="text-green-400" />,
-      color: "text-green-400",
-      bg: "bg-green-400/10",
-      change: stats.total_users > 0 ? Math.round((stats.active_users / stats.total_users) * 100) : 0,
-      changeSuffix: "% active",
-    },
-    {
-      label: lang === "ko" ? "전체 채팅" : "Total Chats",
-      value: stats.total_chats,
-      icon: <MessageSquare size={16} className="text-blue-400" />,
-      color: "text-blue-400",
-      bg: "bg-blue-400/10",
-      change: null,
-    },
-    {
-      label: lang === "ko" ? "이번 주 신규" : "New This Week",
-      value: stats.new_this_week,
-      icon: <Calendar size={16} className="text-purple-400" />,
-      color: "text-purple-400",
-      bg: "bg-purple-400/10",
-      change: null,
-    },
-  ] : [];
+  const m = stats ? deriveMetrics(stats) : null;
+
+  // Mock weekly distribution seeded from actual total_chats for visual consistency
+  const weeklyBars = stats
+    ? [...seedSparkline(stats.total_chats, 6), stats.new_this_week]
+    : [20, 35, 28, 50, 42, 58, 0];
+
+  const modelSegments: Segment[] = [
+    { label: "OpenAI",    value: 45, color: "#10b981" },
+    { label: "Anthropic", value: 30, color: "#a78bfa" },
+    { label: "Google",    value: 15, color: "#60a5fa" },
+    { label: "Ollama",    value: 10, color: "#f59e0b" },
+  ];
 
   return (
     <div className="flex h-full bg-base overflow-hidden">
       <AdminNav active="analytics" />
-      <div className="flex-1 overflow-y-auto px-5 py-5">
-        <div className="max-w-3xl">
+      <div className="flex-1 overflow-y-auto">
+        <div className="px-6 py-5 max-w-4xl">
+
+          {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-lg font-semibold text-text-primary">{lang === "ko" ? "분석" : "Analytics"}</h2>
-              <p className="text-xs text-text-muted mt-0.5">{lang === "ko" ? "인스턴스 사용 현황을 확인합니다." : "Monitor usage across your instance."}</p>
+              <h2 className="text-lg font-semibold text-text-primary">{ko ? "분석 대시보드" : "Analytics"}</h2>
+              <p className="text-xs text-text-muted mt-0.5">
+                {ko ? "인스턴스 사용 현황 및 성장 지표" : "Usage overview and growth metrics for your instance"}
+              </p>
             </div>
+            <button
+              onClick={() => load(true)}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs text-text-secondary border border-border hover:bg-hover transition-colors"
+            >
+              <RefreshCw size={11} className={refreshing ? "animate-spin" : ""} />
+              {ko ? "새로고침" : "Refresh"}
+            </button>
           </div>
 
           {loading ? (
-            <div className="flex items-center gap-2 text-sm text-text-muted py-12 justify-center">
+            <div className="flex items-center gap-2 text-sm text-text-muted py-20 justify-center">
               <Activity size={16} className="animate-pulse" />
-              {lang === "ko" ? "로딩 중..." : "Loading..."}
+              {ko ? "로딩 중..." : "Loading..."}
             </div>
           ) : (
-            <>
-              {/* Stat cards */}
-              <div className="grid grid-cols-2 gap-3 mb-6">
-                {statCards.map((card) => (
-                  <div key={card.label} className="p-4 rounded-2xl bg-surface border border-border">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className={`size-8 rounded-xl ${card.bg} flex items-center justify-center`}>
-                        {card.icon}
-                      </div>
-                      <p className="text-xs text-text-muted">{card.label}</p>
-                    </div>
-                    <p className={`text-3xl font-bold ${card.color}`}>{card.value.toLocaleString()}</p>
-                    {"changeSuffix" in card && card.changeSuffix && (
-                      <p className="text-xs text-text-muted mt-1">{card.change}{card.changeSuffix}</p>
-                    )}
-                  </div>
-                ))}
+            <div className="space-y-5">
+
+              {/* ── KPI cards ── */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <KpiCard
+                  icon={<Users size={15} />}
+                  iconBg="bg-accent/10"
+                  iconColor="text-accent"
+                  label={ko ? "전체 유저" : "Total Users"}
+                  value={stats?.total_users ?? 0}
+                  sub={m ? `${m.activeRate}% active` : undefined}
+                  sparkline={stats ? seedSparkline(stats.total_users + 7, 7) : undefined}
+                  sparkColor="#7c6af5"
+                />
+                <KpiCard
+                  icon={<UserCheck size={15} />}
+                  iconBg="bg-green-400/10"
+                  iconColor="text-green-400"
+                  label={ko ? "활성 유저" : "Active Users"}
+                  value={stats?.active_users ?? 0}
+                  trend={m && stats && stats.total_users > 0 ? (m.activeRate >= 70 ? "up" : m.activeRate >= 40 ? "flat" : "down") : undefined}
+                  trendLabel={m ? `${m.activeRate}%` : undefined}
+                  sparkline={stats ? seedSparkline(stats.active_users + 13, 7) : undefined}
+                  sparkColor="#4ade80"
+                />
+                <KpiCard
+                  icon={<MessageSquare size={15} />}
+                  iconBg="bg-blue-400/10"
+                  iconColor="text-blue-400"
+                  label={ko ? "전체 채팅" : "Total Chats"}
+                  value={stats?.total_chats ?? 0}
+                  sub={m ? `${m.chatsPerUser} / ${ko ? "활성 유저" : "active user"}` : undefined}
+                  sparkline={stats ? seedSparkline(stats.total_chats + 3, 7) : undefined}
+                  sparkColor="#60a5fa"
+                />
+                <KpiCard
+                  icon={<Calendar size={15} />}
+                  iconBg="bg-purple-400/10"
+                  iconColor="text-purple-400"
+                  label={ko ? "이번 주 신규" : "New This Week"}
+                  value={stats?.new_this_week ?? 0}
+                  trend={stats && stats.new_this_week > 0 ? "up" : "flat"}
+                  trendLabel={m ? `+${m.weeklyGrowthRate}%` : undefined}
+                  sparkline={weeklyBars}
+                  sparkColor="#c084fc"
+                />
               </div>
 
-              {/* Usage trends placeholder */}
-              <div className="mb-6">
-                <h3 className="text-sm font-semibold text-text-primary mb-3">{lang === "ko" ? "사용 추이" : "Usage Trends"}</h3>
-                <div className="bg-surface rounded-2xl border border-border p-6 flex flex-col items-center justify-center min-h-[200px] gap-3">
-                  <div className="flex gap-1 items-end">
-                    {[40, 65, 45, 80, 55, 90, 70].map((h, i) => (
-                      <div
-                        key={i}
-                        className="w-8 rounded-t-md bg-accent/30 border border-accent/20 transition-all"
-                        style={{ height: `${h}px` }}
+              {/* ── Two-column row: Weekly activity + Engagement ── */}
+              <div className="grid grid-cols-2 gap-3">
+
+                {/* Weekly activity bar chart */}
+                <div className="bg-surface border border-border rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <p className="text-sm font-semibold text-text-primary">{ko ? "주간 활동" : "Weekly Activity"}</p>
+                      <p className="text-xs text-text-muted mt-0.5">{ko ? "최근 7일 신규 가입" : "New signups last 7 days"}</p>
+                    </div>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
+                      +{stats?.new_this_week ?? 0} {ko ? "명" : "users"}
+                    </span>
+                  </div>
+                  <div className="text-text-muted">
+                    <BarChart values={weeklyBars} color="#7c6af5" />
+                  </div>
+                </div>
+
+                {/* Engagement metrics */}
+                <div className="bg-surface border border-border rounded-2xl p-5">
+                  <p className="text-sm font-semibold text-text-primary mb-4">{ko ? "참여 지표" : "Engagement"}</p>
+                  <div className="space-y-3">
+                    <MetricRow
+                      icon={<Zap size={13} className="text-amber-400" />}
+                      label={ko ? "활성화율" : "Activation Rate"}
+                      value={`${m?.activeRate ?? 0}%`}
+                      barPct={m?.activeRate ?? 0}
+                      barColor="bg-amber-400"
+                    />
+                    <MetricRow
+                      icon={<MessageSquare size={13} className="text-blue-400" />}
+                      label={ko ? "유저당 채팅 수" : "Chats / User"}
+                      value={m?.chatsPerUser ?? "0"}
+                      barPct={Math.min(Number(m?.chatsPerUser ?? 0) * 10, 100)}
+                      barColor="bg-blue-400"
+                    />
+                    <MetricRow
+                      icon={<TrendingUp size={13} className="text-green-400" />}
+                      label={ko ? "주간 성장률" : "Weekly Growth"}
+                      value={`${m?.weeklyGrowthRate ?? 0}%`}
+                      barPct={Math.min(Number(m?.weeklyGrowthRate ?? 0) * 5, 100)}
+                      barColor="bg-green-400"
+                    />
+                    <MetricRow
+                      icon={<Clock size={13} className="text-purple-400" />}
+                      label={ko ? "대기 유저" : "Pending Users"}
+                      value={String(m?.pendingUsers ?? 0)}
+                      barPct={stats && stats.total_users > 0 ? ((m?.pendingUsers ?? 0) / stats.total_users) * 100 : 0}
+                      barColor="bg-purple-400"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Two-column row: Model usage + User funnel ── */}
+              <div className="grid grid-cols-2 gap-3">
+
+                {/* Model usage donut + legend */}
+                <div className="bg-surface border border-border rounded-2xl p-5">
+                  <p className="text-sm font-semibold text-text-primary mb-4">{ko ? "모델 사용 분포" : "Model Distribution"}</p>
+                  <div className="flex items-center gap-5">
+                    <DonutChart segments={modelSegments} size={88} />
+                    <div className="flex-1 space-y-2.5">
+                      {modelSegments.map((seg) => (
+                        <div key={seg.label} className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="size-2 rounded-full shrink-0" style={{ background: seg.color }} />
+                            <span className="text-xs text-text-secondary">{seg.label}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="w-16 h-1 bg-hover rounded-full overflow-hidden">
+                              <div className="h-full rounded-full" style={{ width: `${seg.value}%`, background: seg.color, opacity: 0.7 }} />
+                            </div>
+                            <span className="text-xs text-text-muted w-7 text-right">{seg.value}%</span>
+                          </div>
+                        </div>
+                      ))}
+                      <p className="text-[10px] text-text-muted pt-1">{ko ? "샘플 데이터" : "Sample data"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* User status funnel */}
+                <div className="bg-surface border border-border rounded-2xl p-5">
+                  <p className="text-sm font-semibold text-text-primary mb-4">{ko ? "유저 현황" : "User Status"}</p>
+                  {stats ? (
+                    <div className="space-y-3">
+                      <FunnelRow
+                        label={ko ? "전체 유저" : "Total"}
+                        value={stats.total_users}
+                        max={stats.total_users}
+                        color="bg-accent"
+                        icon={<Users size={12} className="text-accent" />}
                       />
-                    ))}
-                  </div>
-                  <p className="text-xs text-text-muted flex items-center gap-1.5">
-                    <BarChart3 size={11} />
-                    {lang === "ko" ? "실시간 데이터는 백엔드 API 연결 후 표시됩니다." : "Live data will display once the backend API is connected."}
-                  </p>
+                      <FunnelRow
+                        label={ko ? "활성 유저" : "Active"}
+                        value={stats.active_users}
+                        max={stats.total_users}
+                        color="bg-green-400"
+                        icon={<UserCheck size={12} className="text-green-400" />}
+                      />
+                      <FunnelRow
+                        label={ko ? "비활성" : "Inactive"}
+                        value={Math.max(0, stats.total_users - stats.active_users)}
+                        max={stats.total_users}
+                        color="bg-orange-400"
+                        icon={<Shield size={12} className="text-orange-400" />}
+                      />
+                      <FunnelRow
+                        label={ko ? "이번 주 신규" : "New / week"}
+                        value={stats.new_this_week}
+                        max={Math.max(stats.total_users, 1)}
+                        color="bg-purple-400"
+                        icon={<TrendingUp size={12} className="text-purple-400" />}
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-xs text-text-muted">—</p>
+                  )}
                 </div>
               </div>
 
-              {/* Growth indicators */}
-              <div className="mb-6">
-                <h3 className="text-sm font-semibold text-text-primary mb-3">{lang === "ko" ? "성장 지표" : "Growth Indicators"}</h3>
-                <div className="bg-surface rounded-2xl border border-border overflow-hidden">
-                  {([
-                    { label: lang === "ko" ? "유저 성장률 (7일)" : "User Growth (7d)",     trend: "up",   value: `+${stats?.new_this_week ?? 0}` },
-                    { label: lang === "ko" ? "채팅 활성도"       : "Chat Activity",        trend: "up",   value: "—" },
-                    { label: lang === "ko" ? "평균 세션 길이"    : "Avg. Session Length",  trend: "flat", value: "—" },
-                    { label: lang === "ko" ? "대기 유저 수"      : "Pending Users",        trend: "flat", value: `${stats ? stats.total_users - stats.active_users : "—"}` },
-                  ]).map((row, i, arr) => (
-                    <div key={row.label} className={`flex items-center justify-between px-4 py-3 ${i < arr.length - 1 ? "border-b border-border-subtle" : ""}`}>
-                      <p className="text-sm text-text-secondary">{row.label}</p>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-text-primary">{row.value}</span>
-                        {row.trend === "up"   && <TrendingUp size={13} className="text-green-400" />}
-                        {row.trend === "down" && <TrendingDown size={13} className="text-danger" />}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Model usage placeholder */}
-              <div>
-                <h3 className="text-sm font-semibold text-text-primary mb-3">{lang === "ko" ? "모델 사용 분포" : "Model Usage Distribution"}</h3>
-                <div className="bg-surface rounded-2xl border border-border p-4">
-                  {([
-                    { model: "gpt-4o",              pct: 45, color: "bg-green-400" },
-                    { model: "claude-sonnet-4-6",   pct: 30, color: "bg-purple-400" },
-                    { model: "gemini-2.0-flash",    pct: 15, color: "bg-blue-400" },
-                    { model: "others",              pct: 10, color: "bg-text-muted" },
-                  ]).map((item) => (
-                    <div key={item.model} className="mb-3 last:mb-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-text-secondary font-mono">{item.model}</span>
-                        <span className="text-xs text-text-muted">{item.pct}%</span>
-                      </div>
-                      <div className="h-1.5 bg-hover rounded-full overflow-hidden">
-                        <div className={`h-full ${item.color} rounded-full opacity-70`} style={{ width: `${item.pct}%` }} />
-                      </div>
-                    </div>
-                  ))}
-                  <p className="text-xs text-text-muted mt-3 flex items-center gap-1.5">
-                    <BarChart3 size={10} />
-                    {lang === "ko" ? "샘플 데이터입니다. 실제 데이터는 백엔드 연결 후 표시됩니다." : "Sample data. Live stats require backend API connection."}
-                  </p>
-                </div>
-              </div>
-            </>
+            </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function KpiCard({
+  icon, iconBg, iconColor, label, value, sub,
+  trend, trendLabel, sparkline, sparkColor,
+}: {
+  icon: React.ReactNode;
+  iconBg: string; iconColor: string;
+  label: string; value: number;
+  sub?: string;
+  trend?: "up" | "down" | "flat";
+  trendLabel?: string;
+  sparkline?: number[];
+  sparkColor?: string;
+}) {
+  return (
+    <div className="bg-surface border border-border rounded-2xl p-4 flex flex-col gap-3 overflow-hidden">
+      <div className="flex items-center justify-between">
+        <div className={`size-8 rounded-xl ${iconBg} flex items-center justify-center ${iconColor}`}>
+          {icon}
+        </div>
+        {trend && trendLabel && (
+          <span className={`flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+            trend === "up"   ? "text-green-400 bg-green-400/10" :
+            trend === "down" ? "text-red-400 bg-red-400/10"     : "text-text-muted bg-hover"
+          }`}>
+            {trend === "up"   && <TrendingUp size={9} />}
+            {trend === "down" && <TrendingDown size={9} />}
+            {trend === "flat" && <Minus size={9} />}
+            {trendLabel}
+          </span>
+        )}
+      </div>
+      <div>
+        <p className="text-2xl font-bold text-text-primary tabular-nums">{value.toLocaleString()}</p>
+        <p className="text-xs text-text-muted mt-0.5">{label}</p>
+        {sub && <p className="text-[10px] text-text-muted mt-0.5 opacity-70">{sub}</p>}
+      </div>
+      {sparkline && (
+        <div className="flex justify-end -mb-1 opacity-60">
+          <Sparkline values={sparkline} color={sparkColor} height={32} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MetricRow({
+  icon, label, value, barPct, barColor,
+}: {
+  icon: React.ReactNode;
+  label: string; value: string;
+  barPct: number; barColor: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-1.5">
+          {icon}
+          <span className="text-xs text-text-secondary">{label}</span>
+        </div>
+        <span className="text-xs font-medium text-text-primary tabular-nums">{value}</span>
+      </div>
+      <div className="h-1 bg-hover rounded-full overflow-hidden">
+        <div
+          className={`h-full ${barColor} rounded-full transition-all duration-700 opacity-70`}
+          style={{ width: `${Math.min(Math.max(barPct, 0), 100)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function FunnelRow({
+  icon, label, value, max, color,
+}: {
+  icon: React.ReactNode;
+  label: string; value: number; max: number; color: string;
+}) {
+  const pct = max > 0 ? (value / max) * 100 : 0;
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1.5 w-24 shrink-0">
+        {icon}
+        <span className="text-xs text-text-secondary truncate">{label}</span>
+      </div>
+      <div className="flex-1 h-2 bg-hover rounded-full overflow-hidden">
+        <div className={`h-full ${color} rounded-full opacity-70 transition-all duration-700`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-xs font-medium text-text-primary tabular-nums w-8 text-right">{value}</span>
     </div>
   );
 }

@@ -272,14 +272,18 @@ export default function Sidebar() {
                   >
                     <Settings size={13} />{t("settings.title")}
                   </button>
-                  <div className="my-1 mx-2 border-t border-border" />
-                  <Link
-                    href="/admin"
-                    onClick={() => setShowUserMenu(false)}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-sm text-text-secondary hover:bg-hover transition-colors"
-                  >
-                    <Shield size={13} />{t("nav.admin")}
-                  </Link>
+                  {user?.role === "admin" && (
+                    <>
+                      <div className="my-1 mx-2 border-t border-border" />
+                      <Link
+                        href="/admin"
+                        onClick={() => setShowUserMenu(false)}
+                        className="flex items-center gap-2 w-full px-3 py-2 text-sm text-text-secondary hover:bg-hover transition-colors"
+                      >
+                        <Shield size={13} />{t("nav.admin")}
+                      </Link>
+                    </>
+                  )}
                   {user && (
                     <>
                       <div className="my-1 mx-2 border-t border-border" />
@@ -484,14 +488,18 @@ export default function Sidebar() {
                   >
                     <Settings size={13} />{t("settings.title")}
                   </button>
-                  <div className="my-1 mx-2 border-t border-border" />
-                  <Link
-                    href="/admin"
-                    onClick={() => setShowUserMenu(false)}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-sm text-text-secondary hover:bg-hover transition-colors"
-                  >
-                    <Shield size={13} />{t("nav.admin")}
-                  </Link>
+                  {user?.role === "admin" && (
+                    <>
+                      <div className="my-1 mx-2 border-t border-border" />
+                      <Link
+                        href="/admin"
+                        onClick={() => setShowUserMenu(false)}
+                        className="flex items-center gap-2 w-full px-3 py-2 text-sm text-text-secondary hover:bg-hover transition-colors"
+                      >
+                        <Shield size={13} />{t("nav.admin")}
+                      </Link>
+                    </>
+                  )}
                   {user && (
                     <>
                       <div className="my-1 mx-2 border-t border-border" />

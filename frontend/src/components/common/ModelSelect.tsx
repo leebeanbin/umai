@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search, Check, Sliders } from "lucide-react";
-import { loadModels, type DynamicModel } from "@/lib/appStore";
+import { loadModels, fetchModels, type DynamicModel } from "@/lib/appStore";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 
 type TagFilter = "All" | "Vision" | "Fast";
@@ -24,7 +24,7 @@ export default function ModelSelect({ value, onChange, showTuning = true }: Prop
   const dropRef     = useRef<HTMLDivElement>(null);
   const searchRef   = useRef<HTMLInputElement>(null);
 
-  const [models]     = useState<DynamicModel[]>(() => loadModels());
+  const [models, setModels] = useState<DynamicModel[]>(() => loadModels());
   const [open, setOpen]           = useState(false);
   const [query, setQuery]         = useState("");
   const [tagFilter, setTagFilter] = useState<TagFilter>("All");
@@ -36,6 +36,13 @@ export default function ModelSelect({ value, onChange, showTuning = true }: Prop
     const matchTag = tagFilter === "All" || m.tags.includes(tagFilter as string);
     return matchQ && matchTag;
   }), [models, query, tagFilter]);
+
+  // Fetch fresh model list from API on mount (stale-while-revalidate)
+  useEffect(() => {
+    fetchModels().then((fresh) => {
+      if (fresh.length > 0) setModels(fresh);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (open) setTimeout(() => searchRef.current?.focus(), 30);

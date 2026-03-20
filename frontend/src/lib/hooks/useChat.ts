@@ -18,6 +18,8 @@ export type Message = {
 type SendOpts = {
   model?: string;
   temperature?: number | null;
+  maxTokens?: number | null;
+  topP?: number | null;
 };
 
 // ── localStorage helpers ──────────────────────────────────────────────────────
@@ -45,8 +47,6 @@ function saveMessages(chatId: string, messages: Message[]) {
 
 /** 백엔드 DB에 완성된 메시지 저장 (fire-and-forget, 실패해도 무시) */
 async function persistToDb(chatId: string, messages: Message[]) {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-  if (!apiUrl) return; // 백엔드 URL 미설정 시 skip
   const token = typeof window !== "undefined" ? localStorage.getItem("umai_access_token") : null;
   if (!token) return; // 미인증 시 skip
 
@@ -54,7 +54,8 @@ async function persistToDb(chatId: string, messages: Message[]) {
   // 최근 두 메시지만 저장 (user + assistant 쌍)
   const toSave = saveable.slice(-2);
   for (const m of toSave) {
-    fetch(`${apiUrl}/api/v1/chats/${chatId}/messages`, {
+    // Relative path — Next.js rewrite proxies /api/* to backend
+    fetch(`/api/v1/chats/${chatId}/messages`, {
       method:  "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ role: m.role, content: m.content, images: m.images }),
@@ -123,6 +124,8 @@ export function useChat(chatId?: string) {
         signal:              ctrl.signal,
         modelOverride:       opts?.model,
         temperatureOverride: opts?.temperature ?? undefined,
+        maxTokensOverride:   opts?.maxTokens,
+        topPOverride:        opts?.topP,
 
         // RAF 배치로 이미 묶인 텍스트 → localStorage 저장 없이 state만 업데이트
         onChunk: (chunk) =>

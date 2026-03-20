@@ -79,6 +79,31 @@ export function saveModels(models: DynamicModel[]) {
   localStorage.setItem(MODELS_KEY, JSON.stringify(models));
 }
 
+/**
+ * Fetch the current user's available models from /api/models.
+ * Automatically persists to localStorage for stale-while-revalidate.
+ * Falls back to cached/FALLBACK_MODELS on error.
+ */
+export async function fetchModels(): Promise<DynamicModel[]> {
+  try {
+    const token = typeof window !== "undefined"
+      ? (localStorage.getItem("umai_access_token") ?? "")
+      : "";
+    const res = await fetch("/api/models", {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error("fetch failed");
+    const models = (await res.json()) as DynamicModel[];
+    if (models.length > 0) {
+      saveModels(models);
+      return models;
+    }
+  } catch {
+    // ignore — fall through
+  }
+  return loadModels();
+}
+
 function formatModelName(id: string): string {
   return id
     .replace("models/", "")

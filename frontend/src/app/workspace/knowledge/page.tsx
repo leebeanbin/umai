@@ -7,6 +7,8 @@ import {
   apiListKnowledge,
   apiUploadKnowledge,
   apiDeleteKnowledge,
+  apiEnqueueKnowledgeProcess,
+  apiGetTask,
   type KnowledgeItem,
 } from "@/lib/api/backendClient";
 
@@ -36,7 +38,13 @@ export default function KnowledgePage() {
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging]   = useState(false);
   const [error, setError]         = useState<string | null>(null);
+  // id → task status ("queued" | "running" | "success" | "failed")
+  const [taskStatus, setTaskStatus] = useState<Record<string, string>>({});
   const fileRef = useRef<HTMLInputElement>(null);
+  const pollers = useRef<ReturnType<typeof setInterval>[]>([]);
+
+  // Clear all pollers on unmount
+  useEffect(() => () => { pollers.current.forEach(clearInterval); }, []);
 
   useEffect(() => {
     apiListKnowledge()
@@ -65,6 +73,24 @@ export default function KnowledgePage() {
       try {
         const item = await apiUploadKnowledge(file);
         results.push(item);
+        // Trigger Celery embedding task (best-effort, non-blocking)
+        apiEnqueueKnowledgeProcess(item.id, file)
+          .then((task) => {
+            setTaskStatus((prev) => ({ ...prev, [item.id]: task.status }));
+            // Poll until done
+            const poll = setInterval(async () => {
+              try {
+                const t = await apiGetTask(task.task_id);
+                setTaskStatus((prev) => ({ ...prev, [item.id]: t.status }));
+                if (t.status === "success" || t.status === "failed") {
+                  clearInterval(poll);
+                  pollers.current = pollers.current.filter((p) => p !== poll);
+                }
+              } catch { clearInterval(poll); pollers.current = pollers.current.filter((p) => p !== poll); }
+            }, 2000);
+            pollers.current.push(poll);
+          })
+          .catch(() => {/* embedding failure is non-fatal */});
       } catch {
         setError(`"${file.name}" 업로드 실패`);
       }
@@ -191,6 +217,13 @@ export default function KnowledgePage() {
                     <span className="uppercase font-mono">{ext}</span>
                     <span>·</span>
                     <span>{formatBytes(f.file_size)}</span>
+                    {taskStatus[f.id] === "queued" || taskStatus[f.id] === "running" ? (
+                      <span className="flex items-center gap-1 text-amber-400"><Loader2 size={10} className="animate-spin" />임베딩 중</span>
+                    ) : taskStatus[f.id] === "success" ? (
+                      <span className="text-green-400">임베딩 완료</span>
+                    ) : taskStatus[f.id] === "failed" ? (
+                      <span className="text-red-400">임베딩 실패</span>
+                    ) : null}
                   </div>
                 </div>
                 <button
