@@ -10,6 +10,7 @@ export type Session = {
   title: string;
   type: SessionType;
   folderId: string | null;
+  modelId?: string;
   updatedAt: Date;
 };
 
@@ -72,6 +73,15 @@ export function createSession(id: string, title: string, type: SessionType = "ch
   if (localStorage.getItem("umai_access_token")) {
     apiCreateChat(title).catch(() => {/* ignore — offline / unauthenticated */});
   }
+}
+
+/** 세션에 사용된 모델 ID 저장 (per-chat model memory) */
+export function updateSessionModel(id: string, modelId: string) {
+  if (typeof window === "undefined") return;
+  const sessions = loadSessions().map((s) =>
+    s.id === id ? { ...s, modelId } : s
+  );
+  saveSessions(sessions);
 }
 
 /** 세션 제목 업데이트

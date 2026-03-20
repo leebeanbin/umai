@@ -3,17 +3,26 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { loadSettings, saveSettings, loadModels, type DynamicModel } from "@/lib/appStore";
+import { loadSessions, updateSessionModel } from "@/lib/store";
 import ModelSelect from "@/components/common/ModelSelect";
 
-export default function ChatNavbar() {
+type Props = {
+  chatId?: string;
+};
+
+export default function ChatNavbar({ chatId }: Props) {
   const { t } = useLanguage();
 
-  // Load once on mount via lazy initializer — no localStorage read on every render
   const [navState, setNavState] = useState(() => {
     const all = loadModels();
     const s   = loadSettings();
+    // Per-chat model: if chatId is given, prefer the session's saved modelId
+    const sessionModel = chatId
+      ? loadSessions().find((sess) => sess.id === chatId)?.modelId
+      : undefined;
+    const activeId = sessionModel ?? s.selectedModel;
     return {
-      model:       all.find((m) => m.id === s.selectedModel) ?? all[0],
+      model:       all.find((m) => m.id === activeId) ?? all[0],
       inputBadge:  s.inputLang  !== "auto" ? s.inputLang.toUpperCase()  : null as string | null,
       outputBadge: s.outputLang !== "auto" ? s.outputLang.toUpperCase() : null as string | null,
     };
@@ -22,23 +31,33 @@ export default function ChatNavbar() {
   const handleModelChange = useCallback((m: DynamicModel) => {
     setNavState((prev) => ({ ...prev, model: m }));
     saveSettings({ selectedModel: m.id });
-  }, []);
+    // Also persist to the specific chat session so it loads correctly next time
+    if (chatId) updateSessionModel(chatId, m.id);
+  }, [chatId]);
 
   // Reload when models are fetched or settings change externally
   useEffect(() => {
     function onModelsChange() {
       const all = loadModels();
       const s   = loadSettings();
+      const sessionModel = chatId
+        ? loadSessions().find((sess) => sess.id === chatId)?.modelId
+        : undefined;
+      const activeId = sessionModel ?? s.selectedModel;
       setNavState((prev) => ({
         ...prev,
-        model: all.find((m) => m.id === s.selectedModel) ?? all[0] ?? prev.model,
+        model: all.find((m) => m.id === activeId) ?? all[0] ?? prev.model,
       }));
     }
     function onSettingsChange() {
       const s   = loadSettings();
       const all = loadModels();
+      const sessionModel = chatId
+        ? loadSessions().find((sess) => sess.id === chatId)?.modelId
+        : undefined;
+      const activeId = sessionModel ?? s.selectedModel;
       setNavState({
-        model:       all.find((m) => m.id === s.selectedModel) ?? all[0],
+        model:       all.find((m) => m.id === activeId) ?? all[0],
         inputBadge:  s.inputLang  !== "auto" ? s.inputLang.toUpperCase()  : null,
         outputBadge: s.outputLang !== "auto" ? s.outputLang.toUpperCase() : null,
       });
@@ -49,7 +68,7 @@ export default function ChatNavbar() {
       window.removeEventListener("umai:models-change",   onModelsChange);
       window.removeEventListener("umai:settings-change", onSettingsChange);
     };
-  }, []);
+  }, [chatId]);
 
   if (!navState.model) return null;
 

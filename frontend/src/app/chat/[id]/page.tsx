@@ -120,7 +120,7 @@ export default function ChatSession() {
 
   return (
     <div className="flex flex-col h-full bg-base">
-      <ChatNavbar />
+      <ChatNavbar chatId={id} />
 
       {/* Temporary chat indicator */}
       {isTemp && (
