@@ -14,6 +14,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
+const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
+
 // ── Key resolution ────────────────────────────────────────────────────────────
 
 function serverKey(provider: string): string {
@@ -25,10 +27,17 @@ function serverKey(provider: string): string {
 
 /** Reports which providers have server-configured API keys. */
 export async function GET() {
+  let ollamaReachable = false;
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(2000) });
+    ollamaReachable = res.ok;
+  } catch { /* unreachable */ }
+
   return NextResponse.json({
     openai:    !!process.env.OPENAI_API_KEY,
     anthropic: !!process.env.ANTHROPIC_API_KEY,
     google:    !!process.env.GOOGLE_API_KEY,
+    ollama:    ollamaReachable,
   });
 }
 
@@ -47,6 +56,9 @@ type RequestBody = {
 export async function POST(req: NextRequest) {
   const body = await req.json() as RequestBody;
   const { provider, model, messages, sysPrompt, temperature, maxTokens, topP } = body;
+
+  // Ollama needs no API key — handle before the key check
+  if (provider === "ollama") return proxyOllama({ model, messages, apiKey: "", sysPrompt, temperature, maxTokens, topP });
 
   const apiKey = serverKey(provider);
 
@@ -200,6 +212,41 @@ async function proxyAnthropic({ model, messages, apiKey, sysPrompt, temperature,
   });
 
   return new Response(upstream.body!.pipeThrough(xform), { headers: SSE_HEADERS });
+}
+
+// ─ Ollama ─────────────────────────────────────────────────────────────────────
+
+async function proxyOllama({ model, messages, sysPrompt, temperature, maxTokens }: ProxyArgs) {
+  const body: Record<string, unknown> = {
+    model,
+    stream: true,
+    messages: sysPrompt
+      ? [{ role: "system", content: sysPrompt }, ...messages]
+      : messages,
+  };
+  if (temperature != null) body.options = { ...(body.options as object ?? {}), temperature };
+  if (maxTokens   != null) body.options = { ...(body.options as object ?? {}), num_predict: maxTokens };
+
+  const upstream = await fetch(`${OLLAMA_URL}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch(() => null);
+
+  if (!upstream) {
+    return NextResponse.json({ error: "Ollama unreachable. Make sure Ollama is running." }, { status: 503 });
+  }
+
+  if (!upstream.ok) {
+    const err = await upstream.json().catch(() => ({})) as Record<string, Record<string, string>>;
+    return NextResponse.json(
+      { error: err?.error?.message ?? `Ollama error ${upstream.status}` },
+      { status: upstream.status }
+    );
+  }
+
+  // Ollama's /v1/chat/completions emits OpenAI-format SSE — pipe through directly.
+  return new Response(upstream.body, { headers: SSE_HEADERS });
 }
 
 // ─ Google ─────────────────────────────────────────────────────────────────────

@@ -32,13 +32,14 @@ type StreamChatOptions = {
 
 // ── Provider resolution ───────────────────────────────────────────────────────
 
-function getProvider(modelId: string): "openai" | "anthropic" | "google" | null {
+function getProvider(modelId: string): "openai" | "anthropic" | "google" | "ollama" | null {
   const model = loadModels().find((m) => m.id === modelId);
   if (model) {
     const p = model.provider.toLowerCase();
     if (p === "openai")    return "openai";
     if (p === "anthropic") return "anthropic";
     if (p === "google")    return "google";
+    if (p === "ollama")    return "ollama";
   }
   if (modelId.startsWith("gpt-") || modelId.startsWith("o1") || modelId.startsWith("o3") || modelId.startsWith("o4")) return "openai";
   if (modelId.startsWith("claude-")) return "anthropic";

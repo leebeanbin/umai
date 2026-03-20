@@ -25,28 +25,18 @@ export type Folder = {
 const SESSIONS_KEY = "umai_sessions";
 const FOLDERS_KEY  = "umai_folders";
 
-// ── 초기 목업 (localStorage에 데이터가 없을 때만 사용) ──────────────────────
-const DEFAULT_FOLDERS: Folder[] = [
-  { id: "f1", name: "상품 이미지", open: true },
-  { id: "f2", name: "인물 편집", open: false },
-];
-
-const DEFAULT_SESSIONS: Session[] = [
-  { id: "s1", title: "배경 교체 작업", type: "editor", folderId: "f1", updatedAt: new Date(Date.now() - 1000 * 60 * 10) },
-  { id: "s2", title: "상품 누끼 작업", type: "editor", folderId: "f1", updatedAt: new Date(Date.now() - 1000 * 60 * 40) },
-  { id: "s3", title: "인물 배경 제거", type: "editor", folderId: "f2", updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 3) },
-  { id: "s4", title: "프롬프트 실험",  type: "chat",   folderId: null, updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 25) },
-  { id: "s5", title: "모델 응답 비교", type: "chat",   folderId: null, updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 50) },
-];
+// UUID v4 pattern — filters out mock IDs like "s1", "f1" etc.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ── Folders ──────────────────────────────────────────────────────────────────
 export function loadFolders(): Folder[] {
-  if (typeof window === "undefined") return DEFAULT_FOLDERS;
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(FOLDERS_KEY);
-    if (!raw) return DEFAULT_FOLDERS;
-    return JSON.parse(raw) as Folder[];
-  } catch { return DEFAULT_FOLDERS; }
+    if (!raw) return [];
+    const all = JSON.parse(raw) as Folder[];
+    return all.filter((f) => UUID_RE.test(f.id));
+  } catch { return []; }
 }
 
 export function saveFolders(folders: Folder[]) {
@@ -56,15 +46,14 @@ export function saveFolders(folders: Folder[]) {
 
 // ── Sessions ─────────────────────────────────────────────────────────────────
 export function loadSessions(): Session[] {
-  if (typeof window === "undefined") return DEFAULT_SESSIONS;
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(SESSIONS_KEY);
-    if (!raw) return DEFAULT_SESSIONS;
-    return (JSON.parse(raw) as Array<Session & { updatedAt: string }>).map((s) => ({
-      ...s,
-      updatedAt: new Date(s.updatedAt),
-    }));
-  } catch { return DEFAULT_SESSIONS; }
+    if (!raw) return [];
+    return (JSON.parse(raw) as Array<Session & { updatedAt: string }>)
+      .filter((s) => UUID_RE.test(s.id))  // drop mock IDs like "s1", "s2"
+      .map((s) => ({ ...s, updatedAt: new Date(s.updatedAt) }));
+  } catch { return []; }
 }
 
 export function saveSessions(sessions: Session[]) {
@@ -123,6 +112,3 @@ export function groupByTime(sessions: Session[]) {
   };
 }
 
-// ── Legacy exports (backward compat) ─────────────────────────────────────────
-export const INITIAL_FOLDERS  = DEFAULT_FOLDERS;
-export const INITIAL_SESSIONS = DEFAULT_SESSIONS;
