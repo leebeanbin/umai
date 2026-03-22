@@ -17,6 +17,7 @@ import { loadSessions, saveSessions, saveFolders } from "@/lib/store";
 import { applyTheme } from "@/components/providers/ThemeProvider";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { apiUpdateProfile } from "@/lib/api/backendClient";
 import { type TranslationKey } from "@/lib/i18n";
 
 type Tab = "general" | "interface" | "audio" | "data" | "account" | "about";
@@ -92,6 +93,12 @@ export default function SettingsModal({ open, onClose }: Props) {
   // Data
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
+  // Account profile edit
+  const [editName, setEditName]   = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError]   = useState("");
+
   const displayModels = useMemo(
     () => (models.length > 0 ? models : FALLBACK_MODELS),
     [models],
@@ -115,7 +122,13 @@ export default function SettingsModal({ open, onClose }: Props) {
     setOutputLang(s.outputLang ?? "auto");
     setModels(loadModels());
     setDeleteConfirm(false);
-  }, [open]);
+    // Sync profile fields from current user
+    if (user) {
+      setEditName(user.name ?? "");
+      setEditEmail(user.notification_email ?? user.email ?? "");
+    }
+    setProfileError("");
+  }, [open, user]);
 
   if (!open) return null;
 
@@ -147,6 +160,21 @@ export default function SettingsModal({ open, onClose }: Props) {
     a.download = `umai-export-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function handleProfileSave() {
+    if (!editName.trim()) { setProfileError(lang === "ko" ? "이름은 비울 수 없습니다." : "Name cannot be empty."); return; }
+    setProfileSaving(true);
+    setProfileError("");
+    try {
+      await apiUpdateProfile({ name: editName.trim(), notification_email: editEmail.trim() || undefined });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch {
+      setProfileError(lang === "ko" ? "저장에 실패했습니다." : "Failed to save profile.");
+    } finally {
+      setProfileSaving(false);
+    }
   }
 
   function handleDeleteAll() {
@@ -493,6 +521,44 @@ export default function SettingsModal({ open, onClose }: Props) {
                         )}
                       </div>
                     </div>
+                    {/* Profile edit form */}
+                    <div className="flex flex-col gap-3 p-4 bg-surface rounded-2xl border border-border">
+                      <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                        {lang === "ko" ? "프로필 편집" : "Edit Profile"}
+                      </p>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs text-text-muted">{lang === "ko" ? "이름" : "Name"}</label>
+                        <input
+                          type="text"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          placeholder={lang === "ko" ? "이름 입력" : "Enter name"}
+                          className="w-full px-3 py-2 rounded-xl text-sm bg-elevated border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs text-text-muted">{lang === "ko" ? "알림 이메일" : "Notification email"}</label>
+                        <input
+                          type="email"
+                          value={editEmail}
+                          onChange={(e) => setEditEmail(e.target.value)}
+                          placeholder={user?.email ?? ""}
+                          className="w-full px-3 py-2 rounded-xl text-sm bg-elevated border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
+                        />
+                        <p className="text-[10px] text-text-muted px-0.5">{lang === "ko" ? "비워두면 로그인 이메일로 대체됩니다." : "Leave blank to use login email."}</p>
+                      </div>
+                      {profileError && <p className="text-xs text-danger">{profileError}</p>}
+                      <button
+                        onClick={handleProfileSave}
+                        disabled={profileSaving}
+                        className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-accent/10 border border-accent/20 text-accent hover:bg-accent/15 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {profileSaving
+                          ? (lang === "ko" ? "저장 중…" : "Saving…")
+                          : (lang === "ko" ? "프로필 저장" : "Save Profile")}
+                      </button>
+                    </div>
+
                     <div className="flex flex-col gap-2">
                       <button
                         onClick={() => { onClose(); logout(); }}

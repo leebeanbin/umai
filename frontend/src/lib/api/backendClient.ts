@@ -23,11 +23,14 @@ export type UserOut = {
   notification_email: string | null;
 };
 
-export type TokenResponse = {
+/** 외부 API 응답 타입 — refresh_token은 HttpOnly 쿠키에 설정되므로 body에 없음 */
+export type AccessTokenResponse = {
   access_token: string;
-  refresh_token: string;
   token_type: string;
 };
+
+/** 하위 호환용 alias */
+export type TokenResponse = AccessTokenResponse;
 
 export type ChatOut = {
   id: string;
@@ -53,26 +56,31 @@ export type FolderOut = {
 
 const IS_DEV = process.env.NODE_ENV === "development";
 
-function getTokens() {
-  // In dev mode, use the bypass token if no real token is stored
-  const access  = localStorage.getItem("umai_access_token")  || (IS_DEV ? "dev" : "");
-  const refresh = localStorage.getItem("umai_refresh_token") || "";
-  return { access, refresh };
+/**
+ * Access token은 메모리(모듈 변수)에만 보관.
+ * - XSS로 탈취 불가 (localStorage/cookie에 없음)
+ * - 페이지 새로고침 시 소실 → 자동으로 refresh 엔드포인트 호출 (HttpOnly 쿠키 사용)
+ * - refresh token은 HttpOnly 쿠키로 백엔드가 직접 설정 → JS에서 절대 접근 불가
+ */
+let _accessToken = "";
+
+/** 현재 메모리에 유효한 access token이 있는지 확인 (인증 여부 판단용) */
+export function isAuthenticated(): boolean {
+  return !!_accessToken || IS_DEV;
 }
 
-function saveTokens(tokens: TokenResponse) {
-  localStorage.setItem("umai_access_token",  tokens.access_token);
-  localStorage.setItem("umai_refresh_token", tokens.refresh_token);
-  // Cookie for Next.js middleware (7 day max-age, SameSite=Lax)
-  const maxAge = 60 * 60 * 24 * 7;
-  document.cookie = `umai_access_token=${tokens.access_token};path=/;max-age=${maxAge};SameSite=Lax`;
+/** 다른 모듈에서 Bearer token이 필요할 때 사용 (직접 fetch 할 때) */
+export function getStoredToken(): string {
+  return _accessToken || (IS_DEV ? "dev" : "");
+}
+
+function saveTokens(tokens: AccessTokenResponse) {
+  _accessToken = tokens.access_token;
   window.dispatchEvent(new Event("umai:auth-change"));
 }
 
 function clearTokens() {
-  localStorage.removeItem("umai_access_token");
-  localStorage.removeItem("umai_refresh_token");
-  document.cookie = "umai_access_token=;path=/;max-age=0";
+  _accessToken = "";
   window.dispatchEvent(new Event("umai:auth-change"));
 }
 
@@ -84,12 +92,13 @@ async function apiFetch<T>(
   init: RequestInit = {},
   retry = true,
 ): Promise<T> {
-  const { access } = getTokens();
+  const token = _accessToken || (IS_DEV ? "dev" : "");
   const res = await fetch(`${BASE}${path}`, {
     ...init,
+    credentials: "include",   // HttpOnly refresh cookie를 자동 포함
     headers: {
       "Content-Type": "application/json",
-      ...(access ? { Authorization: `Bearer ${access}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init.headers ?? {}),
     },
   });
@@ -117,16 +126,15 @@ async function apiFetch<T>(
 }
 
 async function tryRefresh(): Promise<boolean> {
-  const { refresh } = getTokens();
-  if (!refresh) return false;
   try {
+    // 요청 body 없음 — 브라우저가 HttpOnly 쿠키(umai_refresh)를 자동 포함
     const res = await fetch(`${BASE}/api/v1/auth/refresh`, {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refresh }),
     });
     if (!res.ok) return false;
-    const tokens: TokenResponse = await res.json();
+    const tokens: AccessTokenResponse = await res.json();
     saveTokens(tokens);
     return true;
   } catch {
@@ -138,6 +146,13 @@ async function tryRefresh(): Promise<boolean> {
 
 export async function fetchMe(): Promise<UserOut> {
   return apiFetch<UserOut>("/api/v1/auth/me");
+}
+
+export async function apiUpdateProfile(body: { name?: string; notification_email?: string }): Promise<UserOut> {
+  return apiFetch<UserOut>("/api/v1/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
 }
 
 /** Exchange a one-time OAuth code for access + refresh tokens. */
@@ -161,13 +176,8 @@ export async function apiOnboard(name: string, notificationEmail: string): Promi
 
 
 export async function apiLogout(): Promise<void> {
-  const { refresh } = getTokens();
-  if (refresh) {
-    await apiFetch<void>("/api/v1/auth/logout", {
-      method: "POST",
-      body: JSON.stringify({ refresh_token: refresh }),
-    }).catch(() => {/* best-effort */});
-  }
+  // refresh_token은 HttpOnly 쿠키 → body 불필요, 브라우저가 자동 포함
+  await apiFetch<void>("/api/v1/auth/logout", { method: "POST" }).catch(() => {/* best-effort */});
   clearTokens();
 }
 
@@ -196,6 +206,25 @@ export async function apiUpdateChat(
 
 export async function apiDeleteChat(chatId: string): Promise<void> {
   return apiFetch<void>(`/api/v1/chats/${chatId}`, { method: "DELETE" });
+}
+
+/**
+ * Ollama 경량 모델로 대화 첫 교환에서 제목을 생성하고 백엔드 DB에 저장한다.
+ * 응답으로 반환된 title을 바로 UI에 반영하면 된다.
+ *
+ * @throws {Error} Ollama 미실행(503), 모델 없음(503), 권한 없음(403), 채팅 없음(404)
+ */
+export async function apiGenerateChatTitle(
+  chatId: string,
+  userContent: string,
+  assistantContent: string,
+  language = "en",
+): Promise<string> {
+  const res = await apiFetch<{ title: string }>(`/api/v1/chats/${chatId}/title`, {
+    method: "POST",
+    body: JSON.stringify({ user_content: userContent, assistant_content: assistantContent, language }),
+  });
+  return res.title;
 }
 
 // ── Folders ───────────────────────────────────────────────────────────────────
@@ -247,10 +276,39 @@ export type AdminStatsOut = {
   active_users: number;
   total_chats: number;
   new_this_week: number;
+  daily_chats: number[];    // 최근 7일 채팅 수 (오래된 날 → 최근 날)
+  daily_signups: number[];  // 최근 7일 가입자 수
 };
 
 export async function apiAdminStats(): Promise<AdminStatsOut> {
   return apiFetch<AdminStatsOut>("/api/v1/admin/stats");
+}
+
+export type RatingEntryOut = {
+  message_id: string;
+  chat_id: string;
+  model: string | null;
+  rating: "positive" | "negative";
+  message_preview: string;
+  user_email: string;
+  created_at: string;
+};
+
+export async function apiRateMessage(
+  chatId: string, messageId: string, rating: "positive" | "negative" | null,
+): Promise<void> {
+  await apiFetch(`/api/v1/chats/${chatId}/messages/${messageId}/rating`, {
+    method: "PATCH",
+    body: JSON.stringify({ rating }),
+  });
+}
+
+export async function apiAdminRatings(
+  rating?: "positive" | "negative", skip = 0, limit = 50,
+): Promise<RatingEntryOut[]> {
+  const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
+  if (rating) params.set("rating", rating);
+  return apiFetch<RatingEntryOut[]>(`/api/v1/admin/ratings?${params}`);
 }
 
 export async function apiAdminListUsers(skip = 0, limit = 50): Promise<AdminUserOut[]> {
@@ -300,12 +358,13 @@ export async function apiAdminOllamaPull(
   onProgress: (line: { status: string; completed?: number; total?: number; error?: string }) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const { access } = getTokens();
+  const token = getStoredToken();
   const res = await fetch(`${BASE}/api/v1/admin/ollama/pull`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(access ? { Authorization: `Bearer ${access}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ name: modelName }),
     signal,
@@ -394,10 +453,11 @@ export async function apiListKnowledge(): Promise<KnowledgeItem[]> {
 export async function apiUploadKnowledge(file: File): Promise<KnowledgeItem> {
   const fd = new FormData();
   fd.append("file", file);
-  const { access } = getTokens();
+  const token = getStoredToken();
   const res = await fetch(`${BASE}/api/v1/workspace/knowledge`, {
     method: "POST",
-    headers: access ? { Authorization: `Bearer ${access}` } : {},
+    credentials: "include",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: fd,
   });
   if (!res.ok) {
@@ -435,10 +495,11 @@ export async function apiEnqueueKnowledgeProcess(
   fd.append("embedding_provider", embeddingProvider);
   fd.append("embedding_model", embeddingModel);
   fd.append("file", file);
-  const { access } = getTokens();
+  const token = getStoredToken();
   const res = await fetch(`${BASE}/api/v1/tasks/knowledge/process`, {
     method: "POST",
-    headers: access ? { Authorization: `Bearer ${access}` } : {},
+    credentials: "include",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: fd,
   });
   if (!res.ok) {

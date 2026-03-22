@@ -22,11 +22,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.models.user import User
 from app.routers.deps import get_current_user
+from app.core.config import settings
+from app.core.errors import ErrCode
 from app.services.chat_service import ChatService
+from app.services.title_service import (
+    TitleService,
+    OllamaConnectionError,
+    OllamaTimeoutError,
+    OllamaModelNotFoundError,
+    TitleGenerationError,
+)
 from app.schemas.chat import (
     AddMessageRequest, ChatDetailOut, ChatMemberOut, ChatOut, MessageOut,
     CreateChatRequest, InviteMemberRequest, UpdateChatRequest,
-    UpdateMemberRoleRequest,
+    UpdateMemberRoleRequest, GenerateTitleRequest, GenerateTitleResponse,
+    RateMessageRequest, RateMessageResponse,
 )
 
 router = APIRouter(prefix="/chats", tags=["chats"])
@@ -34,6 +44,14 @@ router = APIRouter(prefix="/chats", tags=["chats"])
 
 def get_chat_service(db: AsyncSession = Depends(get_db)) -> ChatService:
     return ChatService(db)
+
+
+def get_title_service() -> TitleService:
+    return TitleService(
+        ollama_url=settings.OLLAMA_URL,
+        model=settings.OLLAMA_TITLE_MODEL,
+        timeout=settings.OLLAMA_TITLE_TIMEOUT,
+    )
 
 
 def _chat_out(chat, my_role: str) -> ChatOut:
@@ -151,6 +169,23 @@ async def add_message(
     return {"id": str(msg.id)}
 
 
+# ── 메시지 평가 (viewer 이상 — 본인 채팅) ────────────────────────────────────
+
+@router.patch("/{chat_id}/messages/{message_id}/rating", response_model=RateMessageResponse)
+async def rate_message(
+    chat_id: uuid.UUID,
+    message_id: uuid.UUID,
+    body: RateMessageRequest,
+    svc: ChatService = Depends(get_chat_service),
+    user: User = Depends(get_current_user),
+):
+    """어시스턴트 메시지에 좋아요/싫어요 평가를 저장하거나 취소한다."""
+    chat = await svc.get_chat_or_404(chat_id)
+    await svc.require_member(chat, user, min_role="viewer")
+    msg = await svc.rate_message(message_id, body.rating)
+    return RateMessageResponse(message_id=str(msg.id), rating=msg.rating)
+
+
 # ── Markdown 내보내기 (viewer 이상) ───────────────────────────────────────────
 
 @router.get("/{chat_id}/export", response_class=PlainTextResponse)
@@ -226,3 +261,47 @@ async def remove_member(
     chat = await svc.get_chat_or_404(chat_id)
     await svc.require_member(chat, user, min_role="owner")
     await svc.remove_member(chat_id, target_user_id)
+
+
+# ── 제목 자동 생성 (editor 이상) ──────────────────────────────────────────────
+#
+# POST /chats/{id}/title
+#   Ollama 경량 모델(OLLAMA_TITLE_MODEL)을 사용해 대화 내용에서 짧은 제목을 생성하고
+#   채팅 제목을 즉시 업데이트한다.
+#
+# 에러 우선순위:
+#   1. Ollama 연결 실패         → 503 OLLAMA_UNAVAILABLE
+#   2. 응답 시간 초과            → 503 TITLE_GENERATION_FAILED (timeout 메시지)
+#   3. 모델 없음 (404)          → 503 TITLE_GENERATION_FAILED (모델 이름 포함)
+#   4. 그 외 Ollama HTTP 오류   → 503 TITLE_GENERATION_FAILED
+
+@router.post("/{chat_id}/title", response_model=GenerateTitleResponse)
+async def generate_chat_title(
+    chat_id: uuid.UUID,
+    body: GenerateTitleRequest,
+    chat_svc: ChatService    = Depends(get_chat_service),
+    title_svc: TitleService  = Depends(get_title_service),
+    user: User               = Depends(get_current_user),
+):
+    """
+    Ollama 경량 모델로 대화 첫 교환에서 제목을 생성하고 DB에 저장한다.
+    생성된 제목은 응답으로도 반환되므로 프론트엔드가 별도 GET 없이 UI를 즉시 갱신할 수 있다.
+    """
+    chat = await chat_svc.get_chat_or_404(chat_id)
+    await chat_svc.require_member(chat, user, min_role="editor")
+
+    try:
+        title = await title_svc.generate(body.user_content, body.assistant_content, body.language)
+    except OllamaConnectionError as exc:
+        ErrCode.OLLAMA_UNAVAILABLE.raise_it(str(exc))
+    except OllamaTimeoutError as exc:
+        ErrCode.TITLE_GENERATION_FAILED.raise_it(str(exc))
+    except OllamaModelNotFoundError as exc:
+        ErrCode.TITLE_GENERATION_FAILED.raise_it(str(exc))
+    except TitleGenerationError as exc:
+        ErrCode.TITLE_GENERATION_FAILED.raise_it(str(exc))
+
+    if title:
+        await chat_svc.update_chat(chat, title=title)
+
+    return GenerateTitleResponse(title=title)

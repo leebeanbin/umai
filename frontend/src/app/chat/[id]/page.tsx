@@ -9,7 +9,8 @@ import MessageInput from "@/components/chat/MessageInput";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useChat } from "@/lib/hooks/useChat";
 import { createSession, updateSessionTitle } from "@/lib/store";
-import { streamChat } from "@/lib/apis/chat";
+import { loadSettings } from "@/lib/appStore";
+import { apiGenerateChatTitle } from "@/lib/api/backendClient";
 
 type AttachedImage = { id: string; dataUrl: string; name: string };
 
@@ -49,44 +50,26 @@ export default function ChatSession() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 첫 번째 응답 완료 후 → 로컬 모델로 짧은 제목 스트리밍 생성
+  // 첫 번째 응답 완료 후 → Ollama 경량 모델로 제목 생성 (백엔드 위임)
   useEffect(() => {
     if (generating || titleGenerated.current) return;
 
-    const userMsg  = messages.find((m) => m.role === "user"      && !m.error);
-    const asstMsg  = messages.find((m) => m.role === "assistant" && !m.streaming && !m.error && m.content.length > 0);
+    const userMsg = messages.find((m) => m.role === "user"      && !m.error);
+    const asstMsg = messages.find((m) => m.role === "assistant" && !m.streaming && !m.error && m.content.length > 0);
     if (!userMsg || !asstMsg) return;
 
     titleGenerated.current = true;
 
-    const titlePrompt = [
-      { role: "user"      as const, content: userMsg.content },
-      { role: "assistant" as const, content: asstMsg.content.slice(0, 500) },
-      {
-        role: "user" as const,
-        content:
-          "위 대화를 3~6단어의 한국어 제목으로 요약해줘. " +
-          "제목만, 따옴표·마침표·설명 없이 짧게.",
-      },
-    ];
-
-    let built = "";
-    streamChat({
-      messages: titlePrompt,
-      onChunk: (chunk) => {
-        built += chunk;
-        // 마침표·따옴표 제거 후 실시간 반영 (백엔드 sync 없이)
-        const cleaned = built.replace(/["""'''.。]/g, "").trim();
-        if (cleaned) updateSessionTitle(id, cleaned, false);
-      },
-      onDone: () => {
-        const final = built.replace(/["""'''.。]/g, "").trim().slice(0, 60);
-        if (final) updateSessionTitle(id, final, true); // 최종만 백엔드 sync
-      },
-      onError: () => {
-        // 조용히 실패 — 기본 제목 유지
-      },
-    }).catch(() => {});
+    // 백엔드가 Ollama를 호출해 제목을 생성하고 DB에 저장한다.
+    // 성공 시 반환된 title로 사이드바를 즉시 갱신 (추가 GET 불필요).
+    // 실패(Ollama 미실행 등)는 조용히 무시 — 기본 제목 "새 채팅" 유지.
+    const { language, outputLang } = loadSettings();
+    const titleLang = outputLang !== "auto" ? outputLang : language;
+    apiGenerateChatTitle(id, userMsg.content, asstMsg.content, titleLang)
+      .then((title) => {
+        if (title) updateSessionTitle(id, title, false); // DB는 이미 저장됨
+      })
+      .catch(() => { /* Ollama 오류 — 기본 제목 유지 */ });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [generating, messages.length]);
 
@@ -104,8 +87,8 @@ export default function ChatSession() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSend = useCallback((content: string, images: AttachedImage[]) => {
-    send(content, images.map((i) => i.dataUrl));
+  const handleSend = useCallback((content: string, images: AttachedImage[], webSearch?: boolean, docContext?: string, useRag?: boolean) => {
+    send(content, images.map((i) => i.dataUrl), { webSearch, docContext, useRag });
   }, [send]);
 
   const tempSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -148,6 +131,7 @@ export default function ChatSession() {
         ) : (
           <MessageList
             messages={messages}
+            chatId={id}
             onEdit={editMessage}
             onRegenerate={regenerate}
           />

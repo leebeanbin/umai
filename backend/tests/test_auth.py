@@ -76,14 +76,64 @@ async def test_refresh_invalid_token(client):
     assert res.status_code == 401
 
 
-# ── OAuth disabled ────────────────────────────────────────────────────────────
+# ── OAuth disabled / enabled ─────────────────────────────────────────────────
 
-async def test_google_oauth_disabled_by_default(client):
-    """system_settings에 google_enabled=False 이면 403."""
-    # 기본 설정에서 OAuth는 비활성화
+async def test_google_oauth_returns_403_when_disabled(client, admin_headers):
+    """기본값 google_enabled=False → OAuth 엔드포인트는 403."""
+    # public settings 조회로 기본 settings row 생성 유도
+    await client.get("/api/v1/admin/settings/public")
+
     res = await client.get("/api/v1/auth/oauth/google")
-    # 리다이렉트(302) 또는 403 — OAuth credential 미설정시 오류 가능
-    # 핵심: 비활성화 설정이면 403이어야 함
-    assert res.status_code in (302, 403, 422, 500)
-    # settings_row가 없거나 google_enabled=False이면 403이 맞음
-    # 이 테스트는 OAuth 비활성화 경로 자체가 있음을 확인
+    assert res.status_code == 403
+
+
+async def test_github_oauth_returns_403_when_disabled(client, admin_headers):
+    """기본값 github_enabled=False → OAuth 엔드포인트는 403."""
+    await client.get("/api/v1/admin/settings/public")
+
+    res = await client.get("/api/v1/auth/oauth/github")
+    assert res.status_code == 403
+
+
+async def test_google_oauth_not_forbidden_when_enabled(client, admin_headers):
+    """admin이 google_enabled=True로 변경하면 403이 해제됨."""
+    await client.patch(
+        "/api/v1/admin/settings",
+        headers=admin_headers,
+        json={"oauth": {"google_enabled": True}},
+    )
+    res = await client.get("/api/v1/auth/oauth/google")
+    # 403이 아니어야 함 — credentials 없으면 422/500/302 가능
+    assert res.status_code != 403
+
+
+async def test_github_oauth_not_forbidden_when_enabled(client, admin_headers):
+    """admin이 github_enabled=True로 변경하면 403이 해제됨."""
+    await client.patch(
+        "/api/v1/admin/settings",
+        headers=admin_headers,
+        json={"oauth": {"github_enabled": True}},
+    )
+    res = await client.get("/api/v1/auth/oauth/github")
+    assert res.status_code != 403
+
+
+async def test_oauth_toggle_round_trip(client, admin_headers):
+    """활성화 후 다시 비활성화하면 다시 403."""
+    # Enable
+    await client.patch(
+        "/api/v1/admin/settings",
+        headers=admin_headers,
+        json={"oauth": {"google_enabled": True}},
+    )
+    res_enabled = await client.get("/api/v1/auth/oauth/google")
+    assert res_enabled.status_code != 403
+
+    # Disable
+    await client.patch(
+        "/api/v1/admin/settings",
+        headers=admin_headers,
+        json={"oauth": {"google_enabled": False}},
+    )
+    res_disabled = await client.get("/api/v1/auth/oauth/google")
+    assert res_disabled.status_code == 403

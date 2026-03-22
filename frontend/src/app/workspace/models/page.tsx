@@ -42,16 +42,17 @@ const LOCAL_KEY = "custom-models";
 export default function ModelsPage() {
   const { t } = useLanguage();
   const [query, setQuery]           = useState("");
-  const [customModels, setCustom]   = useState<CustomModel[]>(() =>
-    loadWs<CustomModel>(LOCAL_KEY, INITIAL_CUSTOM)
-  );
+  // [] on SSR — localStorage는 클라이언트 전용 (lazy init 대신 useEffect)
+  const [customModels, setCustom]   = useState<CustomModel[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm]             = useState({ name: "", baseModel: "gpt-4o", systemPrompt: "", description: "" });
-  const [builtinModels]             = useState(() => loadModels());
+  const [builtinModels, setBuiltinModels] = useState<ReturnType<typeof loadModels>>([]);
   const [saving, setSaving]         = useState(false);
 
-  // Sync from backend on mount
+  // 마운트 후 localStorage 로드 → 백엔드 동기화
   useEffect(() => {
+    setBuiltinModels(loadModels());
+    setCustom(loadWs<CustomModel>(LOCAL_KEY, INITIAL_CUSTOM));
     syncWorkspaceFromBackend("model", LOCAL_KEY, toLocal, INITIAL_CUSTOM).then(setCustom);
   }, []);
 

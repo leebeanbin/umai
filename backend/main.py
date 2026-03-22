@@ -1,7 +1,9 @@
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -16,6 +18,7 @@ from app.core.errors import AppException
 from app.core.redis import close_redis, get_redis
 from app.routers import auth, chats, folders, admin, workspace
 from app.routers import tasks as tasks_router
+from app.routers import rag as rag_router
 
 # ── Rate Limiter 설정 ─────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
@@ -55,12 +58,15 @@ app.add_middleware(SlowAPIMiddleware)
 # Starlette session (OAuth state 저장용)
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    expose_headers=["Set-Cookie"],
 )
 
 # ── 라우터 등록 ───────────────────────────────────────────────────────────────
@@ -70,14 +76,25 @@ app.include_router(folders.router,   prefix="/api/v1")
 app.include_router(admin.router,     prefix="/api/v1")
 app.include_router(workspace.router,      prefix="/api/v1")
 app.include_router(tasks_router.router,   prefix="/api/v1")
+app.include_router(rag_router.router,     prefix="/api/v1")
 
+
+_health_cache: dict | None = None
+_health_cache_at: float = 0.0
 
 @app.get("/health")
 async def health():
-    """Liveness + dependency checks for load balancers / k8s probes."""
+    """Liveness + dependency checks. 5초 캐시로 k8s probe 부하 감소."""
+    global _health_cache, _health_cache_at
+    now = time.monotonic()
+    if _health_cache and now - _health_cache_at < 5:
+        return JSONResponse(
+            status_code=200 if _health_cache["status"] == "ok" else 503,
+            content=_health_cache,
+        )
+
     checks: dict[str, str] = {}
 
-    # DB check
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
@@ -85,7 +102,6 @@ async def health():
     except Exception as exc:
         checks["db"] = f"error: {exc}"
 
-    # Redis check
     try:
         r = await get_redis()
         await r.ping()
@@ -94,7 +110,7 @@ async def health():
         checks["redis"] = f"error: {exc}"
 
     ok = all(v == "ok" for v in checks.values())
-    return JSONResponse(
-        status_code=200 if ok else 503,
-        content={"status": "ok" if ok else "degraded", "checks": checks, "service": settings.APP_NAME},
-    )
+    result = {"status": "ok" if ok else "degraded", "checks": checks, "service": settings.APP_NAME}
+    _health_cache = result
+    _health_cache_at = now
+    return JSONResponse(status_code=200 if ok else 503, content=result)

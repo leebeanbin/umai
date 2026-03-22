@@ -31,9 +31,8 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const [loading, setLoading] = useState(true);
 
   const loadUser = useCallback(async () => {
-    const token = localStorage.getItem("umai_access_token");
-    if (!token) { setUser(null); setLoading(false); return; }
     try {
+      // apiFetch가 401 시 자동으로 HttpOnly cookie refresh를 시도함
       const me = await fetchMe();
       setUser(me);
     } catch {

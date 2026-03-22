@@ -8,6 +8,7 @@
 - POST /tasks/ai/agent            에이전트 실행
 - POST /tasks/ai/search           웹 검색
 - POST /tasks/knowledge/process   문서 처리 + 임베딩
+- POST /tasks/documents/extract   문서 텍스트 즉시 추출 (PDF/DOCX/TXT/MD, 동기)
 - GET  /tasks/{task_id}           태스크 상태/결과 조회
 """
 import base64
@@ -167,3 +168,89 @@ async def enqueue_knowledge_process(
         "embedding_model": embedding_model,
     })
     return TaskResponse(task_id=task.id, status="queued")
+
+
+# ── 문서 즉시 추출 (동기, 채팅 컨텍스트용) ──────────────────────────────────────
+
+SUPPORTED_TYPES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain",
+    "text/markdown",
+    "text/x-markdown",
+}
+
+@router.post("/documents/extract")
+async def extract_document(
+    file: UploadFile = File(...),
+    mode: str = Form("full"),          # "full" | "first_pages"
+    max_chars: int = Form(60000),      # 토큰 절약: 기본 ~15k 토큰
+    pages: int = Form(5),              # first_pages 모드 시 몇 페이지
+    _user: User = Depends(get_current_user),
+):
+    """
+    PDF / DOCX / TXT / MD 파일에서 텍스트를 동기적으로 추출.
+    채팅 컨텍스트 주입 용도 — Celery 없이 즉시 반환.
+
+    modes:
+      full        — 전체 텍스트 (max_chars 기준으로 잘림)
+      first_pages — PDF 앞 N 페이지만 추출
+    """
+    import io as _io
+
+    raw = await file.read()
+    content_type = (file.content_type or "").split(";")[0].strip()
+    filename = file.filename or ""
+
+    # 확장자로 타입 보정
+    if not content_type or content_type == "application/octet-stream":
+        if filename.lower().endswith(".pdf"):
+            content_type = "application/pdf"
+        elif filename.lower().endswith(".docx"):
+            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif filename.lower().endswith((".md", ".markdown")):
+            content_type = "text/markdown"
+        else:
+            content_type = "text/plain"
+
+    if content_type not in SUPPORTED_TYPES and not content_type.startswith("text/"):
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}")
+
+    page_count: int | None = None
+
+    try:
+        if content_type == "application/pdf":
+            import fitz  # pymupdf
+            doc = fitz.open(stream=raw, filetype="pdf")
+            page_count = len(doc)
+            if mode == "first_pages":
+                n = min(pages, page_count)
+                text = "\n\n".join(doc[i].get_text() for i in range(n))
+            else:
+                text = "\n\n".join(page.get_text() for page in doc)
+
+        elif content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            from docx import Document as DocxDocument
+            doc_obj = DocxDocument(_io.BytesIO(raw))
+            text = "\n".join(p.text for p in doc_obj.paragraphs if p.text.strip())
+
+        else:
+            text = raw.decode("utf-8", errors="replace")
+
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Failed to extract text: {exc}") from exc
+
+    # 컨텍스트 윈도우 절약: max_chars 기준 잘림
+    truncated = False
+    if len(text) > max_chars:
+        text = text[:max_chars]
+        truncated = True
+
+    return {
+        "text":       text,
+        "char_count": len(text),
+        "page_count": page_count,
+        "filename":   filename,
+        "mode":       mode,
+        "truncated":  truncated,
+    }

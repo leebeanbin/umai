@@ -86,10 +86,10 @@ export function saveModels(models: DynamicModel[]) {
  */
 export async function fetchModels(): Promise<DynamicModel[]> {
   try {
-    const token = typeof window !== "undefined"
-      ? (localStorage.getItem("umai_access_token") ?? "")
-      : "";
+    const { getStoredToken } = await import("@/lib/api/backendClient");
+    const token = typeof window !== "undefined" ? getStoredToken() : "";
     const res = await fetch("/api/models", {
+      credentials: "include",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) throw new Error("fetch failed");

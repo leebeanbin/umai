@@ -16,6 +16,8 @@ import { loadSettings, loadModels } from "@/lib/appStore";
 export type ChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
+  /** base64 data URLs — only included when model supports vision */
+  images?: string[];
 };
 
 type StreamChatOptions = {
@@ -51,7 +53,10 @@ function buildSystemPrompt(base: string, outputLang: string): string {
   const parts: string[] = [];
   if (base.trim()) parts.push(base.trim());
   if (outputLang !== "auto") {
-    const name: Record<string, string> = { en: "English", ko: "Korean (한국어)" };
+    const name: Record<string, string> = {
+      en: "English", ko: "Korean (한국어)", ja: "Japanese (日本語)",
+      zh: "Chinese (中文)", es: "Spanish (Español)", fr: "French (Français)", de: "German (Deutsch)",
+    };
     parts.push(`Always respond in ${name[outputLang] ?? outputLang}.`);
   }
   return parts.join("\n\n");
@@ -141,7 +146,10 @@ export async function streamChat({
   // inputLang: inject translation hint on last user message
   let processedMessages = messages;
   if (inputLang !== "auto" && messages.length > 0) {
-    const langName: Record<string, string> = { en: "English", ko: "Korean" };
+    const langName: Record<string, string> = {
+      en: "English", ko: "Korean", ja: "Japanese",
+      zh: "Chinese", es: "Spanish", fr: "French", de: "German",
+    };
     const target = langName[inputLang] ?? inputLang;
     processedMessages = messages.map((m, i) =>
       m.role === "user" && i === messages.length - 1

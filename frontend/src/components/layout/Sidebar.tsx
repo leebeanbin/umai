@@ -15,7 +15,7 @@ import {
   groupByTime,
   type Folder as FolderType, type Session,
 } from "@/lib/store";
-import { apiDeleteChat, apiUpdateFolder, apiDeleteFolder, apiCreateFolder } from "@/lib/api/backendClient";
+import { apiDeleteChat, apiUpdateFolder, apiDeleteFolder, apiCreateFolder, isAuthenticated } from "@/lib/api/backendClient";
 import SettingsModal from "./SettingsModal";
 import FolderModal from "./FolderModal";
 import { useLanguage } from "@/components/providers/LanguageProvider";
@@ -34,15 +34,18 @@ export default function Sidebar() {
   const { user, logout } = useAuth();
   const [search, setSearch]   = useState("");
   const [showSearch, setShowSearch] = useState(false);
-  const [folders, setFolders]   = useState<FolderType[]>(() => loadFolders());
-  const [sessions, setSessions] = useState<Session[]>(() => loadSessions());
+  // SSR/클라이언트 hydration 불일치 방지:
+  // 서버에서는 빈 배열로 시작하고, 마운트 후 useEffect에서 localStorage를 읽는다.
+  const [folders, setFolders]   = useState<FolderType[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [contextMenu, setContextMenu]   = useState<ContextTarget | null>(null);
   const [shareSessionId, setShareSessionId] = useState<string | null>(null);
   const [folderModal, setFolderModal]   = useState<{ open: boolean; editing: FolderType | null }>({ open: false, editing: null });
   const [renamingId, setRenamingId]     = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const renameInputRef = useRef<HTMLInputElement>(null);
+  const renameInputRef  = useRef<HTMLInputElement>(null);
+  const hydratedRef     = useRef(false); // 초기 localStorage 로드 완료 여부
 
   // ── Memoized computed values ──────────────────────────────────────────────
   const filteredSessions = useMemo(() =>
@@ -83,13 +86,13 @@ export default function Sidebar() {
     setFolderModal((prev) => {
       if (prev.editing) {
         setFolders((flds) => flds.map((f) => f.id === prev.editing!.id ? { ...f, ...data } : f));
-        if (localStorage.getItem("umai_access_token")) {
+        if (isAuthenticated()) {
           apiUpdateFolder(prev.editing.id, { name: data.name, description: data.description, system_prompt: data.systemPrompt }).catch(() => {});
         }
       } else {
         const newId = crypto.randomUUID();
         setFolders((flds) => [...flds, { id: newId, open: true, ...data }]);
-        if (localStorage.getItem("umai_access_token")) {
+        if (isAuthenticated()) {
           apiCreateFolder(data.name, data.description, data.systemPrompt).catch(() => {});
         }
       }
@@ -113,7 +116,7 @@ export default function Sidebar() {
   const deleteSession = useCallback((id: string) => {
     setSessions((prev) => prev.filter((s) => s.id !== id));
     localStorage.removeItem(`umai_msgs_${id}`);
-    if (localStorage.getItem("umai_access_token")) {
+    if (isAuthenticated()) {
       apiDeleteChat(id).catch(() => {});
     }
   }, []);
@@ -131,7 +134,7 @@ export default function Sidebar() {
   const deleteFolder = useCallback((id: string) => {
     setSessions((prev) => prev.map((s) => s.folderId === id ? { ...s, folderId: null } : s));
     setFolders((prev) => prev.filter((f) => f.id !== id));
-    if (localStorage.getItem("umai_access_token")) {
+    if (isAuthenticated()) {
       apiDeleteFolder(id).catch(() => {});
     }
   }, []);
@@ -150,9 +153,16 @@ export default function Sidebar() {
     []
   );
 
-  // ── localStorage 자동 저장 ────────────────────────────────────────────────
-  useEffect(() => { saveFolders(folders); }, [folders]);
-  useEffect(() => { saveSessions(sessions); }, [sessions]);
+  // ── 마운트 후 localStorage 초기 로드 (SSR hydration 불일치 방지) ────────────
+  useEffect(() => {
+    setFolders(loadFolders());
+    setSessions(loadSessions());
+    hydratedRef.current = true;
+  }, []);
+
+  // ── localStorage 자동 저장 (hydration 완료 후에만) ─────────────────────────
+  useEffect(() => { if (hydratedRef.current) saveFolders(folders); }, [folders]);
+  useEffect(() => { if (hydratedRef.current) saveSessions(sessions); }, [sessions]);
 
   // 다른 컴포넌트에서 세션이 추가되면 다시 로드
   useEffect(() => {

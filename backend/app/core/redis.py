@@ -7,7 +7,13 @@ _redis: Redis | None = None
 async def get_redis() -> Redis:
     global _redis
     if _redis is None:
-        _redis = await from_url(settings.REDIS_URL, decode_responses=True)
+        _redis = await from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            max_connections=20,          # 명시적 풀 크기 (기본값 없음)
+            socket_connect_timeout=5,    # 연결 타임아웃 5초
+            socket_timeout=5,            # 읽기/쓰기 타임아웃 5초
+        )
     return _redis
 
 

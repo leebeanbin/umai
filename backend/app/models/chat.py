@@ -63,6 +63,7 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text, default="")
     images: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # [url, ...]
     meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)    # model, tokens, etc.
+    rating: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "positive" | "negative" | None
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

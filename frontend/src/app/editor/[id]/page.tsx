@@ -5,6 +5,9 @@ import { ArrowUp, ImageIcon, StopCircle, CheckCircle2 } from "lucide-react";
 import { MaskCanvas, MaskCanvasHandle } from "@/components/canvas/MaskCanvas";
 import AssistPanel from "@/components/editor/AssistPanel";
 import { useLanguage } from "@/components/providers/LanguageProvider";
+import { streamChat } from "@/lib/apis/chat";
+import { getModelCapabilities } from "@/lib/modelCapabilities";
+import { loadSettings } from "@/lib/appStore";
 
 type Phase = "idle" | "masking" | "ready" | "queued" | "processing" | "succeeded" | "failed";
 type Variant = { id: string; rank: number; url: string };
@@ -24,6 +27,27 @@ export default function EditorSession() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
 
   const canRun = !!sourceImage && instruction.trim().length >= 5 && hasMask && phase !== "queued" && phase !== "processing";
+
+  /** Use a vision-capable model to generate a better DALL-E prompt from the image + instruction */
+  function enhancePromptWithVision(imageDataUrl: string, userInstruction: string): Promise<string> {
+    return new Promise((resolve) => {
+      const caps = getModelCapabilities(loadSettings().selectedModel);
+      if (!caps.vision) { resolve(userInstruction); return; }
+      let built = "";
+      streamChat({
+        messages: [{
+          role: "user",
+          content:
+            "You are a DALL-E 2 inpainting prompt expert. Look at the provided image, then rewrite the following editing instruction as a precise, detailed English inpainting prompt that accurately describes what should appear in the edited area. Output only the improved prompt — no explanation, no quotes, no extra text.\n\n" +
+            `Instruction: ${userInstruction.trim()}`,
+          images: [imageDataUrl],
+        }],
+        onChunk: (chunk) => { built += chunk; },
+        onDone:  () => resolve(built.trim() || userInstruction),
+        onError: () => resolve(userInstruction),
+      });
+    });
+  }
 
   function addLog(text: string) {
     setLogs((prev) => [{ time: new Date().toLocaleTimeString(), text }, ...prev].slice(0, 30));
@@ -72,16 +96,27 @@ export default function EditorSession() {
     addLog(t("editor.log.processing"));
 
     try {
-      // 3) 마스크 반전: 흰색↔투명 교환, 512x512로 크롭/패드 (DALL-E 2는 정사각형 요구)
+      // 3) Vision 모델로 DALL-E 프롬프트 자동 개선 (vision 모델 연결 시)
+      const caps = getModelCapabilities(loadSettings().selectedModel);
+      let finalPrompt = instruction.trim();
+      if (caps.vision) {
+        addLog("🔍 이미지 분석 중 (멀티모달 프롬프트 개선)...");
+        finalPrompt = await enhancePromptWithVision(sourceImage.dataUrl, instruction.trim());
+        if (finalPrompt !== instruction.trim()) {
+          addLog(`✨ 개선된 프롬프트: ${finalPrompt.slice(0, 80)}${finalPrompt.length > 80 ? "…" : ""}`);
+        }
+      }
+
+      // 4) 마스크 반전: 흰색↔투명 교환, 512x512로 크롭/패드 (DALL-E 2는 정사각형 요구)
       const SIZE = 1024;
       const invertedMaskBlob = await invertAndSquareMask(maskDataUrl, SIZE);
       const squaredImageBlob = await squareImage(sourceImage.dataUrl, SIZE);
 
-      // 4) API 호출
+      // 5) API 호출
       const fd = new FormData();
       fd.append("image",  squaredImageBlob, "image.png");
       fd.append("mask",   invertedMaskBlob, "mask.png");
-      fd.append("prompt", instruction.trim());
+      fd.append("prompt", finalPrompt);
       fd.append("n",      "2");
       fd.append("size",   `${SIZE}x${SIZE}`);
 
@@ -296,6 +331,7 @@ export default function EditorSession() {
         <AssistPanel
           instruction={instruction}
           phase={phase}
+          imageSrc={sourceImage?.dataUrl}
           onApplySuggestion={(s) => setInstruction(s)}
         />
       </div>

@@ -164,6 +164,16 @@ class ChatService:
         await self.db.flush()
         return msg
 
+    async def rate_message(self, message_id: uuid.UUID, rating: str | None) -> Message:
+        msg = (await self.db.execute(
+            select(Message).where(Message.id == message_id)
+        )).scalar_one_or_none()
+        if msg is None:
+            ErrCode.NOT_FOUND.raise_it("Message not found")
+        msg.rating = rating
+        await self.db.flush()
+        return msg
+
     # ── 멤버 관리 ─────────────────────────────────────────────────────────────
 
     async def list_members(self, chat_id: uuid.UUID) -> list[tuple[ChatMember, User]]:

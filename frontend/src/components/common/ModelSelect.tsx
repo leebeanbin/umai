@@ -24,7 +24,8 @@ export default function ModelSelect({ value, onChange, showTuning = true }: Prop
   const dropRef     = useRef<HTMLDivElement>(null);
   const searchRef   = useRef<HTMLInputElement>(null);
 
-  const [models, setModels] = useState<DynamicModel[]>(() => loadModels());
+  // [] on SSR — localStorage는 클라이언트 전용이므로 lazy init 대신 useEffect로 로드
+  const [models, setModels] = useState<DynamicModel[]>([]);
   const [open, setOpen]           = useState(false);
   const [query, setQuery]         = useState("");
   const [tagFilter, setTagFilter] = useState<TagFilter>("All");
@@ -37,8 +38,9 @@ export default function ModelSelect({ value, onChange, showTuning = true }: Prop
     return matchQ && matchTag;
   }), [models, query, tagFilter]);
 
-  // Fetch fresh model list from API on mount (stale-while-revalidate)
+  // 마운트 후: localStorage 초기값 로드 → API에서 최신 목록으로 갱신 (stale-while-revalidate)
   useEffect(() => {
+    setModels(loadModels());
     fetchModels().then((fresh) => {
       if (fresh.length > 0) setModels(fresh);
     }).catch(() => {});

@@ -113,6 +113,18 @@ class FolderDetailOut(FolderOut):
     chats: list["ChatOut"] = []
 
 
+# ── Title Generation ──────────────────────────────────────────────────────────
+
+class GenerateTitleRequest(BaseModel):
+    user_content:      str
+    assistant_content: str
+    language:          str = "en"  # ko / en / ja / zh / es / fr / de
+
+
+class GenerateTitleResponse(BaseModel):
+    title: str
+
+
 # ── Chat Member ────────────────────────────────────────────────────────────────
 
 class InviteMemberRequest(BaseModel):
@@ -122,3 +134,26 @@ class InviteMemberRequest(BaseModel):
 
 class UpdateMemberRoleRequest(BaseModel):
     role: ChatMemberRole
+
+
+# ── Message Rating ─────────────────────────────────────────────────────────────
+
+class RateMessageRequest(BaseModel):
+    rating: Literal["positive", "negative"] | None  # None = 평가 취소
+
+
+class RateMessageResponse(BaseModel):
+    message_id: str
+    rating: str | None
+
+
+# ── Admin Ratings ──────────────────────────────────────────────────────────────
+
+class RatingEntryOut(BaseModel):
+    message_id: str
+    chat_id: str
+    model: str | None
+    rating: str
+    message_preview: str
+    user_email: str
+    created_at: datetime

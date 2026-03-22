@@ -10,9 +10,11 @@ from app.core.config import settings
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=20,           # 기본 10 → 20 (100+ 동시 유저 대응)
+    max_overflow=40,        # 최대 60 연결 (pool + overflow)
     pool_pre_ping=True,
+    pool_recycle=3600,      # 1시간마다 연결 재활용 (stale connection 방지)
+    connect_args={"timeout": 10},
 )
 
 AsyncSessionLocal = async_sessionmaker(

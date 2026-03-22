@@ -35,6 +35,9 @@ class Settings(BaseSettings):
 
     # ── Ollama ────────────────────────────────────────────────────────────────
     OLLAMA_URL: str = "http://localhost:11434"
+    # 제목 생성 전용 경량 모델 (llama3.2:1b 기본 — 빠르고 저렴)
+    OLLAMA_TITLE_MODEL: str = "llama3.2:1b"
+    OLLAMA_TITLE_TIMEOUT: int = 10  # seconds
 
     # ── 이미지 생성 백엔드 ────────────────────────────────────────────────────
     COMFYUI_URL: str = "http://localhost:8188"

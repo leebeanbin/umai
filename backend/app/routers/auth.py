@@ -12,6 +12,7 @@
 import json
 import secrets
 from urllib.parse import urlparse
+from pydantic import BaseModel, field_validator
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import RedirectResponse
@@ -32,8 +33,9 @@ from app.core.redis import (
     oauth_origin_set, oauth_origin_pop,
 )
 from app.models.user import User
+from fastapi.responses import JSONResponse
 from app.schemas.auth import (
-    RefreshRequest, TokenResponse, UserOut, OnboardRequest,
+    TokenResponse, AccessTokenResponse, UserOut, OnboardRequest,
 )
 from app.routers.deps import get_current_user
 from app.services.auth_service import get_or_create_oauth_user, make_tokens
@@ -42,6 +44,24 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
 bearer = HTTPBearer(auto_error=False)
 _DEV_TOKEN = "dev"
+
+# ── Refresh-token 쿠키 설정 ───────────────────────────────────────────────────
+REFRESH_COOKIE = "umai_refresh"
+
+def _set_refresh_cookie(response: JSONResponse, token: str) -> None:
+    """HttpOnly + Secure(프로덕션) 쿠키로 refresh token 저장."""
+    response.set_cookie(
+        key=REFRESH_COOKIE,
+        value=token,
+        httponly=True,
+        secure=not settings.DEBUG,   # 개발: http 허용, 프로덕션: https 전용
+        samesite="strict",
+        max_age=60 * 60 * 24 * 30,  # 30일 (settings.REFRESH_TOKEN_EXPIRE_DAYS 와 동기화)
+        path="/",
+    )
+
+def _clear_refresh_cookie(response: JSONResponse) -> None:
+    response.delete_cookie(key=REFRESH_COOKIE, path="/")
 
 
 async def _check_oauth_enabled(db: AsyncSession, provider: str) -> None:
@@ -123,38 +143,87 @@ async def _redirect_with_code(tokens: TokenResponse, frontend_origin: str) -> Re
 
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post("/refresh", response_model=AccessTokenResponse)
 @limiter.limit("30/minute")
-async def refresh(request: Request, body: RefreshRequest):
-    # Redis가 source of truth — JWT decode 없이 Redis만 확인
-    user_id = await session_get(body.refresh_token)
+async def refresh(request: Request):
+    """
+    refresh token은 HttpOnly 쿠키에서 읽는다 (요청 body에 포함하지 않음).
+    Redis rotation: 기존 토큰 폐기 → 새 토큰 쌍 발급 → 새 refresh를 쿠키에 설정.
+    """
+    token = request.cookies.get(REFRESH_COOKIE)
+    if not token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "No refresh token")
+
+    user_id = await session_get(token)
     if not user_id:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
 
-    await session_del(body.refresh_token)
-    return await make_tokens(user_id)
+    await session_del(token)
+    new_tokens = await make_tokens(user_id)
+
+    res = JSONResponse({"access_token": new_tokens.access_token, "token_type": "bearer"})
+    _set_refresh_cookie(res, new_tokens.refresh_token)
+    return res
 
 
 @router.post("/logout")
 async def logout(
     request: Request,
-    body: RefreshRequest,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
 ):
     """
     로그아웃.
-    - 리프레시 토큰: Redis에서 즉시 삭제 (rotation 무효화)
+    - 리프레시 토큰: HttpOnly 쿠키에서 읽어 Redis에서 즉시 삭제
     - 액세스 토큰: Redis에서 즉시 삭제 (15분 만료 전에도 바로 폐기)
+    - 쿠키 클리어
     """
-    await session_del(body.refresh_token)
+    token = request.cookies.get(REFRESH_COOKIE)
+    if token:
+        await session_del(token)
     if creds and creds.credentials not in (_DEV_TOKEN, ""):
         await access_del(creds.credentials)
-    return {"detail": "Logged out"}
+
+    res = JSONResponse({"detail": "Logged out"})
+    _clear_refresh_cookie(res)
+    return res
 
 
 @router.get("/me", response_model=UserOut)
 async def me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+class UpdateMeRequest(BaseModel):
+    name: str | None = None
+    notification_email: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_not_empty(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("name cannot be empty")
+        return v.strip() if v else v
+
+
+@router.patch("/me", response_model=UserOut)
+async def update_me(
+    body: UpdateMeRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """현재 유저 프로필 업데이트 (이름, 알림 이메일)."""
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    user = result.scalar_one_or_none()
+    if not user:
+        ErrCode.USER_NOT_FOUND.raise_it()
+
+    if body.name is not None:
+        user.name = body.name.strip()
+    if body.notification_email is not None:
+        user.notification_email = body.notification_email.strip() or user.email
+
+    await user_cache_del(str(user.id))
+    return user
 
 
 @router.post("/onboard", response_model=UserOut)
@@ -184,21 +253,22 @@ async def onboard(
 
 # ── OAuth 코드 교환 (one-time) ────────────────────────────────────────────────
 
-@router.get("/token/exchange", response_model=TokenResponse)
+@router.get("/token/exchange", response_model=AccessTokenResponse)
 @limiter.limit("10/minute")
 async def token_exchange(request: Request, code: str):
     """
-    OAuth 콜백 후 프론트엔드가 code를 제출하면 실제 토큰 반환.
+    OAuth 콜백 후 프론트엔드가 code를 제출하면 access_token만 응답 body로 반환.
+    refresh_token은 HttpOnly 쿠키에 설정 — JS에서 접근 불가.
     5분 내 1회만 사용 가능 (one-time use).
     """
     payload = await oauth_code_pop(code)
     if not payload:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code")
     data = json.loads(payload)
-    return TokenResponse(
-        access_token=data["access_token"],
-        refresh_token=data["refresh_token"],
-    )
+
+    res = JSONResponse({"access_token": data["access_token"], "token_type": "bearer"})
+    _set_refresh_cookie(res, data["refresh_token"])
+    return res
 
 
 # ── OAuth 공통 헬퍼 ───────────────────────────────────────────────────────────

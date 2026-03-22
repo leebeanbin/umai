@@ -67,6 +67,7 @@ def test_app(_create_tables):
     from app.core.errors import AppException
     from app.routers import auth, chats, folders, admin, workspace as ws
     from app.routers import tasks as tasks_router
+    from app.routers import rag as rag_router
 
     app = FastAPI()
     # SessionMiddleware는 필요 (OAuth state), SlowAPI는 제외 (loop 충돌)
@@ -85,6 +86,7 @@ def test_app(_create_tables):
     app.include_router(admin.router,        prefix="/api/v1")
     app.include_router(ws.router,           prefix="/api/v1")
     app.include_router(tasks_router.router, prefix="/api/v1")
+    app.include_router(rag_router.router,   prefix="/api/v1")
     return app
 
 

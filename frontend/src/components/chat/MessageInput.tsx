@@ -1,14 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ImageIcon, ArrowUp, X, Brush, Globe, Sparkles, StopCircle, Wand2, ChevronUp } from "lucide-react";
+import { ImageIcon, ArrowUp, X, Brush, Globe, Sparkles, StopCircle, Wand2, ChevronUp, FileText, BookOpen, ScanText } from "lucide-react";
 import MaskEditorModal from "./MaskEditorModal";
 import { useLanguage } from "@/components/providers/LanguageProvider";
+import { loadSettings } from "@/lib/appStore";
+import { getModelCapabilities, type ModelCapabilities } from "@/lib/modelCapabilities";
+import { getStoredToken } from "@/lib/api/backendClient";
 
 type AttachedImage = { id: string; dataUrl: string; name: string };
 
+type AttachedDoc = {
+  id: string;
+  name: string;
+  text: string;
+  charCount: number;
+  pageCount?: number | null;
+  truncated: boolean;
+  mode: "full" | "first_pages";
+};
+
 type Props = {
-  onSend: (content: string, images: AttachedImage[]) => void;
+  onSend: (content: string, images: AttachedImage[], webSearch?: boolean, docContext?: string, useRag?: boolean) => void;
   onStop?: () => void;
   generating?: boolean;
   disabled?: boolean;
@@ -78,11 +91,31 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
   const { t, lang } = useLanguage();
   const [input, setInput]           = useState("");
   const [images, setImages]         = useState<AttachedImage[]>([]);
+  const [docs, setDocs]             = useState<AttachedDoc[]>([]);
+  const [docLoading, setDocLoading] = useState(false);
   const [maskTarget, setMaskTarget] = useState<AttachedImage | null>(null);
   const [webSearch, setWebSearch]   = useState(false);
+  const [useRag, setUseRag]         = useState(false);
   const [showEval, setShowEval]     = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef  = useRef<HTMLTextAreaElement>(null);
+  const [modelCaps, setModelCaps]   = useState<ModelCapabilities>(() =>
+    getModelCapabilities(loadSettings().selectedModel)
+  );
+  const fileInputRef    = useRef<HTMLInputElement>(null);
+  const docInputRef     = useRef<HTMLInputElement>(null);
+  const textareaRef     = useRef<HTMLTextAreaElement>(null);
+
+  // Re-check model capabilities when model changes
+  useEffect(() => {
+    function update() {
+      setModelCaps(getModelCapabilities(loadSettings().selectedModel));
+    }
+    window.addEventListener("umai:settings-change", update);
+    window.addEventListener("umai:models-change",   update);
+    return () => {
+      window.removeEventListener("umai:settings-change", update);
+      window.removeEventListener("umai:models-change",   update);
+    };
+  }, []);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -108,13 +141,55 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
     e.target.value = "";
   }, []);
 
+  const handleDocChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (files.length === 0) return;
+    setDocLoading(true);
+    try {
+      for (const file of files) {
+        const token = getStoredToken();
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("mode", "full");
+        fd.append("max_chars", "60000");
+        const r = await fetch("/api/v1/tasks/documents/extract", {
+          method: "POST",
+          credentials: "include",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: fd,
+        });
+        if (!r.ok) continue;
+        const data = await r.json() as {
+          text: string; char_count: number; page_count?: number | null;
+          filename: string; mode: string; truncated: boolean;
+        };
+        setDocs((prev) => [...prev, {
+          id: crypto.randomUUID(),
+          name: data.filename || file.name,
+          text: data.text,
+          charCount: data.char_count,
+          pageCount: data.page_count,
+          truncated: data.truncated,
+          mode: "full",
+        }]);
+      }
+    } finally {
+      setDocLoading(false);
+    }
+  }, []);
+
   const handleSubmit = useCallback(() => {
-    if (!input.trim() && images.length === 0) return;
+    if (!input.trim() && images.length === 0 && docs.length === 0) return;
     setShowEval(false);
-    onSend(input.trim(), images);
+    const docContext = docs.length > 0
+      ? docs.map((d) => `### ${d.name}\n${d.text}`).join("\n\n---\n\n")
+      : undefined;
+    onSend(input.trim(), images, webSearch || undefined, docContext, useRag || undefined);
     setInput("");
     setImages([]);
-  }, [input, images, onSend]);
+    setDocs([]);
+  }, [input, images, docs, onSend, webSearch, useRag]);
 
   const handleMaskApply = useCallback((compositeDataUrl: string) => {
     setImages((prev) => [...prev, { id: crypto.randomUUID(), dataUrl: compositeDataUrl, name: "masked_region.png" }]);
@@ -128,7 +203,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
     }
   }, [handleSubmit]);
 
-  const canSend = (input.trim().length > 0 || images.length > 0) && !disabled && !generating;
+  const canSend = (input.trim().length > 0 || images.length > 0 || docs.length > 0) && !disabled && !generating && !docLoading;
   const evalResult = input.trim() ? evaluatePrompt(input, lang) : null;
 
   return (
@@ -218,6 +293,38 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
               </div>
             )}
 
+            {/* 문서 첨부 미리보기 */}
+            {(docs.length > 0 || docLoading) && (
+              <div className="mx-2 mt-2.5 pb-1.5 flex flex-col gap-1.5">
+                {docLoading && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-elevated border border-border text-xs text-text-muted animate-pulse">
+                    <FileText size={13} />
+                    <span>{lang === "ko" ? "문서 추출 중…" : "Extracting document…"}</span>
+                  </div>
+                )}
+                {docs.map((doc) => (
+                  <div key={doc.id} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-elevated border border-border text-xs group/doc">
+                    <FileText size={13} className="text-accent shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="truncate font-medium text-text-primary">{doc.name}</p>
+                      <p className="text-text-muted">
+                        {doc.pageCount ? `${doc.pageCount}p · ` : ""}
+                        {(doc.charCount / 1000).toFixed(1)}k chars
+                        {doc.truncated ? " (truncated)" : ""}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setDocs((prev) => prev.filter((d) => d.id !== doc.id))}
+                      className="shrink-0 p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-hover transition opacity-0 group-hover/doc:opacity-100"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* 텍스트 입력 */}
             <textarea
               ref={textareaRef}
@@ -245,6 +352,17 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
                 </button>
                 <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleFileChange} className="hidden" />
 
+                <button
+                  type="button"
+                  onClick={() => docInputRef.current?.click()}
+                  disabled={docLoading}
+                  className="bg-transparent hover:bg-black/5 dark:hover:bg-white/10 text-text-secondary rounded-full size-8 flex justify-center items-center outline-none transition disabled:opacity-40"
+                  title={lang === "ko" ? "문서 첨부 (PDF, DOCX, TXT)" : "Attach document (PDF, DOCX, TXT)"}
+                >
+                  <FileText size={16} />
+                </button>
+                <input ref={docInputRef} type="file" accept=".pdf,.docx,.txt,.md" multiple onChange={handleDocChange} className="hidden" />
+
                 <div className="flex self-center w-px h-4 mx-0.5 bg-border/50" />
 
                 {/* 웹 검색 */}
@@ -261,13 +379,41 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
                   <span className="pr-0.5">{t("home.webSearch")}</span>
                 </button>
 
-                {/* Vision 배지 */}
+                {/* Vision / OCR 배지 (이미지 첨부 시) */}
                 {images.length > 0 && (
-                  <div className="group p-[7px] flex gap-1.5 items-center text-xs rounded-full text-accent bg-accent/10 border border-accent/20">
-                    <Sparkles size={14} />
-                    <span className="pr-0.5">Vision</span>
-                  </div>
+                  modelCaps.vision ? (
+                    <div
+                      title={lang === "ko" ? "모델이 이미지를 직접 분석합니다" : "Model will analyze image natively"}
+                      className="group p-[7px] flex gap-1.5 items-center text-xs rounded-full text-accent bg-accent/10 border border-accent/20"
+                    >
+                      <Sparkles size={14} />
+                      <span className="pr-0.5">Vision</span>
+                    </div>
+                  ) : (
+                    <div
+                      title={lang === "ko" ? "OCR로 이미지에서 텍스트를 추출합니다 (Ollama llava 필요)" : "Text will be extracted via OCR (requires Ollama llava)"}
+                      className="group p-[7px] flex gap-1.5 items-center text-xs rounded-full text-yellow-400 bg-yellow-500/10 border border-yellow-500/20"
+                    >
+                      <ScanText size={14} />
+                      <span className="pr-0.5">OCR</span>
+                    </div>
+                  )
                 )}
+
+                {/* RAG 토글 */}
+                <button
+                  type="button"
+                  onClick={() => setUseRag((v) => !v)}
+                  title={lang === "ko" ? "Knowledge Base 검색 활성화" : "Search Knowledge Base"}
+                  className={`group p-[7px] flex gap-1.5 items-center text-xs rounded-full transition-colors duration-300 outline-none ${
+                    useRag
+                      ? "text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20"
+                      : "bg-transparent text-text-secondary hover:bg-black/5 dark:hover:bg-white/10"
+                  }`}
+                >
+                  <BookOpen size={14} />
+                  <span className="pr-0.5">{lang === "ko" ? "지식" : "RAG"}</span>
+                </button>
 
                 {/* 프롬프트 평가 버튼 */}
                 {input.trim().length > 0 && (

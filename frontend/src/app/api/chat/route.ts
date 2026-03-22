@@ -46,7 +46,8 @@ export async function GET() {
 type RequestBody = {
   provider: string;
   model: string;
-  messages: Array<{ role: string; content: string }>;
+  /** images[] = base64 data URLs attached to the user message */
+  messages: Array<{ role: string; content: string; images?: string[] }>;
   sysPrompt?: string;
   temperature?: number | null;
   maxTokens?: number | null;
@@ -83,7 +84,7 @@ export async function POST(req: NextRequest) {
  * `extractText` receives the raw `data: …` payload and returns the text
  * delta (or null to skip the line).
  */
-function normalizeToOpenAISse(
+export function normalizeToOpenAISse(
   extractText: (data: string) => string | null
 ): TransformStream<Uint8Array, Uint8Array> {
   const enc = new TextEncoder();
@@ -118,13 +119,21 @@ function normalizeToOpenAISse(
 
 type ProxyArgs = {
   model: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{ role: string; content: string; images?: string[] }>;
   apiKey: string;
   sysPrompt?: string;
   temperature?: number | null;
   maxTokens?: number | null;
   topP?: number | null;
 };
+
+// ── Vision helpers ────────────────────────────────────────────────────────────
+
+/** Parse "data:image/jpeg;base64,..." → { mimeType, data } */
+export function parseDataUrl(dataUrl: string): { mimeType: string; data: string } {
+  const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  return { mimeType: m?.[1] ?? "image/jpeg", data: m?.[2] ?? dataUrl };
+}
 
 const SSE_HEADERS = {
   "Content-Type":      "text/event-stream",
@@ -135,12 +144,29 @@ const SSE_HEADERS = {
 // ─ OpenAI ────────────────────────────────────────────────────────────────────
 
 async function proxyOpenAI({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP }: ProxyArgs) {
+  // Convert messages with images to OpenAI vision format
+  const formattedMessages = messages.map((m) => {
+    if (m.images?.length && m.role === "user") {
+      return {
+        role: m.role,
+        content: [
+          ...m.images.map((img) => ({
+            type: "image_url" as const,
+            image_url: { url: img },  // data URLs accepted by OpenAI API
+          })),
+          { type: "text" as const, text: m.content },
+        ],
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
+
   const body: Record<string, unknown> = {
     model,
     stream: true,
     messages: sysPrompt
-      ? [{ role: "system", content: sysPrompt }, ...messages]
-      : messages,
+      ? [{ role: "system", content: sysPrompt }, ...formattedMessages]
+      : formattedMessages,
   };
   if (temperature != null) body.temperature = temperature;
   if (maxTokens   != null) body.max_tokens  = maxTokens;
@@ -170,11 +196,37 @@ async function proxyOpenAI({ model, messages, apiKey, sysPrompt, temperature, ma
 // ─ Anthropic ─────────────────────────────────────────────────────────────────
 
 async function proxyAnthropic({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP }: ProxyArgs) {
+  // Convert messages with images to Anthropic vision format
+  const formattedMessages = messages
+    .filter((m) => m.role !== "system")
+    .map((m) => {
+      if (m.images?.length && m.role === "user") {
+        return {
+          role: m.role,
+          content: [
+            ...m.images.map((img) => {
+              const { mimeType, data } = parseDataUrl(img);
+              return {
+                type: "image" as const,
+                source: {
+                  type: "base64" as const,
+                  media_type: mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+                  data,
+                },
+              };
+            }),
+            { type: "text" as const, text: m.content },
+          ],
+        };
+      }
+      return { role: m.role, content: m.content };
+    });
+
   const body: Record<string, unknown> = {
     model,
     stream: true,
     max_tokens: maxTokens ?? 1024,
-    messages:   messages.filter((m) => m.role !== "system"),
+    messages:   formattedMessages,
   };
   if (sysPrompt)           body.system      = sysPrompt;
   if (temperature != null) body.temperature = temperature;
@@ -217,12 +269,29 @@ async function proxyAnthropic({ model, messages, apiKey, sysPrompt, temperature,
 // ─ Ollama ─────────────────────────────────────────────────────────────────────
 
 async function proxyOllama({ model, messages, sysPrompt, temperature, maxTokens }: ProxyArgs) {
+  // Ollama /v1/chat/completions uses OpenAI content-array format for vision
+  const formattedMessages = messages.map((m) => {
+    if (m.images?.length && m.role === "user") {
+      return {
+        role: m.role,
+        content: [
+          ...m.images.map((img) => ({
+            type: "image_url" as const,
+            image_url: { url: img },  // data URLs accepted by Ollama /v1/
+          })),
+          { type: "text" as const, text: m.content },
+        ],
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
+
   const body: Record<string, unknown> = {
     model,
     stream: true,
     messages: sysPrompt
-      ? [{ role: "system", content: sysPrompt }, ...messages]
-      : messages,
+      ? [{ role: "system", content: sysPrompt }, ...formattedMessages]
+      : formattedMessages,
   };
   if (temperature != null) body.options = { ...(body.options as object ?? {}), temperature };
   if (maxTokens   != null) body.options = { ...(body.options as object ?? {}), num_predict: maxTokens };
@@ -252,12 +321,25 @@ async function proxyOllama({ model, messages, sysPrompt, temperature, maxTokens 
 // ─ Google ─────────────────────────────────────────────────────────────────────
 
 async function proxyGoogle({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP }: ProxyArgs) {
+  // Google Gemini vision format
   const contents = messages
     .filter((m) => m.role !== "system")
-    .map((m) => ({
-      role:  m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
+    .map((m) => {
+      const role = m.role === "assistant" ? "model" : "user";
+      if (m.images?.length && m.role === "user") {
+        return {
+          role,
+          parts: [
+            ...m.images.map((img) => {
+              const { mimeType, data } = parseDataUrl(img);
+              return { inlineData: { mimeType, data } };
+            }),
+            { text: m.content },
+          ],
+        };
+      }
+      return { role, parts: [{ text: m.content }] };
+    });
 
   const generationConfig: Record<string, unknown> = {};
   if (temperature != null) generationConfig.temperature     = temperature;

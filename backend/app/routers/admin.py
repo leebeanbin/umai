@@ -25,8 +25,9 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.errors import ErrCode
 from app.models.user import User
-from app.models.chat import Chat
+from app.models.chat import Chat, Message
 from app.models.settings import SystemSettings, DEFAULT_SETTINGS
+from app.schemas.chat import RatingEntryOut
 from app.routers.deps import require_admin, get_current_user
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -63,6 +64,8 @@ class StatsOut(BaseModel):
     active_users: int
     total_chats: int
     new_this_week: int
+    daily_chats: list[int]    # 오늘 포함 최근 7일 채팅 생성 수 (오래된 날 → 최근 날)
+    daily_signups: list[int]  # 오늘 포함 최근 7일 가입자 수
 
 
 # ── 통계 ──────────────────────────────────────────────────────────────────────
@@ -72,8 +75,11 @@ async def get_stats(
     _admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Single-query stats using CASE/WHEN to avoid 3 separate round-trips."""
-    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    """Single-query stats + 7-day daily breakdown."""
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+
+    # 집계 통계
     row = (await db.execute(
         select(
             func.count(User.id).label("total_users"),
@@ -82,11 +88,40 @@ async def get_stats(
         )
     )).one()
     total_chats = (await db.execute(select(func.count(Chat.id)))).scalar_one()
+
+    # 일별 채팅 생성 수 (최근 7일)
+    chat_rows = (await db.execute(
+        select(
+            func.date_trunc("day", Chat.created_at).label("day"),
+            func.count(Chat.id).label("cnt"),
+        )
+        .where(Chat.created_at >= week_ago)
+        .group_by(func.date_trunc("day", Chat.created_at))
+    )).all()
+    chat_by_day: dict[str, int] = {str(r.day.date()): r.cnt for r in chat_rows}
+
+    # 일별 가입자 수 (최근 7일)
+    signup_rows = (await db.execute(
+        select(
+            func.date_trunc("day", User.created_at).label("day"),
+            func.count(User.id).label("cnt"),
+        )
+        .where(User.created_at >= week_ago)
+        .group_by(func.date_trunc("day", User.created_at))
+    )).all()
+    signup_by_day: dict[str, int] = {str(r.day.date()): r.cnt for r in signup_rows}
+
+    # 오래된 날 → 최근 날 순서로 7개 슬롯 채우기
+    daily_chats   = [chat_by_day.get(str((now - timedelta(days=6 - i)).date()), 0) for i in range(7)]
+    daily_signups = [signup_by_day.get(str((now - timedelta(days=6 - i)).date()), 0) for i in range(7)]
+
     return StatsOut(
         total_users=row.total_users,
         active_users=row.active_users,
         total_chats=total_chats,
         new_this_week=row.new_this_week,
+        daily_chats=daily_chats,
+        daily_signups=daily_signups,
     )
 
 
@@ -432,3 +467,39 @@ async def patch_settings(
     row.updated_at = datetime.now(timezone.utc)
     await db.flush()
     return merged
+
+
+# ── GET /admin/ratings (admin only) ─────────────────────────────────────────
+
+@router.get("/ratings", response_model=list[RatingEntryOut])
+async def list_ratings(
+    rating: Optional[str] = Query(None, description="positive | negative | None(전체)"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    _admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """평가된 메시지 목록. 어드민 Evaluations 탭에서 사용."""
+    q = (
+        select(Message, Chat, User)
+        .join(Chat, Message.chat_id == Chat.id)
+        .join(User, Chat.user_id == User.id)
+        .where(Message.rating.isnot(None))
+    )
+    if rating in ("positive", "negative"):
+        q = q.where(Message.rating == rating)
+    q = q.order_by(Message.created_at.desc()).offset(skip).limit(limit)
+
+    rows = (await db.execute(q)).all()
+    return [
+        RatingEntryOut(
+            message_id=str(msg.id),
+            chat_id=str(chat.id),
+            model=chat.model,
+            rating=msg.rating,
+            message_preview=msg.content[:120],
+            user_email=user.email,
+            created_at=msg.created_at,
+        )
+        for msg, chat, user in rows
+    ]

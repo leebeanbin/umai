@@ -11,6 +11,8 @@ type Props = {
   instruction: string;
   phase: Phase;
   onApplySuggestion: (text: string) => void;
+  /** Optional source image (data URL) — passed to the vision model for image-aware prompt enhancement */
+  imageSrc?: string;
 };
 
 const PHASE_COLORS: Record<Phase, string> = {
@@ -23,7 +25,7 @@ const PHASE_COLORS: Record<Phase, string> = {
   failed:     "text-danger",
 };
 
-export default function AssistPanel({ instruction, phase, onApplySuggestion }: Props) {
+export default function AssistPanel({ instruction, phase, onApplySuggestion, imageSrc }: Props) {
   const { t } = useLanguage();
   const [enhanced, setEnhanced]   = useState("");
   const [enhancing, setEnhancing] = useState(false);
@@ -54,15 +56,17 @@ export default function AssistPanel({ instruction, phase, onApplySuggestion }: P
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     let built = "";
+    const hasImage = !!imageSrc;
+    const baseInstruction = hasImage
+      ? `You are a DALL-E 2 inpainting prompt expert. Look at the provided image, then rewrite the following editing instruction as a precise, detailed English inpainting prompt that accurately describes what should appear in the edited area. Output only the improved prompt — no explanation, no quotes, no extra text.\n\nInstruction: ${instruction.trim()}`
+      : `You are a DALL-E 2 inpainting prompt expert. Rewrite the following image editing instruction as a precise, detailed English inpainting prompt. Output only the improved prompt — no explanation, no quotes, no extra text.\n\nInstruction: ${instruction.trim()}`;
+
     await streamChat({
       signal: ctrl.signal,
       messages: [{
         role: "user",
-        content:
-          "You are a DALL-E 2 inpainting prompt expert. " +
-          "Rewrite the following image editing instruction as a precise, detailed English inpainting prompt. " +
-          "Output only the improved prompt — no explanation, no quotes, no extra text.\n\n" +
-          `Instruction: ${instruction.trim()}`,
+        content: baseInstruction,
+        ...(hasImage ? { images: [imageSrc] } : {}),
       }],
       onChunk: (chunk) => { built += chunk; setEnhanced(built); },
       onDone: () => { setEnhancing(false); abortRef.current = null; },

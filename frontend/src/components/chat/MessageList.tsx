@@ -1,21 +1,23 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Copy, RotateCcw, ThumbsUp, ThumbsDown, Pencil, ChevronDown, Check, X } from "lucide-react";
+import { Copy, RotateCcw, ThumbsUp, ThumbsDown, Pencil, ChevronDown, Check, X, ExternalLink } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { type TranslationKey } from "@/lib/i18n";
+import { apiRateMessage } from "@/lib/api/backendClient";
 
 // Import from canonical location and re-export for backward compatibility
-import type { Message } from "@/lib/hooks/useChat";
+import type { Message, SearchSource } from "@/lib/hooks/useChat";
 export type { Message };
 
 type Props = {
   messages: Message[];
+  chatId?: string;
   onEdit?: (messageId: string, newContent: string) => void;
   onRegenerate?: (messageId: string) => void;
 };
 
-export default function MessageList({ messages, onEdit, onRegenerate }: Props) {
+export default function MessageList({ messages, chatId, onEdit, onRegenerate }: Props) {
   const bottomRef    = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { t, lang }  = useLanguage();
@@ -65,6 +67,7 @@ export default function MessageList({ messages, onEdit, onRegenerate }: Props) {
               <MemoAssistantMessage
                 key={msg.id}
                 message={msg}
+                chatId={chatId}
                 isLast={i === messages.length - 1}
                 lang={lang}
                 onRegenerate={onRegenerate}
@@ -236,6 +239,7 @@ function UserMessage({ message, lang, onEdit, t }: UserMessageProps) {
 /* ── 어시스턴트 메시지 ── */
 type AssistantMessageProps = {
   message: Message;
+  chatId?: string;
   isLast: boolean;
   lang: string;
   onRegenerate?: (messageId: string) => void;
@@ -247,12 +251,14 @@ const MemoAssistantMessage = memo(AssistantMessage, (prev, next) =>
   prev.message.content   === next.message.content   &&
   prev.message.streaming === next.message.streaming &&
   prev.message.error     === next.message.error     &&
+  prev.message.sources   === next.message.sources   &&
   prev.isLast            === next.isLast             &&
   prev.lang              === next.lang               &&
+  prev.chatId            === next.chatId             &&
   prev.onRegenerate      === next.onRegenerate
 );
 
-function AssistantMessage({ message, isLast, lang, onRegenerate, t }: AssistantMessageProps) {
+function AssistantMessage({ message, chatId, isLast, lang, onRegenerate, t }: AssistantMessageProps) {
   const [copied, setCopied] = useState(false);
   const [rating, setRating] = useState<"up" | "down" | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -314,11 +320,16 @@ function AssistantMessage({ message, isLast, lang, onRegenerate, t }: AssistantM
         )}
         {!hasError && message.content && (
           <>
-            <MarkdownRenderer content={message.content} />
+            <MarkdownRenderer content={message.content} sources={message.sources} />
             {isStreaming && (
               <span className="inline-block w-0.5 h-4 bg-text-primary rounded animate-pulse ml-0.5 align-middle" />
             )}
           </>
+        )}
+
+        {/* Citation sources — shown after streaming completes */}
+        {!isStreaming && !hasError && message.sources && message.sources.length > 0 && (
+          <CitationList sources={message.sources} />
         )}
 
         {/* 액션 버튼 */}
@@ -342,14 +353,22 @@ function AssistantMessage({ message, isLast, lang, onRegenerate, t }: AssistantM
           )}
 
           <button
-            onClick={() => setRating(rating === "up" ? null : "up")}
+            onClick={() => {
+              const next = rating === "up" ? null : "up";
+              setRating(next);
+              if (chatId) apiRateMessage(chatId, message.id, next ? "positive" : null).catch(() => {});
+            }}
             title={t("msg.like")}
             className={`p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg hover:text-text-primary transition ${rating === "up" ? "text-accent" : ""}`}
           >
             <ThumbsUp size={14} />
           </button>
           <button
-            onClick={() => setRating(rating === "down" ? null : "down")}
+            onClick={() => {
+              const next = rating === "down" ? null : "down";
+              setRating(next);
+              if (chatId) apiRateMessage(chatId, message.id, next ? "negative" : null).catch(() => {});
+            }}
             title={t("msg.dislike")}
             className={`p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg hover:text-text-primary transition ${rating === "down" ? "text-danger" : ""}`}
           >
@@ -403,12 +422,38 @@ function ErrorBubble({ error, onRetry, t }: { error: string; onRetry?: () => voi
   );
 }
 
+/* ── Citation sources footer ── */
+function CitationList({ sources }: { sources: SearchSource[] }) {
+  return (
+    <div className="mt-3 pt-2.5 border-t border-border-subtle">
+      <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">Sources</p>
+      <div className="flex flex-col gap-1">
+        {sources.map((src, i) => (
+          <a
+            key={i}
+            href={src.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 text-xs text-text-secondary hover:text-accent transition-colors group"
+          >
+            <span className="shrink-0 size-4 rounded bg-elevated border border-border text-[10px] font-mono text-text-muted flex items-center justify-center">
+              {i + 1}
+            </span>
+            <span className="truncate group-hover:underline">{src.title || src.url}</span>
+            <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" />
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════
    Lightweight Markdown Renderer
    Supports: code blocks, headers, bold, italic,
-   inline code, lists, blockquotes, hr
+   inline code, lists, blockquotes, hr, [N] citations
    ═══════════════════════════════════════════ */
-function MarkdownRenderer({ content }: { content: string }) {
+function MarkdownRenderer({ content, sources }: { content: string; sources?: SearchSource[] }) {
   // Split on fenced code blocks first
   const segments = content.split(/(```[\s\S]*?```)/g);
 
@@ -422,7 +467,7 @@ function MarkdownRenderer({ content }: { content: string }) {
           const code = newlineIdx >= 0 ? inner.slice(newlineIdx + 1) : inner;
           return <CodeBlock key={i} lang={lang} code={code} />;
         }
-        return <InlineMarkdown key={i} text={seg} />;
+        return <InlineMarkdown key={i} text={seg} sources={sources} />;
       })}
     </div>
   );
@@ -462,7 +507,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   );
 }
 
-function InlineMarkdown({ text }: { text: string }) {
+function InlineMarkdown({ text, sources }: { text: string; sources?: SearchSource[] }) {
   const lines = text.split("\n");
   const result: React.ReactNode[] = [];
   let i = 0;
@@ -472,11 +517,11 @@ function InlineMarkdown({ text }: { text: string }) {
 
     // Headings
     if (line.startsWith("### ")) {
-      result.push(<h3 key={i} className="text-sm font-bold text-text-primary mt-3 mb-0.5">{parseInline(line.slice(4))}</h3>);
+      result.push(<h3 key={i} className="text-sm font-bold text-text-primary mt-3 mb-0.5">{parseInline(line.slice(4), sources)}</h3>);
     } else if (line.startsWith("## ")) {
-      result.push(<h2 key={i} className="text-base font-bold text-text-primary mt-3 mb-1">{parseInline(line.slice(3))}</h2>);
+      result.push(<h2 key={i} className="text-base font-bold text-text-primary mt-3 mb-1">{parseInline(line.slice(3), sources)}</h2>);
     } else if (line.startsWith("# ")) {
-      result.push(<h1 key={i} className="text-lg font-bold text-text-primary mt-3 mb-1">{parseInline(line.slice(2))}</h1>);
+      result.push(<h1 key={i} className="text-lg font-bold text-text-primary mt-3 mb-1">{parseInline(line.slice(2), sources)}</h1>);
     }
     // Horizontal rule
     else if (/^---+$/.test(line.trim())) {
@@ -486,7 +531,7 @@ function InlineMarkdown({ text }: { text: string }) {
     else if (line.startsWith("> ")) {
       result.push(
         <blockquote key={i} className="border-l-2 border-accent/40 pl-3 text-text-muted italic my-1">
-          {parseInline(line.slice(2))}
+          {parseInline(line.slice(2), sources)}
         </blockquote>
       );
     }
@@ -495,7 +540,7 @@ function InlineMarkdown({ text }: { text: string }) {
       result.push(
         <div key={i} className="flex items-start gap-2 my-0.5">
           <span className="text-text-muted shrink-0 mt-1.5">•</span>
-          <span>{parseInline(line.slice(2))}</span>
+          <span>{parseInline(line.slice(2), sources)}</span>
         </div>
       );
     }
@@ -505,7 +550,7 @@ function InlineMarkdown({ text }: { text: string }) {
       result.push(
         <div key={i} className="flex items-start gap-2 my-0.5">
           <span className="text-text-muted shrink-0 font-mono text-xs mt-0.5 w-4 text-right">{num}.</span>
-          <span>{parseInline(line.replace(/^\d+\. /, ""))}</span>
+          <span>{parseInline(line.replace(/^\d+\. /, ""), sources)}</span>
         </div>
       );
     }
@@ -515,7 +560,7 @@ function InlineMarkdown({ text }: { text: string }) {
     }
     // Regular paragraph
     else {
-      result.push(<p key={i} className="leading-relaxed">{parseInline(line)}</p>);
+      result.push(<p key={i} className="leading-relaxed">{parseInline(line, sources)}</p>);
     }
 
     i++;
@@ -524,9 +569,9 @@ function InlineMarkdown({ text }: { text: string }) {
   return <>{result}</>;
 }
 
-function parseInline(text: string): React.ReactNode {
-  // Split on **bold**, *italic*, `code`, ~~strikethrough~~
-  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|`[^`\n]+`|~~[^~\n]+~~)/g);
+function parseInline(text: string, sources?: SearchSource[]): React.ReactNode {
+  // Split on **bold**, *italic*, `code`, ~~strikethrough~~, [N] citation
+  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|`[^`\n]+`|~~[^~\n]+~~|\[\d+\])/g);
   return (
     <>
       {parts.map((part, i) => {
@@ -538,6 +583,21 @@ function parseInline(text: string): React.ReactNode {
           return <code key={i} className="px-1.5 py-0.5 rounded bg-elevated border border-border text-xs font-mono text-accent">{part.slice(1, -1)}</code>;
         if (part.startsWith("~~") && part.endsWith("~~"))
           return <del key={i} className="text-text-muted">{part.slice(2, -2)}</del>;
+        // Citation [N] → superscript link if sources exist
+        if (/^\[\d+\]$/.test(part) && sources) {
+          const n = parseInt(part.slice(1, -1), 10);
+          const src = sources[n - 1];
+          if (src?.url) {
+            return (
+              <a key={i} href={src.url} target="_blank" rel="noopener noreferrer"
+                title={src.title || src.url}
+                className="inline-flex items-center justify-center size-4 align-super text-[10px] font-mono rounded bg-accent/15 border border-accent/25 text-accent hover:bg-accent/25 transition-colors mx-0.5 no-underline"
+              >
+                {n}
+              </a>
+            );
+          }
+        }
         return <span key={i}>{part}</span>;
       })}
     </>

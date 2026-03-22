@@ -131,19 +131,6 @@ function deriveMetrics(stats: AdminStatsOut) {
   return { activeRate, pendingUsers, chatsPerUser, weeklyGrowthRate };
 }
 
-// Deterministic pseudo-random sparkline from a seed value
-function seedSparkline(seed: number, len = 7): number[] {
-  const out: number[] = [];
-  let v = seed;
-  for (let i = 0; i < len; i++) {
-    v = (v * 1664525 + 1013904223) & 0xffffffff;
-    out.push(Math.abs(v % 60) + 20);
-  }
-  // Make last value match the seed's magnitude
-  out[len - 1] = Math.max(seed % 80 + 10, 15);
-  return out;
-}
-
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AdminAnalyticsPage() {
@@ -175,10 +162,9 @@ export default function AdminAnalyticsPage() {
 
   const m = stats ? deriveMetrics(stats) : null;
 
-  // Mock weekly distribution seeded from actual total_chats for visual consistency
-  const weeklyBars = stats
-    ? [...seedSparkline(stats.total_chats, 6), stats.new_this_week]
-    : [20, 35, 28, 50, 42, 58, 0];
+  // 실제 일별 데이터 사용 (API 미로드 시 빈 슬롯)
+  const weeklyBars    = stats?.daily_chats   ?? [0, 0, 0, 0, 0, 0, 0];
+  const signupSparkline = stats?.daily_signups ?? [0, 0, 0, 0, 0, 0, 0];
 
   const modelSegments: Segment[] = [
     { label: "OpenAI",    value: 45, color: "#10b981" },
@@ -228,7 +214,7 @@ export default function AdminAnalyticsPage() {
                   label={ko ? "전체 유저" : "Total Users"}
                   value={stats?.total_users ?? 0}
                   sub={m ? `${m.activeRate}% active` : undefined}
-                  sparkline={stats ? seedSparkline(stats.total_users + 7, 7) : undefined}
+                  sparkline={stats ? signupSparkline : undefined}
                   sparkColor="#7c6af5"
                 />
                 <KpiCard
@@ -239,7 +225,7 @@ export default function AdminAnalyticsPage() {
                   value={stats?.active_users ?? 0}
                   trend={m && stats && stats.total_users > 0 ? (m.activeRate >= 70 ? "up" : m.activeRate >= 40 ? "flat" : "down") : undefined}
                   trendLabel={m ? `${m.activeRate}%` : undefined}
-                  sparkline={stats ? seedSparkline(stats.active_users + 13, 7) : undefined}
+                  sparkline={stats ? signupSparkline : undefined}
                   sparkColor="#4ade80"
                 />
                 <KpiCard
@@ -249,7 +235,7 @@ export default function AdminAnalyticsPage() {
                   label={ko ? "전체 채팅" : "Total Chats"}
                   value={stats?.total_chats ?? 0}
                   sub={m ? `${m.chatsPerUser} / ${ko ? "활성 유저" : "active user"}` : undefined}
-                  sparkline={stats ? seedSparkline(stats.total_chats + 3, 7) : undefined}
+                  sparkline={stats ? weeklyBars : undefined}
                   sparkColor="#60a5fa"
                 />
                 <KpiCard
@@ -273,7 +259,7 @@ export default function AdminAnalyticsPage() {
                   <div className="flex items-center justify-between mb-4">
                     <div>
                       <p className="text-sm font-semibold text-text-primary">{ko ? "주간 활동" : "Weekly Activity"}</p>
-                      <p className="text-xs text-text-muted mt-0.5">{ko ? "최근 7일 신규 가입" : "New signups last 7 days"}</p>
+                      <p className="text-xs text-text-muted mt-0.5">{ko ? "최근 7일 채팅 생성 수" : "Chats created in the last 7 days"}</p>
                     </div>
                     <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
                       +{stats?.new_this_week ?? 0} {ko ? "명" : "users"}

@@ -68,12 +68,13 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "knowledge_search",
-            "description": "업로드된 Knowledge Base에서 관련 문서를 검색합니다.",
+            "description": "업로드된 Knowledge Base에서 관련 문서를 의미론적으로 검색합니다.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
-                    "top_k": {"type": "integer", "default": 3},
+                    "query":   {"type": "string", "description": "검색할 내용"},
+                    "top_k":   {"type": "integer", "default": 5},
+                    "user_id": {"type": "string",  "description": "검색 대상 유저 ID"},
                 },
                 "required": ["query"],
             },
@@ -92,10 +93,93 @@ def _run_tool(name: str, args: dict) -> str:
         result = _execute_python(args.get("code", ""))
         return json.dumps(result)
     elif name == "knowledge_search":
-        # 임베딩 검색 — 현재는 키워드 매칭 stub, 추후 pgvector로 교체
-        return json.dumps({"results": [], "note": "Vector search not yet configured"})
+        return _knowledge_search(args.get("query", ""), args.get("top_k", 5), args.get("user_id"))
     else:
         return f"Unknown tool: {name}"
+
+
+def _knowledge_search(query: str, top_k: int = 5, user_id: str | None = None) -> str:
+    """
+    동기식 RAG 검색 — Celery 에이전트에서 사용.
+    /rag/search 엔드포인트와 동일한 로직을 인라인으로 실행.
+    """
+    if not user_id:
+        return json.dumps({"results": [], "note": "user_id required for knowledge search"})
+    try:
+        import math
+        from app.core.database import sync_session
+        from app.models.workspace import KnowledgeItem
+
+        # 임베딩 벡터 가져오기
+        with sync_session() as db:
+            from sqlalchemy import select as sa_select
+            import uuid
+            uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+            rows = db.execute(
+                sa_select(KnowledgeItem).where(KnowledgeItem.user_id == uid)
+            ).scalars().all()
+
+        if not rows:
+            return json.dumps({"results": [], "note": "No knowledge items found"})
+
+        # 쿼리 임베딩 (sync)
+        query_vector: list[float] | None = None
+        if OPENAI_API_KEY:
+            try:
+                with httpx.Client(timeout=20) as client:
+                    r = client.post(
+                        "https://api.openai.com/v1/embeddings",
+                        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                        json={"model": "text-embedding-3-small", "input": query},
+                    )
+                    if r.status_code == 200:
+                        query_vector = r.json()["data"][0]["embedding"]
+            except Exception:
+                pass
+
+        if query_vector is None:
+            try:
+                with httpx.Client(timeout=20) as client:
+                    r = client.post(
+                        f"{OLLAMA_URL}/api/embeddings",
+                        json={"model": "nomic-embed-text", "prompt": query},
+                    )
+                    if r.status_code == 200:
+                        query_vector = r.json().get("embedding")
+            except Exception:
+                pass
+
+        scored: list[dict] = []
+        keywords = query.lower().split()
+
+        for item in rows:
+            chunks: list[str] = []
+            vectors: list[list[float]] = []
+            try:
+                emb_data = json.loads(item.embeddings_json or "{}")
+                chunks  = emb_data.get("chunks", [])
+                vectors = emb_data.get("vectors", [])
+            except Exception:
+                pass
+
+            if not chunks and item.content:
+                chunks = [item.content[i:i+500] for i in range(0, len(item.content), 400)]
+
+            for i, chunk in enumerate(chunks):
+                if query_vector and i < len(vectors) and vectors[i] and len(vectors[i]) == len(query_vector):
+                    dot = sum(x * y for x, y in zip(query_vector, vectors[i]))
+                    na  = math.sqrt(sum(x*x for x in query_vector))
+                    nb  = math.sqrt(sum(x*x for x in vectors[i]))
+                    score = dot / (na * nb) if na and nb else 0.0
+                else:
+                    score = float(sum(1 for kw in keywords if kw in chunk.lower()))
+                scored.append({"chunk": chunk, "source": item.name, "score": round(score, 4)})
+
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return json.dumps({"results": scored[:top_k], "query": query})
+
+    except Exception as e:
+        return json.dumps({"results": [], "error": str(e)})
 
 
 def _web_search(query: str, max_results: int = 5) -> str:

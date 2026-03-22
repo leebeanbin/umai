@@ -1,31 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { ThumbsUp, ThumbsDown, Download, Swords, Filter, Info, Settings } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ThumbsUp, ThumbsDown, Download, Swords, Filter, Settings } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { AdminNav } from "@/components/admin/AdminNav";
+import { apiAdminRatings, type RatingEntryOut } from "@/lib/api/backendClient";
 
 type EvalTab = "ratings" | "arena";
-
-// Sample data shape
-type RatingEntry = {
-  id: string;
-  model: string;
-  rating: "positive" | "negative";
-  message_preview: string;
-  user: string;
-  created_at: string;
-};
-
-const SAMPLE_RATINGS: RatingEntry[] = [
-  { id: "1", model: "gpt-4o",            rating: "positive", message_preview: "Python으로 퀵소트 구현해줘",          user: "user@example.com", created_at: "2026-03-17T10:22:00Z" },
-  { id: "2", model: "claude-sonnet-4-6", rating: "positive", message_preview: "이 코드에서 버그를 찾아줘",           user: "test@example.com", created_at: "2026-03-17T09:10:00Z" },
-  { id: "3", model: "gemini-2.0-flash",  rating: "negative", message_preview: "오늘 날씨 어때?",                     user: "demo@example.com", created_at: "2026-03-16T18:05:00Z" },
-  { id: "4", model: "gpt-4o",            rating: "positive", message_preview: "React 컴포넌트 최적화 방법 알려줘",    user: "user@example.com", created_at: "2026-03-16T14:30:00Z" },
-  { id: "5", model: "claude-sonnet-4-6", rating: "negative", message_preview: "이 문서를 요약해줘",                  user: "test@example.com", created_at: "2026-03-15T11:20:00Z" },
-];
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("ko-KR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -34,20 +17,46 @@ function formatDate(iso: string) {
 export default function AdminEvaluationsPage() {
   const { lang } = useLanguage();
   const { user: me } = useAuth();
-  const [evalTab, setEvalTab] = useState<EvalTab>("ratings");
+  const ko = lang === "ko";
+
+  const [evalTab, setEvalTab]     = useState<EvalTab>("ratings");
   const [modelFilter, setModelFilter] = useState("all");
+  const [ratingFilter, setRatingFilter] = useState<"all" | "positive" | "negative">("all");
+  const [ratings, setRatings]     = useState<RatingEntryOut[]>([]);
+  const [loading, setLoading]     = useState(true);
+
+  useEffect(() => {
+    if (evalTab !== "ratings") return;
+    setLoading(true);
+    apiAdminRatings(ratingFilter === "all" ? undefined : ratingFilter, 0, 100)
+      .then(setRatings)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [evalTab, ratingFilter]);
 
   if (me && me.role !== "admin") {
     return <div className="flex h-full items-center justify-center text-sm text-text-muted">관리자 권한이 필요합니다.</div>;
   }
 
-  const positive = SAMPLE_RATINGS.filter((r) => r.rating === "positive").length;
-  const negative = SAMPLE_RATINGS.filter((r) => r.rating === "negative").length;
-  const total    = SAMPLE_RATINGS.length;
+  const positive     = ratings.filter((r) => r.rating === "positive").length;
+  const negative     = ratings.filter((r) => r.rating === "negative").length;
+  const total        = ratings.length;
   const positiveRate = total > 0 ? Math.round((positive / total) * 100) : 0;
 
-  const models = ["all", ...Array.from(new Set(SAMPLE_RATINGS.map((r) => r.model)))];
-  const filtered = modelFilter === "all" ? SAMPLE_RATINGS : SAMPLE_RATINGS.filter((r) => r.model === modelFilter);
+  const models  = ["all", ...Array.from(new Set(ratings.map((r) => r.model ?? "unknown")))];
+  const filtered = modelFilter === "all" ? ratings : ratings.filter((r) => (r.model ?? "unknown") === modelFilter);
+
+  function exportCsv() {
+    const rows = [
+      ["message_id", "model", "rating", "message_preview", "user_email", "created_at"],
+      ...ratings.map((r) => [r.message_id, r.model ?? "", r.rating, `"${r.message_preview.replace(/"/g, '""')}"`, r.user_email, r.created_at]),
+    ];
+    const blob = new Blob([rows.map((r) => r.join(",")).join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `ratings_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+  }
 
   return (
     <div className="flex h-full bg-base overflow-hidden">
@@ -56,20 +65,24 @@ export default function AdminEvaluationsPage() {
         <div className="max-w-3xl">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-lg font-semibold text-text-primary">{lang === "ko" ? "평가" : "Evaluations"}</h2>
-              <p className="text-xs text-text-muted mt-0.5">{lang === "ko" ? "유저 피드백과 모델 비교 데이터를 확인합니다." : "Review user feedback and model comparison data."}</p>
+              <h2 className="text-lg font-semibold text-text-primary">{ko ? "평가" : "Evaluations"}</h2>
+              <p className="text-xs text-text-muted mt-0.5">{ko ? "유저 피드백과 모델 비교 데이터를 확인합니다." : "Review user feedback and model comparison data."}</p>
             </div>
-            <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs border border-border text-text-secondary hover:bg-hover transition-colors">
+            <button
+              onClick={exportCsv}
+              disabled={ratings.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs border border-border text-text-secondary hover:bg-hover transition-colors disabled:opacity-40"
+            >
               <Download size={12} />
-              {lang === "ko" ? "CSV 내보내기" : "Export CSV"}
+              {ko ? "CSV 내보내기" : "Export CSV"}
             </button>
           </div>
 
           {/* Sub-tabs */}
           <div className="flex gap-1 mb-6 bg-surface rounded-xl p-1 w-fit border border-border">
             {([
-              { id: "ratings" as const, label: lang === "ko" ? "메시지 평점" : "Message Ratings", icon: <ThumbsUp size={12} /> },
-              { id: "arena"   as const, label: "Arena",                                             icon: <Swords size={12} /> },
+              { id: "ratings" as const, label: ko ? "메시지 평점" : "Message Ratings", icon: <ThumbsUp size={12} /> },
+              { id: "arena"   as const, label: "Arena",                                  icon: <Swords size={12} /> },
             ]).map((t) => (
               <button
                 key={t.id}
@@ -88,76 +101,90 @@ export default function AdminEvaluationsPage() {
               {/* Summary cards */}
               <div className="grid grid-cols-3 gap-3 mb-6">
                 <div className="p-4 rounded-2xl bg-surface border border-border">
-                  <p className="text-xs text-text-muted mb-1">{lang === "ko" ? "총 평점" : "Total Ratings"}</p>
-                  <p className="text-2xl font-bold text-text-primary">{total}</p>
+                  <p className="text-xs text-text-muted mb-1">{ko ? "총 평점" : "Total Ratings"}</p>
+                  <p className="text-2xl font-bold text-text-primary">{loading ? "—" : total}</p>
                 </div>
                 <div className="p-4 rounded-2xl bg-surface border border-border">
-                  <p className="text-xs text-text-muted mb-1">{lang === "ko" ? "긍정 비율" : "Positive Rate"}</p>
-                  <p className="text-2xl font-bold text-green-400">{positiveRate}%</p>
+                  <p className="text-xs text-text-muted mb-1">{ko ? "긍정 비율" : "Positive Rate"}</p>
+                  <p className="text-2xl font-bold text-green-400">{loading ? "—" : `${positiveRate}%`}</p>
                 </div>
                 <div className="p-4 rounded-2xl bg-surface border border-border">
                   <div className="flex items-center gap-3 mb-1">
                     <ThumbsUp size={12} className="text-green-400" />
-                    <span className="text-xs text-text-muted">{positive}</span>
+                    <span className="text-xs text-text-muted">{loading ? "—" : positive}</span>
                     <ThumbsDown size={12} className="text-danger ml-2" />
-                    <span className="text-xs text-text-muted">{negative}</span>
+                    <span className="text-xs text-text-muted">{loading ? "—" : negative}</span>
                   </div>
                   <div className="h-2 bg-hover rounded-full overflow-hidden mt-2">
-                    <div
-                      className="h-full bg-green-400 rounded-full"
-                      style={{ width: `${positiveRate}%` }}
-                    />
+                    <div className="h-full bg-green-400 rounded-full transition-all" style={{ width: `${positiveRate}%` }} />
                   </div>
                 </div>
               </div>
 
-              {/* Filter */}
-              <div className="flex items-center gap-2 mb-4">
-                <Filter size={12} className="text-text-muted" />
-                <span className="text-xs text-text-muted">{lang === "ko" ? "모델:" : "Model:"}</span>
-                <div className="flex gap-1.5">
-                  {models.map((m) => (
-                    <button key={m} onClick={() => setModelFilter(m)}
-                      className={`px-2.5 py-1 rounded-lg text-xs border transition-colors ${
-                        modelFilter === m ? "bg-accent/10 border-accent/30 text-accent" : "border-border text-text-secondary hover:bg-hover"
-                      }`}
-                    >
-                      {m === "all" ? (lang === "ko" ? "전체" : "All") : m}
-                    </button>
-                  ))}
+              {/* Filters */}
+              <div className="flex items-center gap-4 mb-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Filter size={12} className="text-text-muted" />
+                  <span className="text-xs text-text-muted">{ko ? "평점:" : "Rating:"}</span>
+                  <div className="flex gap-1.5">
+                    {(["all", "positive", "negative"] as const).map((v) => (
+                      <button key={v} onClick={() => setRatingFilter(v)}
+                        className={`px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+                          ratingFilter === v ? "bg-accent/10 border-accent/30 text-accent" : "border-border text-text-secondary hover:bg-hover"
+                        }`}
+                      >
+                        {v === "all" ? (ko ? "전체" : "All") : v === "positive" ? (ko ? "긍정" : "Positive") : (ko ? "부정" : "Negative")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-text-muted">{ko ? "모델:" : "Model:"}</span>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {models.map((m) => (
+                      <button key={m} onClick={() => setModelFilter(m)}
+                        className={`px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+                          modelFilter === m ? "bg-accent/10 border-accent/30 text-accent" : "border-border text-text-secondary hover:bg-hover"
+                        }`}
+                      >
+                        {m === "all" ? (ko ? "전체" : "All") : m}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
               {/* Ratings table */}
               <div className="bg-surface rounded-2xl border border-border overflow-hidden">
                 <div className="grid grid-cols-[1fr_auto_auto_auto] gap-0 text-[10px] font-medium text-text-muted px-4 py-2 border-b border-border bg-hover/30">
-                  <span>{lang === "ko" ? "메시지" : "Message"}</span>
-                  <span className="text-center w-24">{lang === "ko" ? "모델" : "Model"}</span>
-                  <span className="text-center w-16">{lang === "ko" ? "평점" : "Rating"}</span>
-                  <span className="text-right w-24">{lang === "ko" ? "날짜" : "Date"}</span>
+                  <span>{ko ? "메시지" : "Message"}</span>
+                  <span className="text-center w-28">{ko ? "모델" : "Model"}</span>
+                  <span className="text-center w-16">{ko ? "평점" : "Rating"}</span>
+                  <span className="text-right w-28">{ko ? "날짜" : "Date"}</span>
                 </div>
-                {filtered.map((r, i) => (
+                {loading ? (
+                  <div className="py-10 text-center text-xs text-text-muted">{ko ? "로딩 중..." : "Loading..."}</div>
+                ) : filtered.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-text-muted">
+                    {ko ? "평가 데이터가 없습니다." : "No rating data yet."}
+                  </div>
+                ) : filtered.map((r, i) => (
                   <div
-                    key={r.id}
+                    key={r.message_id}
                     className={`grid grid-cols-[1fr_auto_auto_auto] gap-0 items-center px-4 py-3 ${i < filtered.length - 1 ? "border-b border-border-subtle" : ""}`}
                   >
                     <p className="text-sm text-text-secondary truncate pr-4">{r.message_preview}</p>
-                    <span className="text-xs text-text-muted font-mono w-24 text-center truncate">{r.model.split("-").slice(0, 2).join("-")}</span>
+                    <span className="text-xs text-text-muted font-mono w-28 text-center truncate">{(r.model ?? "unknown").split("-").slice(0, 2).join("-")}</span>
                     <span className="w-16 flex justify-center">
                       {r.rating === "positive"
                         ? <ThumbsUp size={13} className="text-green-400" />
                         : <ThumbsDown size={13} className="text-danger" />
                       }
                     </span>
-                    <span className="text-xs text-text-muted w-24 text-right">{formatDate(r.created_at)}</span>
+                    <span className="text-xs text-text-muted w-28 text-right">{formatDate(r.created_at)}</span>
                   </div>
                 ))}
               </div>
-
-              <p className="text-xs text-text-muted mt-3 flex items-center gap-1.5">
-                <Info size={10} />
-                {lang === "ko" ? "샘플 데이터입니다. 실제 평점은 Admin → Settings → Evaluations에서 평점 수집을 활성화하면 표시됩니다." : "Sample data. Enable rating collection in Admin → Settings → Evaluations."}
-              </p>
             </>
           )}
 
@@ -169,7 +196,7 @@ export default function AdminEvaluationsPage() {
               <div>
                 <p className="text-sm font-semibold text-text-primary mb-1">Arena Mode</p>
                 <p className="text-xs text-text-muted max-w-xs leading-relaxed">
-                  {lang === "ko"
+                  {ko
                     ? "두 모델의 응답을 나란히 비교하고, 유저가 더 나은 응답을 선택합니다. Admin → Settings → Evaluations에서 Arena 모드를 활성화하세요."
                     : "Compare responses from two models side by side and let users vote for the better one. Enable Arena Mode in Admin → Settings → Evaluations."}
                 </p>
@@ -179,7 +206,7 @@ export default function AdminEvaluationsPage() {
                 className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border border-border text-text-secondary hover:bg-hover transition-colors"
               >
                 <Settings size={13} />
-                {lang === "ko" ? "설정으로 이동" : "Go to Settings"}
+                {ko ? "설정으로 이동" : "Go to Settings"}
               </Link>
             </div>
           )}

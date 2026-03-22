@@ -1,7 +1,7 @@
 "use client";
 
 // 앱 전체 상태 타입 정의 (추후 zustand/jotai로 교체 가능)
-import { apiCreateChat, apiUpdateChat, apiDeleteChat } from "@/lib/api/backendClient";
+import { apiCreateChat, apiUpdateChat, apiDeleteChat, isAuthenticated } from "@/lib/api/backendClient";
 
 export type SessionType = "chat" | "editor";
 
@@ -70,7 +70,7 @@ export function createSession(id: string, title: string, type: SessionType = "ch
   saveSessions([newSession, ...sessions]);
   window.dispatchEvent(new Event("umai:sessions-change"));
   // Sync to backend (fire-and-forget — local state is authoritative)
-  if (localStorage.getItem("umai_access_token")) {
+  if (isAuthenticated()) {
     apiCreateChat(title).catch(() => {/* ignore — offline / unauthenticated */});
   }
 }
@@ -94,7 +94,7 @@ export function updateSessionTitle(id: string, title: string, sync = true) {
   );
   saveSessions(sessions);
   window.dispatchEvent(new Event("umai:sessions-change"));
-  if (sync && localStorage.getItem("umai_access_token")) {
+  if (sync && isAuthenticated()) {
     apiUpdateChat(id, { title }).catch(() => {});
   }
 }
@@ -107,7 +107,7 @@ export function deleteSession(id: string) {
   localStorage.removeItem(`umai_msgs_${id}`);
   window.dispatchEvent(new Event("umai:sessions-change"));
   // Sync to backend (fire-and-forget)
-  if (localStorage.getItem("umai_access_token")) {
+  if (isAuthenticated()) {
     apiDeleteChat(id).catch(() => {});
   }
 }

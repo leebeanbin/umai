@@ -13,23 +13,31 @@ type Props = {
 export default function ChatNavbar({ chatId }: Props) {
   const { t } = useLanguage();
 
-  const [navState, setNavState] = useState(() => {
+  // null = not yet hydrated (SSR/client 불일치 방지 — localStorage는 클라이언트 전용)
+  const [navState, setNavState] = useState<{
+    model: DynamicModel;
+    inputBadge: string | null;
+    outputBadge: string | null;
+  } | null>(null);
+
+  // 클라이언트 마운트 후 localStorage에서 초기값 로드
+  useEffect(() => {
     const all = loadModels();
     const s   = loadSettings();
-    // Per-chat model: if chatId is given, prefer the session's saved modelId
     const sessionModel = chatId
       ? loadSessions().find((sess) => sess.id === chatId)?.modelId
       : undefined;
     const activeId = sessionModel ?? s.selectedModel;
-    return {
+    setNavState({
       model:       all.find((m) => m.id === activeId) ?? all[0],
-      inputBadge:  s.inputLang  !== "auto" ? s.inputLang.toUpperCase()  : null as string | null,
-      outputBadge: s.outputLang !== "auto" ? s.outputLang.toUpperCase() : null as string | null,
-    };
-  });
+      inputBadge:  s.inputLang  !== "auto" ? s.inputLang.toUpperCase()  : null,
+      outputBadge: s.outputLang !== "auto" ? s.outputLang.toUpperCase() : null,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleModelChange = useCallback((m: DynamicModel) => {
-    setNavState((prev) => ({ ...prev, model: m }));
+    setNavState((prev) => prev ? { ...prev, model: m } : null);
     saveSettings({ selectedModel: m.id });
     // Also persist to the specific chat session so it loads correctly next time
     if (chatId) updateSessionModel(chatId, m.id);
@@ -44,10 +52,10 @@ export default function ChatNavbar({ chatId }: Props) {
         ? loadSessions().find((sess) => sess.id === chatId)?.modelId
         : undefined;
       const activeId = sessionModel ?? s.selectedModel;
-      setNavState((prev) => ({
-        ...prev,
-        model: all.find((m) => m.id === activeId) ?? all[0] ?? prev.model,
-      }));
+      setNavState((prev) => prev
+        ? { ...prev, model: all.find((m) => m.id === activeId) ?? all[0] ?? prev.model }
+        : null
+      );
     }
     function onSettingsChange() {
       const s   = loadSettings();
@@ -70,7 +78,7 @@ export default function ChatNavbar({ chatId }: Props) {
     };
   }, [chatId]);
 
-  if (!navState.model) return null;
+  if (!navState?.model) return null;
 
   return (
     <nav className="sticky top-0 z-20 flex items-center justify-between px-4 pt-3 pb-8 bg-linear-to-b from-base/95 via-base/60 via-50% to-transparent pointer-events-none [&>*]:pointer-events-auto">

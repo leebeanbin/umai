@@ -51,6 +51,10 @@ class ErrCode(Enum):
     FILE_TOO_LARGE      = (413, "파일 크기 제한을 초과했습니다.")
     UNSUPPORTED_TYPE    = (415, "지원하지 않는 파일 형식입니다.")
 
+    # ── 외부 서비스 (503) ─────────────────────────────────────────────────────
+    OLLAMA_UNAVAILABLE       = (503, "Ollama 서버에 연결할 수 없습니다. Ollama가 실행 중인지 확인하세요.")
+    TITLE_GENERATION_FAILED  = (503, "제목 생성에 실패했습니다.")
+
     def __init__(self, status: int, message: str) -> None:
         self.status = status
         self.message = message
