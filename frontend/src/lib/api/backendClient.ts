@@ -179,6 +179,12 @@ export async function apiLogout(): Promise<void> {
   // refresh_token은 HttpOnly 쿠키 → body 불필요, 브라우저가 자동 포함
   await apiFetch<void>("/api/v1/auth/logout", { method: "POST" }).catch(() => {/* best-effort */});
   clearTokens();
+  // 로그아웃 시 채팅 히스토리 localStorage 삭제 (공용 PC 개인정보 보호)
+  if (typeof window !== "undefined") {
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith("umai_msgs_"))
+      .forEach((k) => localStorage.removeItem(k));
+  }
 }
 
 // ── Chats ─────────────────────────────────────────────────────────────────────

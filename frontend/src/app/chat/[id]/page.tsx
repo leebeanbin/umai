@@ -7,10 +7,11 @@ import ChatNavbar from "@/components/chat/ChatNavbar";
 import MessageList from "@/components/chat/MessageList";
 import MessageInput from "@/components/chat/MessageInput";
 import { useLanguage } from "@/components/providers/LanguageProvider";
-import { useChat } from "@/lib/hooks/useChat";
+import { useChat, type Message } from "@/lib/hooks/useChat";
+import { useChatSocket } from "@/lib/hooks/useWebSocket";
 import { createSession, updateSessionTitle } from "@/lib/store";
 import { loadSettings } from "@/lib/appStore";
-import { apiGenerateChatTitle } from "@/lib/api/backendClient";
+import { apiGenerateChatTitle, getStoredToken } from "@/lib/api/backendClient";
 
 type AttachedImage = { id: string; dataUrl: string; name: string };
 
@@ -18,9 +19,46 @@ export default function ChatSession() {
   const { id }  = useParams<{ id: string }>();
   const { t }   = useLanguage();
   const {
-    messages, generating,
+    messages, setMessages, generating,
     send, stop, editMessage, regenerate,
   } = useChat(id);
+
+  // DB에서 채팅 히스토리 로드 (페이지 마운트 시 1회)
+  useEffect(() => {
+    if (!id) return;
+    const token = getStoredToken();
+    if (!token) return;
+    fetch(`/api/v1/chats/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data?.messages?.length) return;
+        const dbMsgs: Message[] = data.messages.map((m: {
+          id: string; role: "user" | "assistant"; content: string;
+          images?: string[] | null; created_at: string;
+        }) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          images: m.images ?? undefined,
+          createdAt: new Date(m.created_at),
+        }));
+        // DB 메시지가 localStorage보다 많으면 DB 우선
+        if (dbMsgs.length > messages.length) {
+          setMessages(dbMsgs);
+        }
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // WebSocket 연결 — messages_saved 등 실시간 이벤트 수신
+  useChatSocket(id, (event) => {
+    if (event.type === "messages_saved") {
+      // DB 저장 완료 확인 — 필요 시 추가 동작 (예: 저장 인디케이터 숨김)
+    }
+  });
 
   const [isTemp,    setIsTemp]    = useState(false);
   const [tempSaved, setTempSaved] = useState(false);

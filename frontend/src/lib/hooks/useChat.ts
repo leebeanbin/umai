@@ -83,29 +83,32 @@ function loadMessages(chatId: string): Message[] {
   } catch { return []; }
 }
 
-/** localStorage 저장: 스트리밍 중인 메시지와 greeting은 제외 */
+/** localStorage 저장: 스트리밍 중인 메시지와 greeting은 제외. 최근 50개로 제한 */
 function saveMessages(chatId: string, messages: Message[]) {
   if (typeof window === "undefined") return;
-  const saveable = messages.filter((m) => !m.streaming && !m.error && m.id !== "greeting");
+  const saveable = messages
+    .filter((m) => !m.streaming && !m.error && m.id !== "greeting")
+    .slice(-50); // 최근 50개만 유지
   localStorage.setItem(msgStorageKey(chatId), JSON.stringify(saveable));
 }
 
-/** 백엔드 DB에 완성된 메시지 저장 (fire-and-forget, 실패해도 무시) */
-async function persistToDb(chatId: string, messages: Message[]) {
-  if (!isAuthenticated()) return; // 미인증 시 skip
+/**
+ * 스트리밍 완료 후 user+assistant 쌍을 Celery write-back 배치 엔드포인트로 저장.
+ * - 즉시 202 반환 → WS messages_saved 이벤트로 완료 확인
+ * - 실패해도 localStorage에는 존재하므로 non-fatal
+ */
+async function saveToDb(chatId: string, userMsg: Message, asstMsg: Message) {
+  if (!isAuthenticated()) return;
   const token = getStoredToken();
-
-  const saveable = messages.filter((m) => !m.streaming && !m.error && m.id !== "greeting");
-  // 최근 두 메시지만 저장 (user + assistant 쌍)
-  const toSave = saveable.slice(-2);
-  for (const m of toSave) {
-    // Relative path — Next.js rewrite proxies /api/* to backend
-    fetch(`/api/v1/chats/${chatId}/messages`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ role: m.role, content: m.content, images: m.images }),
-    }).catch(() => {}); // 실패 무시
-  }
+  const messages = [
+    { id: userMsg.id, role: userMsg.role, content: userMsg.content, images: userMsg.images ?? null },
+    { id: asstMsg.id, role: asstMsg.role, content: asstMsg.content, images: null },
+  ];
+  fetch(`/api/v1/chats/${chatId}/messages/batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ messages }),
+  }).catch(() => {});
 }
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
@@ -286,7 +289,7 @@ export function useChat(chatId?: string) {
             false // ← 스트리밍 중 localStorage 쓰기 금지
           ),
 
-        // 완료: localStorage 1회 저장 + DB 저장 (fire-and-forget)
+        // 완료: localStorage 1회 저장 + DB 배치 저장
         onDone: () => {
           push(
             (prev) => prev.map((m) => m.id === asstId ? { ...m, streaming: false } : m),
@@ -294,7 +297,11 @@ export function useChat(chatId?: string) {
           );
           setGenerating(false);
           abortRef.current = null;
-          if (chatId) persistToDb(chatId, msgRef.current);
+          if (chatId) {
+            const userMsg = msgRef.current.find((m) => m.id === userId);
+            const asstMsg = msgRef.current.find((m) => m.id === asstId);
+            if (userMsg && asstMsg) saveToDb(chatId, userMsg, asstMsg);
+          }
         },
 
         onError: (err) => {
@@ -343,5 +350,5 @@ export function useChat(chatId?: string) {
     if (chatId) localStorage.removeItem(msgStorageKey(chatId));
   }, [chatId]);
 
-  return { messages, generating, msgRef, push, addMessage, send, stop, editMessage, regenerate, clear };
+  return { messages, setMessages, generating, msgRef, push, addMessage, send, stop, editMessage, regenerate, clear };
 }
