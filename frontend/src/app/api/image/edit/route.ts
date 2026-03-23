@@ -12,8 +12,13 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { verifyToken } from "@/lib/api/verifyAuth";
 
 export async function POST(req: NextRequest) {
+  if (!await verifyToken(req.headers.get("authorization"))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const apiKey = process.env.OPENAI_API_KEY ?? "";
   if (!apiKey) {
     return NextResponse.json({ error: "__NO_KEY__:openai" }, { status: 401 });

@@ -105,7 +105,7 @@ def _keyword_search(query: str, items: list[Any], top_k: int) -> list[dict]:
 
 @router.get("/search")
 async def rag_search(
-    q: str = Query(..., min_length=1, description="검색 쿼리"),
+    q: str = Query(..., min_length=1, max_length=500, description="검색 쿼리"),
     top_k: int = Query(5, ge=1, le=20, description="반환할 최대 청크 수"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

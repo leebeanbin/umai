@@ -56,7 +56,7 @@ class AdminUserOut(BaseModel):
 class UpdateUserRequest(BaseModel):
     role: Optional[str] = None       # "admin" | "user" | "pending"
     is_active: Optional[bool] = None
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=100)
 
 
 class StatsOut(BaseModel):

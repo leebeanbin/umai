@@ -202,9 +202,13 @@ export function useChat(chatId?: string) {
       if (images.length > 0 && !caps.vision) {
         for (const img of images) {
           try {
+            const ocrToken = getStoredToken();
             const r = await fetch("/api/ocr", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                "Content-Type": "application/json",
+                ...(ocrToken ? { Authorization: `Bearer ${ocrToken}` } : {}),
+              },
               body: JSON.stringify({ image: img }),
               signal: AbortSignal.timeout(30_000),
             });
@@ -225,7 +229,11 @@ export function useChat(chatId?: string) {
       let searchSources: SearchSource[] = [];
       if (opts?.webSearch) {
         try {
-          const r = await fetch(`/api/websearch?q=${encodeURIComponent(content)}`, { signal: AbortSignal.timeout(8000) });
+          const wsToken = getStoredToken();
+          const r = await fetch(`/api/websearch?q=${encodeURIComponent(content)}`, {
+            headers: wsToken ? { Authorization: `Bearer ${wsToken}` } : {},
+            signal: AbortSignal.timeout(8000),
+          });
           if (r.ok) {
             const { results } = await r.json() as { results: SearchSource[] };
             if (results.length > 0) {

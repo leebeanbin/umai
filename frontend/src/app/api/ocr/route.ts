@@ -9,18 +9,25 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { verifyToken } from "@/lib/api/verifyAuth";
 
 const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
 const DEFAULT_OCR_MODEL = process.env.OCR_MODEL ?? "llava";
 
 export async function POST(req: NextRequest) {
+  if (!await verifyToken(req.headers.get("authorization"))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json() as {
     image?: string;
     prompt?: string;
     model?: string;
   };
 
-  const { image, prompt, model = DEFAULT_OCR_MODEL } = body;
+  const { image, prompt } = body;
+  // model is always the server-configured default — ignore client-supplied value
+  const model = DEFAULT_OCR_MODEL;
   if (!image) return NextResponse.json({ text: "" });
 
   // Strip the data URL prefix to get raw base64

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifyToken } from "@/lib/api/verifyAuth";
 
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? "";
 
@@ -9,7 +10,11 @@ export type SearchResult = {
 };
 
 export async function GET(req: NextRequest) {
-  const q = req.nextUrl.searchParams.get("q") ?? "";
+  if (!await verifyToken(req.headers.get("authorization"))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const q = (req.nextUrl.searchParams.get("q") ?? "").slice(0, 500);
   if (!q.trim()) return NextResponse.json({ results: [] });
 
   if (!TAVILY_API_KEY) {

@@ -8,6 +8,7 @@ import { useLanguage } from "@/components/providers/LanguageProvider";
 import { streamChat } from "@/lib/apis/chat";
 import { getModelCapabilities } from "@/lib/modelCapabilities";
 import { loadSettings } from "@/lib/appStore";
+import { getStoredToken } from "@/lib/api/backendClient";
 
 type Phase = "idle" | "masking" | "ready" | "queued" | "processing" | "succeeded" | "failed";
 type Variant = { id: string; rank: number; url: string };
@@ -120,7 +121,12 @@ export default function EditorSession() {
       fd.append("n",      "2");
       fd.append("size",   `${SIZE}x${SIZE}`);
 
-      const res = await fetch("/api/image/edit", { method: "POST", body: fd });
+      const token = getStoredToken();
+      const res = await fetch("/api/image/edit", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      });
       const data = await res.json() as { images?: { url: string }[]; error?: string };
 
       if (!res.ok || data.error) {

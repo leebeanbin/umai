@@ -10,6 +10,7 @@ import { type TranslationKey } from "@/lib/i18n";
 import { loadModels, type DynamicModel } from "@/lib/appStore";
 import { useChat } from "@/lib/hooks/useChat";
 import { streamChat } from "@/lib/apis/chat";
+import { getStoredToken } from "@/lib/api/backendClient";
 import ModelSelect from "@/components/common/ModelSelect";
 import type { Message } from "@/components/chat/MessageList";
 
@@ -122,9 +123,13 @@ function ImagesPlayground() {
     setError(null);
     setGenerating(true);
     try {
+      const token = getStoredToken();
       const res = await fetch("/api/image", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           provider: "openai",
           model,

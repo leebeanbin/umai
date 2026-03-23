@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
-from pydantic import BaseModel, ConfigDict, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,13 +50,13 @@ class WorkspaceItemOut(BaseModel):
 
 class WorkspaceItemCreate(BaseModel):
     item_type: WorkspaceItemType
-    name: str
+    name: str = Field(..., min_length=1, max_length=200)
     data: dict = {}
     is_enabled: bool = True
 
 
 class WorkspaceItemPatch(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
     data: Optional[dict] = None
     is_enabled: Optional[bool] = None
 

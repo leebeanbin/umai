@@ -9,6 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { verifyToken } from "@/lib/api/verifyAuth";
 
 export async function GET() {
   return NextResponse.json({
@@ -32,6 +33,10 @@ export type GeneratedImage = {
 };
 
 export async function POST(req: NextRequest) {
+  if (!await verifyToken(req.headers.get("authorization"))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json() as ImageRequestBody;
   const { provider, model, prompt, size, quality, style, n } = body;
 
