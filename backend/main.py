@@ -19,6 +19,7 @@ from app.core.redis import close_redis, get_redis
 from app.routers import auth, chats, folders, admin, workspace
 from app.routers import tasks as tasks_router
 from app.routers import rag as rag_router
+from app.routers import ws as ws_router
 
 # ── Rate Limiter 설정 ─────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
@@ -77,6 +78,7 @@ app.include_router(admin.router,     prefix="/api/v1")
 app.include_router(workspace.router,      prefix="/api/v1")
 app.include_router(tasks_router.router,   prefix="/api/v1")
 app.include_router(rag_router.router,     prefix="/api/v1")
+app.include_router(ws_router.router)  # WebSocket — prefix 없음 (/ws/...)
 
 
 _health_cache: dict | None = None

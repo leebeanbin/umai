@@ -25,6 +25,23 @@ OLLAMA_URL     = settings.OLLAMA_URL
 OPENAI_API_KEY = settings.OPENAI_API_KEY
 
 
+def _publish_task_done(task_id: str, task_name: str) -> None:
+    """태스크 완료를 소유자 전용 Redis 채널에 발행. non-fatal."""
+    try:
+        import redis as _sync_redis
+        r = _sync_redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        owner = r.get(f"task_owner:{task_id}")
+        if owner:
+            r.publish(f"task:{owner}", json.dumps({
+                "type": "task_done",
+                "task_id": task_id,
+                "task": task_name,
+            }))
+        r.close()
+    except Exception as _exc:
+        logger.warning("_publish_task_done failed: %s", _exc)
+
+
 # ── 텍스트 추출 ────────────────────────────────────────────────────────────────
 
 def _extract_text_pdf(raw: bytes) -> str:
@@ -233,6 +250,7 @@ def process_and_embed(
                 })
                 db.commit()
 
+        _publish_task_done(self.request.id, "process_and_embed")
         return {
             "knowledge_id": knowledge_id,
             "text_length": len(text),

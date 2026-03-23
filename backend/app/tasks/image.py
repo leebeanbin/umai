@@ -27,6 +27,25 @@ OLLAMA_URL     = settings.OLLAMA_URL
 OPENAI_API_KEY = settings.OPENAI_API_KEY
 
 
+# ── 태스크 완료 알림 ──────────────────────────────────────────────────────────
+
+def _publish_task_done(task_id: str, result_summary: dict) -> None:
+    """태스크 완료를 소유자 전용 Redis 채널에 발행. non-fatal."""
+    try:
+        import redis as _sync_redis, json as _json
+        r = _sync_redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        owner = r.get(f"task_owner:{task_id}")
+        if owner:
+            r.publish(f"task:{owner}", _json.dumps({
+                "type": "task_done",
+                "task_id": task_id,
+                **result_summary,
+            }))
+        r.close()
+    except Exception as _exc:
+        logger.warning("_publish_task_done failed: %s", _exc)
+
+
 # ── 헬퍼 ─────────────────────────────────────────────────────────────────────
 
 _PRIVATE_NETS = [
@@ -100,7 +119,7 @@ def resize_image(
         img.save(buf, format=output_format, quality=quality)
         b64 = base64.b64encode(buf.getvalue()).decode()
 
-        return {
+        result = {
             "b64": b64,
             "width": img.width,
             "height": img.height,
@@ -108,6 +127,8 @@ def resize_image(
             "original_size": len(raw),
             "compressed_size": len(buf.getvalue()),
         }
+        _publish_task_done(self.request.id, {"task": "resize_image"})
+        return result
     except Exception as exc:
         logger.error("resize_image failed: %s", exc)
         raise self.retry(exc=exc, countdown=5)
@@ -142,7 +163,9 @@ def ocr_image(
             r.raise_for_status()
             data = r.json()
 
-        return {"text": data.get("response", ""), "model": model}
+        result = {"text": data.get("response", ""), "model": model}
+        _publish_task_done(self.request.id, {"task": "ocr_image"})
+        return result
     except Exception as exc:
         logger.error("ocr_image failed: %s", exc)
         raise self.retry(exc=exc, countdown=10)
@@ -196,7 +219,9 @@ def analyze_image(
                 r.raise_for_status()
                 response_text = r.json()["choices"][0]["message"]["content"]
 
-        return {"response": response_text, "model": model, "provider": provider}
+        result = {"response": response_text, "model": model, "provider": provider}
+        _publish_task_done(self.request.id, {"task": "analyze_image"})
+        return result
     except Exception as exc:
         logger.error("analyze_image failed: %s", exc)
         raise self.retry(exc=exc, countdown=10)
@@ -237,7 +262,9 @@ def generate_image(
                 )
                 r.raise_for_status()
                 b64 = r.json()["data"][0]["b64_json"]
-            return {"b64": b64, "url": None, "provider": "openai"}
+            result = {"b64": b64, "url": None, "provider": "openai"}
+            _publish_task_done(self.request.id, {"task": "generate_image"})
+            return result
 
         elif provider == "comfyui":
             base = comfyui_url or settings.COMFYUI_URL
@@ -255,7 +282,9 @@ def generate_image(
                     }
                 })
                 r.raise_for_status()
-            return {"b64": None, "url": None, "provider": "comfyui", "prompt_id": r.json().get("prompt_id")}
+            result = {"b64": None, "url": None, "provider": "comfyui", "prompt_id": r.json().get("prompt_id")}
+            _publish_task_done(self.request.id, {"task": "generate_image"})
+            return result
 
         elif provider == "automatic1111":
             try:
@@ -273,7 +302,9 @@ def generate_image(
                 })
                 r.raise_for_status()
                 b64 = r.json()["images"][0]
-            return {"b64": b64, "url": None, "provider": "automatic1111"}
+            result = {"b64": b64, "url": None, "provider": "automatic1111"}
+            _publish_task_done(self.request.id, {"task": "generate_image"})
+            return result
 
         else:
             raise ValueError(f"Unknown provider: {provider}")

@@ -79,6 +79,19 @@ class AddMessageRequest(BaseModel):
     meta: dict | None = None
 
 
+class MessageCreate(BaseModel):
+    """배치 저장용 단일 메시지 스키마."""
+    id: str | None = None        # 프론트엔드 UUID 전달 시 idempotency 보장
+    role: str = Field(..., pattern="^(user|assistant|system)$")
+    content: str = Field(..., max_length=100_000)
+    images: list[str] | None = Field(None, max_length=10)
+
+
+class MessageBatchCreate(BaseModel):
+    """스트리밍 완료 후 user+assistant 쌍을 한 번에 저장."""
+    messages: list[MessageCreate] = Field(..., min_length=1, max_length=20)
+
+
 # ── Folder ────────────────────────────────────────────────────────────────────
 
 class FolderOut(BaseModel):

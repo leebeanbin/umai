@@ -32,11 +32,13 @@ from app.services.title_service import (
     OllamaModelNotFoundError,
     TitleGenerationError,
 )
+from app.core.redis import get_redis
 from app.schemas.chat import (
     AddMessageRequest, ChatDetailOut, ChatMemberOut, ChatOut, MessageOut,
     CreateChatRequest, InviteMemberRequest, UpdateChatRequest,
     UpdateMemberRoleRequest, GenerateTitleRequest, GenerateTitleResponse,
     RateMessageRequest, RateMessageResponse,
+    MessageBatchCreate,
 )
 
 router = APIRouter(prefix="/chats", tags=["chats"])
@@ -167,6 +169,32 @@ async def add_message(
     await svc.require_member(chat, user, min_role="editor")
     msg = await svc.add_message(chat_id, body.role, body.content, body.images, body.meta)
     return {"id": str(msg.id)}
+
+
+# ── 메시지 배치 저장 — Celery write-back (editor 이상) ───────────────────────
+
+@router.post("/{chat_id}/messages/batch", status_code=202)
+async def add_messages_batch(
+    chat_id: uuid.UUID,
+    body: MessageBatchCreate,
+    svc: ChatService = Depends(get_chat_service),
+    user: User = Depends(get_current_user),
+):
+    """
+    스트리밍 완료 후 user+assistant 쌍을 Celery 태스크로 비동기 저장.
+    즉시 202 응답 반환, 저장 완료는 WS chat:{chat_id} 채널로 통보.
+    """
+    chat = await svc.get_chat_or_404(chat_id)
+    await svc.require_member(chat, user, min_role="editor")
+
+    from app.tasks.chat import save_messages
+    task = save_messages.delay(
+        str(chat_id),
+        [m.model_dump() for m in body.messages],
+    )
+    redis = await get_redis()
+    await redis.setex(f"task_owner:{task.id}", 3600, str(user.id))
+    return {"task_id": task.id}
 
 
 # ── 메시지 평가 (viewer 이상 — 본인 채팅) ────────────────────────────────────

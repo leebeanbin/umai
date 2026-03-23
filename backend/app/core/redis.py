@@ -1,3 +1,5 @@
+import json
+
 from redis.asyncio import Redis, from_url
 from app.core.config import settings
 
@@ -22,6 +24,36 @@ async def close_redis():
     if _redis:
         await _redis.aclose()
         _redis = None
+
+
+async def get_pubsub_client() -> Redis:
+    """pub/sub 전용 독립 Redis 클라이언트 생성. 사용 후 .aclose() 호출 필요."""
+    return await from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+    )
+
+
+# ── Pub/Sub 이벤트 발행 ────────────────────────────────────────────────────────
+
+async def publish_event(channel: str, payload: dict) -> None:
+    """채팅방 또는 태스크 채널에 이벤트 발행."""
+    r = await get_redis()
+    await r.publish(channel, json.dumps(payload))
+
+
+# ── WebSocket rate limit ──────────────────────────────────────────────────────
+
+async def check_ws_rate_limit(user_id: str, limit: int = 60) -> bool:
+    """WebSocket 메시지 rate limit (1분 슬라이딩 윈도우). True = 허용."""
+    r = await get_redis()
+    key = f"ws_rate:{user_id}"
+    count = await r.incr(key)
+    if count == 1:
+        await r.expire(key, 60)
+    return count <= limit
 
 
 # ── 편의 헬퍼 ────────────────────────────────────────────────────────────────

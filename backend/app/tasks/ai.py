@@ -28,6 +28,23 @@ from app.core.config import settings
 logger = get_task_logger(__name__)
 
 OLLAMA_URL        = settings.OLLAMA_URL
+
+
+def _publish_task_done(task_id: str, task_name: str) -> None:
+    """태스크 완료를 소유자 전용 Redis 채널에 발행. non-fatal."""
+    try:
+        import redis as _sync_redis
+        r = _sync_redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        owner = r.get(f"task_owner:{task_id}")
+        if owner:
+            r.publish(f"task:{owner}", json.dumps({
+                "type": "task_done",
+                "task_id": task_id,
+                "task": task_name,
+            }))
+        r.close()
+    except Exception as _exc:
+        logger.warning("_publish_task_done failed: %s", _exc)
 OPENAI_API_KEY    = settings.OPENAI_API_KEY
 ANTHROPIC_API_KEY = settings.ANTHROPIC_API_KEY
 GOOGLE_API_KEY    = settings.GOOGLE_API_KEY
@@ -434,6 +451,7 @@ def run_agent(
 
         # 도구 호출 없음 → 최종 응답
         if not response.get("tool_calls"):
+            _publish_task_done(self.request.id, "run_agent")
             return {
                 "content": response.get("content", ""),
                 "steps": steps,
@@ -471,6 +489,7 @@ def run_agent(
     logger.warning("run_agent reached max_steps=%d, forcing final response", max_steps)
     history.append({"role": "user", "content": "지금까지 수집된 정보를 바탕으로 최종 답변을 해줘."})
     final = _call_llm(history, model, provider, tools=None, temperature=temperature)
+    _publish_task_done(self.request.id, "run_agent")
     return {
         "content": final.get("content", ""),
         "steps": steps,
@@ -486,6 +505,7 @@ def web_search(self, query: str, max_results: int = 5) -> dict:
     """독립 웹 검색 태스크"""
     try:
         result = _web_search(query, max_results)
+        _publish_task_done(self.request.id, "web_search")
         return {"query": query, "results": json.loads(result)}
     except Exception as exc:
         raise self.retry(exc=exc, countdown=5)
