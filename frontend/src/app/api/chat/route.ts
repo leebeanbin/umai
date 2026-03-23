@@ -14,7 +14,21 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
+const OLLAMA_URL    = process.env.OLLAMA_URL ?? "http://localhost:11434";
+const INTERNAL_API  = process.env.INTERNAL_API_URL ?? "http://localhost:8000";
+
+async function verifyToken(authHeader: string): Promise<boolean> {
+  if (!authHeader.startsWith("Bearer ")) return false;
+  try {
+    const res = await fetch(`${INTERNAL_API}/api/v1/auth/me`, {
+      headers: { Authorization: authHeader },
+      signal: AbortSignal.timeout(3000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 // ── Key resolution ────────────────────────────────────────────────────────────
 
@@ -55,6 +69,11 @@ type RequestBody = {
 };
 
 export async function POST(req: NextRequest) {
+  const authHeader = req.headers.get("authorization") ?? "";
+  if (!await verifyToken(authHeader)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json() as RequestBody;
   const { provider, model, messages, sysPrompt, temperature, maxTokens, topP } = body;
 

@@ -12,7 +12,7 @@
 import json
 import secrets
 from urllib.parse import urlparse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import RedirectResponse
@@ -194,8 +194,8 @@ async def me(current_user: User = Depends(get_current_user)):
 
 
 class UpdateMeRequest(BaseModel):
-    name: str | None = None
-    notification_email: str | None = None
+    name: str | None = Field(None, min_length=1, max_length=100)
+    notification_email: str | None = Field(None, max_length=254)
 
     @field_validator("name")
     @classmethod
@@ -302,11 +302,16 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         token = await oauth.google.authorize_access_token(request)
     except OAuthError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+        import logging; logging.getLogger(__name__).warning("Google OAuth error: %s", e)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Authentication failed")
+
+    state = request.query_params.get("state")
+    if not state:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing OAuth state")
 
     userinfo = token.get("userinfo") or await oauth.google.userinfo(token=token)
     return await _oauth_finish(
-        state=request.query_params.get("state", ""),
+        state=state,
         user_kwargs={
             "provider": "google",
             "sub": userinfo["sub"],
@@ -330,7 +335,12 @@ async def github_callback(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         token = await oauth.github.authorize_access_token(request)
     except OAuthError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+        import logging; logging.getLogger(__name__).warning("GitHub OAuth error: %s", e)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Authentication failed")
+
+    state = request.query_params.get("state")
+    if not state:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing OAuth state")
 
     resp = await oauth.github.get("user", token=token)
     profile = resp.json()
@@ -343,7 +353,7 @@ async def github_callback(request: Request, db: AsyncSession = Depends(get_db)):
         email = primary["email"] if primary else f"{profile['login']}@github.noemail"
 
     return await _oauth_finish(
-        state=request.query_params.get("state", ""),
+        state=state,
         user_kwargs={
             "provider": "github",
             "sub": str(profile["id"]),

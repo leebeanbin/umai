@@ -99,15 +99,15 @@ async def health():
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         checks["db"] = "ok"
-    except Exception as exc:
-        checks["db"] = f"error: {exc}"
+    except Exception:
+        checks["db"] = "error"  # 내부 연결 정보 노출 방지
 
     try:
         r = await get_redis()
         await r.ping()
         checks["redis"] = "ok"
-    except Exception as exc:
-        checks["redis"] = f"error: {exc}"
+    except Exception:
+        checks["redis"] = "error"  # 내부 연결 정보 노출 방지
 
     ok = all(v == "ok" for v in checks.values())
     result = {"status": "ok" if ok else "degraded", "checks": checks, "service": settings.APP_NAME}

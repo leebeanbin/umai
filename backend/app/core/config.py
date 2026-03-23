@@ -64,11 +64,17 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Warn loudly if the default SECRET_KEY is still in use outside of tests/DEBUG.
-if settings.SECRET_KEY == _INSECURE_DEFAULT and not settings.DEBUG:
-    warnings.warn(
-        "SECRET_KEY is set to the insecure default. "
-        "Set SECRET_KEY to a random value (e.g. `secrets.token_hex(32)`) "
-        "via the .env file or environment variable before deploying.",
-        stacklevel=1,
-    )
+# 프로덕션에서 기본 SECRET_KEY 사용 시 즉시 종료 (경고로는 부족함 — 무시될 수 있음)
+if settings.SECRET_KEY == _INSECURE_DEFAULT:
+    if settings.DEBUG:
+        warnings.warn(
+            "SECRET_KEY is set to the insecure default. "
+            "This is acceptable only in DEBUG mode. "
+            "Set a random SECRET_KEY before deploying to production.",
+            stacklevel=1,
+        )
+    else:
+        raise RuntimeError(
+            "SECRET_KEY must be set to a secure random value in production. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )

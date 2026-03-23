@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, EmailStr, field_serializer
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator
 
 
 class MessageOut(BaseModel):
@@ -59,23 +59,23 @@ class ChatDetailOut(ChatOut):
 
 
 class CreateChatRequest(BaseModel):
-    title: str = "New Chat"
-    model: str | None = None
+    title: str = Field("New Chat", max_length=500)
+    model: str | None = Field(None, max_length=200)
     folder_id: str | None = None
     is_temporary: bool = False
 
 
 class UpdateChatRequest(BaseModel):
-    title: str | None = None
+    title: str | None = Field(None, max_length=500)
     is_pinned: bool | None = None
     is_archived: bool | None = None
     folder_id: str | None = None
 
 
 class AddMessageRequest(BaseModel):
-    role: str   # user | assistant
-    content: str
-    images: list[str] | None = None
+    role: str = Field(..., pattern="^(user|assistant|system)$")
+    content: str = Field(..., max_length=100_000)   # ~25k 토큰 상한
+    images: list[str] | None = Field(None, max_length=10)
     meta: dict | None = None
 
 
@@ -97,15 +97,15 @@ class FolderOut(BaseModel):
 
 
 class CreateFolderRequest(BaseModel):
-    name: str
-    description: str | None = None
-    system_prompt: str | None = None
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str | None = Field(None, max_length=1000)
+    system_prompt: str | None = Field(None, max_length=10_000)
 
 
 class UpdateFolderRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    system_prompt: str | None = None
+    name: str | None = Field(None, min_length=1, max_length=200)
+    description: str | None = Field(None, max_length=1000)
+    system_prompt: str | None = Field(None, max_length=10_000)
     is_open: bool | None = None
 
 
@@ -116,9 +116,9 @@ class FolderDetailOut(FolderOut):
 # ── Title Generation ──────────────────────────────────────────────────────────
 
 class GenerateTitleRequest(BaseModel):
-    user_content:      str
-    assistant_content: str
-    language:          str = "en"  # ko / en / ja / zh / es / fr / de
+    user_content:      str = Field(..., max_length=2000)
+    assistant_content: str = Field(..., max_length=2000)
+    language:          str = Field("en", pattern="^(en|ko|ja|zh|es|fr|de)$")
 
 
 class GenerateTitleResponse(BaseModel):

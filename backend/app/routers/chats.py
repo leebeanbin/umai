@@ -292,14 +292,10 @@ async def generate_chat_title(
 
     try:
         title = await title_svc.generate(body.user_content, body.assistant_content, body.language)
-    except OllamaConnectionError as exc:
-        ErrCode.OLLAMA_UNAVAILABLE.raise_it(str(exc))
-    except OllamaTimeoutError as exc:
-        ErrCode.TITLE_GENERATION_FAILED.raise_it(str(exc))
-    except OllamaModelNotFoundError as exc:
-        ErrCode.TITLE_GENERATION_FAILED.raise_it(str(exc))
-    except TitleGenerationError as exc:
-        ErrCode.TITLE_GENERATION_FAILED.raise_it(str(exc))
+    except OllamaConnectionError:
+        ErrCode.OLLAMA_UNAVAILABLE.raise_it()
+    except (OllamaTimeoutError, OllamaModelNotFoundError, TitleGenerationError):
+        ErrCode.TITLE_GENERATION_FAILED.raise_it()
 
     if title:
         await chat_svc.update_chat(chat, title=title)

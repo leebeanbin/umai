@@ -1,5 +1,5 @@
 import uuid
-from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 
 class TokenResponse(BaseModel):
@@ -33,5 +33,13 @@ class UserOut(BaseModel):
 
 
 class OnboardRequest(BaseModel):
-    name: str
-    notification_email: str
+    name: str = Field(..., min_length=1, max_length=100)
+    notification_email: str = Field(..., max_length=254)
+
+    @field_validator("notification_email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        v = v.strip()
+        if v and ("@" not in v or len(v) < 3):
+            raise ValueError("Invalid email address")
+        return v

@@ -17,7 +17,7 @@ from typing import Any, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel, Field, field_serializer
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -284,9 +284,13 @@ async def get_ollama_model_capabilities(
     }
 
 
+class OllamaPullRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
 @router.post("/ollama/pull")
 async def pull_ollama_model(
-    body: dict,
+    body: OllamaPullRequest,
     _admin: User = Depends(require_admin),
 ):
     """
@@ -294,9 +298,8 @@ async def pull_ollama_model(
     body: {"name": "llama3.2"}
     Streams: {"status": "pulling manifest"} ... {"status": "success"}
     """
-    model_name = body.get("name", "").strip()
-    if not model_name:
-        raise HTTPException(400, "model name required")
+    import logging
+    model_name = body.name.strip()
 
     ollama_url = settings.OLLAMA_URL
 
@@ -312,7 +315,8 @@ async def pull_ollama_model(
                         if line:
                             yield line + "\n"
         except Exception as e:
-            yield json.dumps({"error": str(e)}) + "\n"
+            logging.getLogger(__name__).error("Ollama pull error for %s: %s", model_name, e)
+            yield json.dumps({"error": "Model pull failed"}) + "\n"
 
     return StreamingResponse(_stream(), media_type="application/x-ndjson")
 

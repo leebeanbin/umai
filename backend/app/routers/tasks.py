@@ -15,14 +15,17 @@ import base64
 from typing import Any, Literal
 
 from celery.result import AsyncResult
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form, status
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.core.celery_app import celery_app
 from app.routers.deps import get_current_user
 from app.models.user import User
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 # ── 공통 응답 ────────────────────────────────────────────────────────────────
@@ -147,7 +150,9 @@ async def enqueue_search(body: WebSearchRequest, _user: User = Depends(get_curre
 # ── Knowledge 태스크 ──────────────────────────────────────────────────────────
 
 @router.post("/knowledge/process", response_model=TaskResponse, status_code=202)
+@limiter.limit("10/hour")
 async def enqueue_knowledge_process(
+    request: Request,
     knowledge_id: str = Form(...),
     embedding_provider: Literal["openai", "ollama"] = Form("ollama"),
     embedding_model: str = Form("nomic-embed-text"),
@@ -155,7 +160,11 @@ async def enqueue_knowledge_process(
     _user: User = Depends(get_current_user),
 ):
     """파일 업로드 후 백그라운드에서 파싱 + 임베딩"""
-    raw = await file.read()
+    # 파일 크기 제한 (10 MB)
+    MAX_BYTES = 10 * 1024 * 1024
+    raw = await file.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File exceeds 10 MB limit")
     b64 = base64.b64encode(raw).decode()
 
     from app.tasks.knowledge import process_and_embed
@@ -181,7 +190,9 @@ SUPPORTED_TYPES = {
 }
 
 @router.post("/documents/extract")
+@limiter.limit("20/minute")
 async def extract_document(
+    request: Request,
     file: UploadFile = File(...),
     mode: str = Form("full"),          # "full" | "first_pages"
     max_chars: int = Form(60000),      # 토큰 절약: 기본 ~15k 토큰
@@ -198,7 +209,16 @@ async def extract_document(
     """
     import io as _io
 
-    raw = await file.read()
+    # 사용자 파라미터 상한 클램프 (DoS 방지)
+    max_chars = min(max_chars, 200_000)
+    pages     = min(max(pages, 1), 50)
+
+    # 파일 크기 제한 (10 MB)
+    MAX_BYTES = 10 * 1024 * 1024
+    raw = await file.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File exceeds 10 MB limit")
+
     content_type = (file.content_type or "").split(";")[0].strip()
     filename = file.filename or ""
 
@@ -238,7 +258,8 @@ async def extract_document(
             text = raw.decode("utf-8", errors="replace")
 
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Failed to extract text: {exc}") from exc
+        import logging; logging.getLogger(__name__).warning("Document extraction error: %s", exc)
+        raise HTTPException(status_code=422, detail="Failed to extract text from document") from exc
 
     # 컨텍스트 윈도우 절약: max_chars 기준 잘림
     truncated = False

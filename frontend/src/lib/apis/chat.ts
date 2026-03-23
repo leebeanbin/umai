@@ -12,6 +12,7 @@
  */
 
 import { loadSettings, loadModels } from "@/lib/appStore";
+import { getStoredToken } from "@/lib/api/backendClient";
 
 export type ChatMessage = {
   role: "user" | "assistant" | "system";
@@ -161,9 +162,13 @@ export async function streamChat({
   const sysPrompt = buildSystemPrompt(systemPrompt, outputLang);
 
   try {
+    const token = getStoredToken();
     const res = await fetch("/api/chat", {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({
         provider,
         model,
