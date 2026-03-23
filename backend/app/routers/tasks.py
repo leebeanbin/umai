@@ -16,11 +16,12 @@ from typing import Any, Literal
 
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from app.core.celery_app import celery_app
+from app.core.redis import get_redis
 from app.routers.deps import get_current_user
 from app.models.user import User
 
@@ -54,7 +55,11 @@ def _task_status(task_id: str) -> TaskResponse:
 # ── 태스크 상태 조회 ──────────────────────────────────────────────────────────
 
 @router.get("/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: str, _user: User = Depends(get_current_user)):
+async def get_task(task_id: str, current_user: User = Depends(get_current_user)):
+    redis = await get_redis()
+    owner = await redis.get(f"task_owner:{task_id}")
+    if owner is None or owner != str(current_user.id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Task not found or access denied")
     return _task_status(task_id)
 
 
@@ -62,9 +67,9 @@ async def get_task(task_id: str, _user: User = Depends(get_current_user)):
 
 class ImageResizeRequest(BaseModel):
     source: str          # URL or data URI
-    max_size: int = 2048
+    max_size: int = Field(2048, ge=1, le=8192)
     output_format: Literal["JPEG", "PNG", "WEBP"] = "JPEG"
-    quality: int = 85
+    quality: int = Field(85, ge=1, le=100)
 
 
 class ImageOcrRequest(BaseModel):
@@ -85,34 +90,42 @@ class ImageGenerateRequest(BaseModel):
     negative_prompt: str = ""
     provider: Literal["openai", "comfyui", "automatic1111"] = "openai"
     model: str = "dall-e-3"
-    size: str = "1024x1024"
+    size: str = Field("1024x1024", pattern=r"^\d{1,5}x\d{1,5}$")
 
 
 @router.post("/image/resize", response_model=TaskResponse, status_code=202)
-async def enqueue_resize(body: ImageResizeRequest, _user: User = Depends(get_current_user)):
+async def enqueue_resize(body: ImageResizeRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import resize_image
     task = resize_image.apply_async(kwargs=body.model_dump())
+    redis = await get_redis()
+    await redis.setex(f"task_owner:{task.id}", 3600, str(current_user.id))
     return TaskResponse(task_id=task.id, status="queued")
 
 
 @router.post("/image/ocr", response_model=TaskResponse, status_code=202)
-async def enqueue_ocr(body: ImageOcrRequest, _user: User = Depends(get_current_user)):
+async def enqueue_ocr(body: ImageOcrRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import ocr_image
     task = ocr_image.apply_async(kwargs=body.model_dump())
+    redis = await get_redis()
+    await redis.setex(f"task_owner:{task.id}", 3600, str(current_user.id))
     return TaskResponse(task_id=task.id, status="queued")
 
 
 @router.post("/image/analyze", response_model=TaskResponse, status_code=202)
-async def enqueue_analyze(body: ImageAnalyzeRequest, _user: User = Depends(get_current_user)):
+async def enqueue_analyze(body: ImageAnalyzeRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import analyze_image
     task = analyze_image.apply_async(kwargs=body.model_dump())
+    redis = await get_redis()
+    await redis.setex(f"task_owner:{task.id}", 3600, str(current_user.id))
     return TaskResponse(task_id=task.id, status="queued")
 
 
 @router.post("/image/generate", response_model=TaskResponse, status_code=202)
-async def enqueue_generate(body: ImageGenerateRequest, _user: User = Depends(get_current_user)):
+async def enqueue_generate(body: ImageGenerateRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import generate_image
     task = generate_image.apply_async(kwargs=body.model_dump())
+    redis = await get_redis()
+    await redis.setex(f"task_owner:{task.id}", 3600, str(current_user.id))
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -134,16 +147,20 @@ class WebSearchRequest(BaseModel):
 
 
 @router.post("/ai/agent", response_model=TaskResponse, status_code=202)
-async def enqueue_agent(body: AgentRequest, _user: User = Depends(get_current_user)):
+async def enqueue_agent(body: AgentRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.ai import run_agent
     task = run_agent.apply_async(kwargs=body.model_dump())
+    redis = await get_redis()
+    await redis.setex(f"task_owner:{task.id}", 3600, str(current_user.id))
     return TaskResponse(task_id=task.id, status="queued")
 
 
 @router.post("/ai/search", response_model=TaskResponse, status_code=202)
-async def enqueue_search(body: WebSearchRequest, _user: User = Depends(get_current_user)):
+async def enqueue_search(body: WebSearchRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.ai import web_search
     task = web_search.apply_async(kwargs=body.model_dump())
+    redis = await get_redis()
+    await redis.setex(f"task_owner:{task.id}", 3600, str(current_user.id))
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -157,7 +174,7 @@ async def enqueue_knowledge_process(
     embedding_provider: Literal["openai", "ollama"] = Form("ollama"),
     embedding_model: str = Form("nomic-embed-text"),
     file: UploadFile = File(...),
-    _user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """파일 업로드 후 백그라운드에서 파싱 + 임베딩"""
     # 파일 크기 제한 (10 MB)
@@ -176,6 +193,8 @@ async def enqueue_knowledge_process(
         "embedding_provider": embedding_provider,
         "embedding_model": embedding_model,
     })
+    redis = await get_redis()
+    await redis.setex(f"task_owner:{task.id}", 3600, str(current_user.id))
     return TaskResponse(task_id=task.id, status="queued")
 
 

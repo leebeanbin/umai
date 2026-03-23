@@ -423,6 +423,15 @@ function ErrorBubble({ error, onRetry, t }: { error: string; onRetry?: () => voi
 }
 
 /* ── Citation sources footer ── */
+function safeHref(url: string): string {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "http:" || protocol === "https:" ? url : "#";
+  } catch {
+    return "#";
+  }
+}
+
 function CitationList({ sources }: { sources: SearchSource[] }) {
   return (
     <div className="mt-3 pt-2.5 border-t border-border-subtle">
@@ -431,7 +440,7 @@ function CitationList({ sources }: { sources: SearchSource[] }) {
         {sources.map((src, i) => (
           <a
             key={i}
-            href={src.url}
+            href={safeHref(src.url)}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 text-xs text-text-secondary hover:text-accent transition-colors group"

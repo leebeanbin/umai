@@ -8,8 +8,11 @@
 """
 import base64
 import io
+import ipaddress
 import os
+import socket
 from typing import Literal
+from urllib.parse import urlparse
 
 import httpx
 from celery import shared_task
@@ -26,12 +29,38 @@ OPENAI_API_KEY = settings.OPENAI_API_KEY
 
 # ── 헬퍼 ─────────────────────────────────────────────────────────────────────
 
+_PRIVATE_NETS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),  # link-local / AWS IMDS
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+def _validate_external_url(url: str) -> None:
+    """SSRF 방어: private/내부 IP 범위 및 비http(s) 스킴 차단."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported URL scheme: {parsed.scheme!r}")
+    hostname = parsed.hostname or ""
+    try:
+        ip = ipaddress.ip_address(socket.gethostbyname(hostname))
+    except socket.gaierror:
+        raise ValueError(f"URL hostname could not be resolved: {hostname!r}")
+    if any(ip in net for net in _PRIVATE_NETS):
+        raise ValueError("URL resolves to a private/internal address")
+
+
 def _load_image_bytes(source: str) -> bytes:
     """URL 또는 base64 data URI에서 이미지 바이트 로드"""
     if source.startswith("data:"):
         # data:image/jpeg;base64,....
         header, b64 = source.split(",", 1)
         return base64.b64decode(b64)
+    _validate_external_url(source)
     with httpx.Client(timeout=30) as client:
         r = client.get(source)
         r.raise_for_status()
@@ -229,14 +258,18 @@ def generate_image(
             return {"b64": None, "url": None, "provider": "comfyui", "prompt_id": r.json().get("prompt_id")}
 
         elif provider == "automatic1111":
+            try:
+                img_w, img_h = (int(v) for v in size.split("x", 1))
+            except (ValueError, IndexError):
+                img_w, img_h = 1024, 1024
             base = a1111_url or settings.A1111_URL
             with httpx.Client(timeout=300) as client:
                 r = client.post(f"{base}/sdapi/v1/txt2img", json={
                     "prompt": prompt,
                     "negative_prompt": negative_prompt,
                     "steps": 20,
-                    "width": int(size.split("x")[0]),
-                    "height": int(size.split("x")[1]),
+                    "width": img_w,
+                    "height": img_h,
                 })
                 r.raise_for_status()
                 b64 = r.json()["images"][0]
