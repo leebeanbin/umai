@@ -14,16 +14,20 @@
 - PATCH  /chats/{id}/members/{uid}    멤버 역할 변경 — owner only
 - DELETE /chats/{id}/members/{uid}    멤버 추방 — owner only
 """
+import logging
 import uuid
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from fastapi.responses import PlainTextResponse
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, AsyncSessionLocal
+from app.models.chat import Message
 from app.models.user import User
 from app.routers.deps import get_current_user
 from app.core.config import settings
 from app.core.errors import ErrCode
+from app.core.redis import publish_event
 from app.services.chat_service import ChatService
 from app.services.title_service import (
     TitleService,
@@ -32,7 +36,6 @@ from app.services.title_service import (
     OllamaModelNotFoundError,
     TitleGenerationError,
 )
-from app.core.redis import get_redis
 from app.schemas.chat import (
     AddMessageRequest, ChatDetailOut, ChatMemberOut, ChatOut, MessageOut,
     CreateChatRequest, InviteMemberRequest, UpdateChatRequest,
@@ -40,6 +43,8 @@ from app.schemas.chat import (
     RateMessageRequest, RateMessageResponse,
     MessageBatchCreate,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 
@@ -171,30 +176,50 @@ async def add_message(
     return {"id": str(msg.id)}
 
 
-# ── 메시지 배치 저장 — Celery write-back (editor 이상) ───────────────────────
+# ── 메시지 배치 저장 — BackgroundTask write-back (editor 이상) ──────────────
+
+async def _save_messages_bg(chat_id: uuid.UUID, rows: list[dict]) -> None:
+    """채팅 메시지 배치를 DB에 저장하고 WS 이벤트를 발행한다 (BackgroundTask)."""
+    try:
+        async with AsyncSessionLocal() as db:
+            stmt = pg_insert(Message).values(rows).on_conflict_do_nothing(index_elements=["id"])
+            await db.execute(stmt)
+            await db.commit()
+        await publish_event(f"chat:{chat_id}", {
+            "type": "messages_saved",
+            "ids": [str(r["id"]) for r in rows],
+        })
+    except Exception as exc:
+        logger.warning("_save_messages_bg failed: %s", exc)  # non-fatal: localStorage 캐시로 복구
+
 
 @router.post("/{chat_id}/messages/batch", status_code=202)
 async def add_messages_batch(
     chat_id: uuid.UUID,
     body: MessageBatchCreate,
+    background_tasks: BackgroundTasks,
     svc: ChatService = Depends(get_chat_service),
     user: User = Depends(get_current_user),
 ):
     """
-    스트리밍 완료 후 user+assistant 쌍을 Celery 태스크로 비동기 저장.
+    스트리밍 완료 후 user+assistant 쌍을 BackgroundTask로 비동기 저장.
     즉시 202 응답 반환, 저장 완료는 WS chat:{chat_id} 채널로 통보.
     """
     chat = await svc.get_chat_or_404(chat_id)
     await svc.require_member(chat, user, min_role="editor")
 
-    from app.tasks.chat import save_messages
-    task = save_messages.delay(
-        str(chat_id),
-        [m.model_dump() for m in body.messages],
-    )
-    redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 3600, str(user.id))
-    return {"task_id": task.id}
+    rows = [
+        {
+            "id": uuid.UUID(m.id) if m.id else uuid.uuid4(),
+            "chat_id": chat_id,
+            "role": m.role,
+            "content": m.content,
+            "images": m.images,
+        }
+        for m in body.messages
+    ]
+    background_tasks.add_task(_save_messages_bg, chat_id, rows)
+    return {"queued": len(rows)}
 
 
 # ── 메시지 평가 (viewer 이상 — 본인 채팅) ────────────────────────────────────

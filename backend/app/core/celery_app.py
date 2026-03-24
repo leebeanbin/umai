@@ -28,7 +28,6 @@ celery_app = Celery(
         "app.tasks.image",
         "app.tasks.ai",
         "app.tasks.knowledge",
-        "app.tasks.chat",   # save_messages write-back
     ],
 )
 
