@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ImageIcon, ArrowUp, X, Brush, Globe, Sparkles, StopCircle, Wand2, ChevronUp, FileText, BookOpen, ScanText } from "lucide-react";
+import { ImageIcon, ArrowUp, X, Brush, Globe, Sparkles, StopCircle, Wand2, ChevronUp, FileText, BookOpen, ScanText, Loader2 } from "lucide-react";
 import MaskEditorModal from "./MaskEditorModal";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { loadSettings } from "@/lib/appStore";
 import { getModelCapabilities, type ModelCapabilities } from "@/lib/modelCapabilities";
-import { getStoredToken } from "@/lib/api/backendClient";
+import { getStoredToken, apiEnqueueImageAnalyze, apiGetTask } from "@/lib/api/backendClient";
 
 type AttachedImage = { id: string; dataUrl: string; name: string };
 
@@ -94,9 +94,12 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
   const [docs, setDocs]             = useState<AttachedDoc[]>([]);
   const [docLoading, setDocLoading] = useState(false);
   const [maskTarget, setMaskTarget] = useState<AttachedImage | null>(null);
-  const [webSearch, setWebSearch]   = useState(false);
-  const [useRag, setUseRag]         = useState(false);
-  const [showEval, setShowEval]     = useState(false);
+  const [webSearch, setWebSearch]       = useState(false);
+  const [useRag, setUseRag]             = useState(false);
+  const [showEval, setShowEval]         = useState(false);
+  const [imageAnalysis, setImageAnalysis] = useState("");
+  const [analyzingImage, setAnalyzingImage] = useState(false);
+  const analyzePollerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [modelCaps, setModelCaps]   = useState<ModelCapabilities>(() =>
     getModelCapabilities(loadSettings().selectedModel)
   );
@@ -129,13 +132,54 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
     if (!input.trim()) setShowEval(false);
   }, [input]);
 
+  // 이미지가 모두 제거되면 분석 상태 초기화
+  useEffect(() => {
+    if (images.length === 0) {
+      setImageAnalysis("");
+      setAnalyzingImage(false);
+      if (analyzePollerRef.current) { clearInterval(analyzePollerRef.current); analyzePollerRef.current = null; }
+    }
+  }, [images.length]);
+
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     files.forEach((file) => {
       if (!file.type.startsWith("image/")) return;
       const reader = new FileReader();
-      reader.onload = () =>
-        setImages((prev) => [...prev, { id: crypto.randomUUID(), dataUrl: reader.result as string, name: file.name }]);
+      reader.onload = async () => {
+        const dataUrl = reader.result as string;
+        setImages((prev) => [...prev, { id: crypto.randomUUID(), dataUrl, name: file.name }]);
+
+        // 이미지 첨부 즉시 Celery analyze_image 태스크로 선분석
+        // 사용자가 메시지를 작성하는 동안 완료되어 전송 시 context에 자동 주입
+        if (analyzePollerRef.current) clearInterval(analyzePollerRef.current);
+        setAnalyzingImage(true);
+        setImageAnalysis("");
+        try {
+          const task = await apiEnqueueImageAnalyze(dataUrl);
+          analyzePollerRef.current = setInterval(async () => {
+            try {
+              const t = await apiGetTask(task.task_id);
+              if (t.status === "success" || t.status === "failed") {
+                clearInterval(analyzePollerRef.current!);
+                analyzePollerRef.current = null;
+                if (t.status === "success") {
+                  const r = t.result as Record<string, unknown>;
+                  const text = (r.analysis ?? r.text ?? r.content ?? "") as string;
+                  if (text) setImageAnalysis(text);
+                }
+                setAnalyzingImage(false);
+              }
+            } catch {
+              clearInterval(analyzePollerRef.current!);
+              analyzePollerRef.current = null;
+              setAnalyzingImage(false);
+            }
+          }, 2000);
+        } catch {
+          setAnalyzingImage(false);
+        }
+      };
       reader.readAsDataURL(file);
     });
     e.target.value = "";
@@ -182,14 +226,20 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
   const handleSubmit = useCallback(() => {
     if (!input.trim() && images.length === 0 && docs.length === 0) return;
     setShowEval(false);
-    const docContext = docs.length > 0
-      ? docs.map((d) => `### ${d.name}\n${d.text}`).join("\n\n---\n\n")
-      : undefined;
+
+    const parts: string[] = [];
+    if (docs.length > 0)   parts.push(docs.map((d) => `### ${d.name}\n${d.text}`).join("\n\n---\n\n"));
+    if (imageAnalysis)     parts.push(`[이미지 분석]\n${imageAnalysis}`);
+    const docContext = parts.length > 0 ? parts.join("\n\n---\n\n") : undefined;
+
     onSend(input.trim(), images, webSearch || undefined, docContext, useRag || undefined);
     setInput("");
     setImages([]);
     setDocs([]);
-  }, [input, images, docs, onSend, webSearch, useRag]);
+    setImageAnalysis("");
+    if (analyzePollerRef.current) { clearInterval(analyzePollerRef.current); analyzePollerRef.current = null; }
+    setAnalyzingImage(false);
+  }, [input, images, docs, imageAnalysis, onSend, webSearch, useRag]);
 
   const handleMaskApply = useCallback((compositeDataUrl: string) => {
     setImages((prev) => [...prev, { id: crypto.randomUUID(), dataUrl: compositeDataUrl, name: "masked_region.png" }]);
@@ -322,6 +372,18 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
                     </button>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* 이미지 분석 인디케이터 */}
+            {(analyzingImage || imageAnalysis) && (
+              <div className={`mx-3 mb-1 flex items-center gap-1.5 text-xs ${
+                analyzingImage ? "text-text-muted animate-pulse" : "text-emerald-400"
+              }`}>
+                {analyzingImage
+                  ? <><Loader2 size={10} className="animate-spin" />{lang === "ko" ? "이미지 분석 중…" : "Analyzing image…"}</>
+                  : <><Sparkles size={10} />{lang === "ko" ? "이미지 분석 완료" : "Image analyzed"}</>
+                }
               </div>
             )}
 

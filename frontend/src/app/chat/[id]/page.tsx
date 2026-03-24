@@ -7,11 +7,23 @@ import ChatNavbar from "@/components/chat/ChatNavbar";
 import MessageList from "@/components/chat/MessageList";
 import MessageInput from "@/components/chat/MessageInput";
 import { useLanguage } from "@/components/providers/LanguageProvider";
-import { useChat, type Message } from "@/lib/hooks/useChat";
-import { useChatSocket } from "@/lib/hooks/useWebSocket";
+import { useChat, saveToDb, type Message } from "@/lib/hooks/useChat";
+import { useChatSocket, useTaskSocket } from "@/lib/hooks/useWebSocket";
 import { createSession, updateSessionTitle } from "@/lib/store";
 import { loadSettings } from "@/lib/appStore";
-import { apiGenerateChatTitle, getStoredToken } from "@/lib/api/backendClient";
+import { apiGenerateChatTitle, apiGetTask, getStoredToken } from "@/lib/api/backendClient";
+
+// ── Intent 분석 — 도구가 필요한 질문인지 판단 ────────────────────────────────
+function analyzeIntent(content: string): { useAgent: boolean; tools: string[] } {
+  const tools: string[] = [];
+  if (/검색|찾아|최신|뉴스|오늘.*뭐|지금.*어때|어디서|현재.*알려줘|search|find|latest|current/i.test(content))
+    tools.push("web_search");
+  if (/계산|실행해|코드 짜|파이썬|python|수식|compute|calculate|run this|execute/i.test(content))
+    tools.push("execute_python");
+  if (/문서에서|자료에서|업로드한|내 파일|내 자료|knowledge base/i.test(content))
+    tools.push("knowledge_search");
+  return { useAgent: tools.length > 0, tools };
+}
 
 type AttachedImage = { id: string; dataUrl: string; name: string };
 
@@ -19,8 +31,8 @@ export default function ChatSession() {
   const { id }  = useParams<{ id: string }>();
   const { t }   = useLanguage();
   const {
-    messages, setMessages, generating,
-    send, stop, editMessage, regenerate,
+    messages, setMessages, generating, setGenerating,
+    msgRef, push, send, stop, editMessage, regenerate, sendAsAgent,
   } = useChat(id);
 
   // DB에서 채팅 히스토리 로드 (페이지 마운트 시 1회)
@@ -58,6 +70,35 @@ export default function ChatSession() {
     if (event.type === "messages_saved") {
       // DB 저장 완료 확인 — 필요 시 추가 동작 (예: 저장 인디케이터 숨김)
     }
+  });
+
+  // Agent 태스크 완료 대기 Map: taskId → { thinkingId, userId }
+  const pendingAgentTasks = useRef<Map<string, { thinkingId: string; userId: string }>>(new Map());
+
+  useTaskSocket(async (taskId: string) => {
+    const pending = pendingAgentTasks.current.get(taskId);
+    if (!pending) return;
+    pendingAgentTasks.current.delete(taskId);
+    try {
+      const t = await apiGetTask(taskId);
+      const result = t.result as { content?: string; steps?: number } | null;
+      const content = result?.content ?? "";
+      push((prev) => prev.map((m) =>
+        m.id === pending.thinkingId
+          ? { ...m, content, streaming: false }
+          : m
+      ), true);
+      const userMsg = msgRef.current.find((m) => m.id === pending.userId);
+      const asstMsg = msgRef.current.find((m) => m.id === pending.thinkingId);
+      if (userMsg && asstMsg) saveToDb(id, userMsg, asstMsg);
+    } catch {
+      push((prev) => prev.map((m) =>
+        m.id === pending.thinkingId
+          ? { ...m, content: "", streaming: false, error: "에이전트 실행 실패" }
+          : m
+      ), false);
+    }
+    setGenerating(false);
   });
 
   const [isTemp,    setIsTemp]    = useState(false);
@@ -125,9 +166,27 @@ export default function ChatSession() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSend = useCallback((content: string, images: AttachedImage[], webSearch?: boolean, docContext?: string, useRag?: boolean) => {
-    send(content, images.map((i) => i.dataUrl), { webSearch, docContext, useRag });
-  }, [send]);
+  const handleSend = useCallback(async (
+    content: string,
+    images: AttachedImage[],
+    webSearch?: boolean,
+    docContext?: string,
+    useRag?: boolean,
+  ) => {
+    // 이미지 첨부 시 → 항상 스트리밍 (이미지 분석 결과는 docContext에 이미 포함)
+    if (images.length > 0) {
+      send(content, images.map((i) => i.dataUrl), { webSearch, docContext, useRag });
+      return;
+    }
+
+    const { useAgent, tools } = analyzeIntent(content);
+    if (useAgent) {
+      const ids = await sendAsAgent(content, tools);
+      if (ids) pendingAgentTasks.current.set(ids.taskId, { thinkingId: ids.thinkingId, userId: ids.userId });
+    } else {
+      send(content, [], { webSearch, docContext, useRag });
+    }
+  }, [send, sendAsAgent]);
 
   const tempSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (tempSavedTimerRef.current) clearTimeout(tempSavedTimerRef.current); }, []);

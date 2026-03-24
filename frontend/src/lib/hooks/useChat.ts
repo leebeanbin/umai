@@ -4,7 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { streamChat, type ChatMessage } from "@/lib/apis/chat";
 import { loadSettings } from "@/lib/appStore";
 import { getModelCapabilities } from "@/lib/modelCapabilities";
-import { getStoredToken, isAuthenticated } from "@/lib/api/backendClient";
+import { getStoredToken, isAuthenticated, apiEnqueueAgentTask } from "@/lib/api/backendClient";
 
 export type SearchSource = { title: string; snippet: string; url: string };
 
@@ -92,12 +92,19 @@ function saveMessages(chatId: string, messages: Message[]) {
   localStorage.setItem(msgStorageKey(chatId), JSON.stringify(saveable));
 }
 
+// LLM 프로바이더 추론 (모델명 기반)
+export function inferProvider(model: string): "openai" | "anthropic" | "ollama" {
+  if (/^(gpt-|o1|o3|chatgpt)/i.test(model)) return "openai";
+  if (/^claude-/i.test(model)) return "anthropic";
+  return "ollama";
+}
+
 /**
  * 스트리밍 완료 후 user+assistant 쌍을 Celery write-back 배치 엔드포인트로 저장.
  * - 즉시 202 반환 → WS messages_saved 이벤트로 완료 확인
  * - 실패해도 localStorage에는 존재하므로 non-fatal
  */
-async function saveToDb(chatId: string, userMsg: Message, asstMsg: Message) {
+export async function saveToDb(chatId: string, userMsg: Message, asstMsg: Message) {
   if (!isAuthenticated()) return;
   const token = getStoredToken();
   const messages = [
@@ -350,5 +357,48 @@ export function useChat(chatId?: string) {
     if (chatId) localStorage.removeItem(msgStorageKey(chatId));
   }, [chatId]);
 
-  return { messages, setMessages, generating, msgRef, push, addMessage, send, stop, editMessage, regenerate, clear };
+  // ── Agent 전송 (Celery run_agent 태스크) ───────────────────────────────────
+  // 반환: { taskId, thinkingId, userId } — 호출자가 useTaskSocket으로 완료 대기
+  const sendAsAgent = useCallback(async (
+    content: string,
+    enabledTools: string[],
+  ): Promise<{ taskId: string; thinkingId: string; userId: string } | null> => {
+    const settings = loadSettings();
+    const userId     = crypto.randomUUID();
+    const thinkingId = crypto.randomUUID();
+
+    const apiMsgs = [
+      ...(settings.systemPrompt ? [{ role: "system" as const, content: settings.systemPrompt }] : []),
+      ...msgRef.current
+        .filter((m) => m.id !== "greeting" && !m.streaming && !m.error)
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+      { role: "user" as const, content },
+    ];
+
+    push((prev) => [
+      ...prev,
+      { id: userId,     role: "user",      content,  createdAt: new Date() },
+      { id: thinkingId, role: "assistant",  content: "...", streaming: true, createdAt: new Date() },
+    ], false);
+    setGenerating(true);
+
+    try {
+      const task = await apiEnqueueAgentTask({
+        messages:      apiMsgs,
+        model:         settings.selectedModel,
+        provider:      inferProvider(settings.selectedModel),
+        enabled_tools: enabledTools,
+        chat_id:       chatId,
+      });
+      return { taskId: task.task_id, thinkingId, userId };
+    } catch {
+      push((prev) => prev.map((m) =>
+        m.id === thinkingId ? { ...m, content: "", streaming: false, error: "태스크 전송 실패" } : m
+      ), false);
+      setGenerating(false);
+      return null;
+    }
+  }, [chatId, push, msgRef]);
+
+  return { messages, setMessages, generating, setGenerating, msgRef, push, addMessage, send, stop, editMessage, regenerate, clear, sendAsAgent };
 }

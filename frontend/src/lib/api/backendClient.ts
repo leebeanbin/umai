@@ -537,6 +537,28 @@ export async function apiEnqueueWebSearch(query: string, maxResults = 5): Promis
   });
 }
 
+export async function apiEnqueueImageAnalyze(
+  source: string,
+  prompt = "이 이미지를 자세히 설명해줘.",
+  provider: "openai" | "ollama" = "ollama",
+): Promise<TaskResponse> {
+  return apiFetch<TaskResponse>("/api/v1/tasks/image/analyze", {
+    method: "POST",
+    body: JSON.stringify({ source, prompt, provider }),
+  });
+}
+
+export async function apiEnqueueImageResize(
+  source: string,
+  maxSize = 1024,
+  quality = 85,
+): Promise<TaskResponse> {
+  return apiFetch<TaskResponse>("/api/v1/tasks/image/resize", {
+    method: "POST",
+    body: JSON.stringify({ source, max_size: maxSize, quality }),
+  });
+}
+
 // ── Admin Settings ─────────────────────────────────────────────────────────────
 
 export type AdminSettingsGeneral = {
