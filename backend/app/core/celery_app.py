@@ -28,6 +28,7 @@ celery_app = Celery(
         "app.tasks.image",
         "app.tasks.ai",
         "app.tasks.knowledge",
+        "app.tasks.chat",   # save_messages write-back
     ],
 )
 
@@ -79,6 +80,7 @@ celery_app.conf.update(
     task_track_started=True,
 
     # 재시도 정책 기본값
-    task_soft_time_limit=300,   # 5분 soft limit (graceful)
-    task_time_limit=360,        # 6분 hard kill
+    # run_agent: max_steps=10 × 120s = 1200s 가능 → 넉넉하게 설정
+    task_soft_time_limit=1500,  # 25분 soft limit (graceful shutdown signal)
+    task_time_limit=1800,       # 30분 hard kill
 )

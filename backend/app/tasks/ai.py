@@ -30,6 +30,11 @@ logger = get_task_logger(__name__)
 OLLAMA_URL        = settings.OLLAMA_URL
 
 
+OPENAI_API_KEY    = settings.OPENAI_API_KEY
+ANTHROPIC_API_KEY = settings.ANTHROPIC_API_KEY
+GOOGLE_API_KEY    = settings.GOOGLE_API_KEY
+
+
 def _publish_task_done(task_id: str, task_name: str) -> None:
     """태스크 완료를 소유자 전용 Redis 채널에 발행. non-fatal."""
     try:
@@ -45,9 +50,6 @@ def _publish_task_done(task_id: str, task_name: str) -> None:
         r.close()
     except Exception as _exc:
         logger.warning("_publish_task_done failed: %s", _exc)
-OPENAI_API_KEY    = settings.OPENAI_API_KEY
-ANTHROPIC_API_KEY = settings.ANTHROPIC_API_KEY
-GOOGLE_API_KEY    = settings.GOOGLE_API_KEY
 
 # ── 도구 정의 (OpenAI function-calling 형식) ──────────────────────────────────
 
@@ -509,15 +511,6 @@ def web_search(self, query: str, max_results: int = 5) -> dict:
         return {"query": query, "results": json.loads(result)}
     except Exception as exc:
         raise self.retry(exc=exc, countdown=5)
-
-
-@shared_task(bind=True, name="app.tasks.ai.execute_python", max_retries=1)
-def execute_python_task(self, code: str, timeout: int = 10) -> dict:
-    """독립 Python 실행 태스크"""
-    try:
-        return _execute_python(code, timeout)
-    except Exception as exc:
-        raise self.retry(exc=exc, countdown=3)
 
 
 @shared_task(bind=True, name="app.tasks.ai.chat_completion", max_retries=1)

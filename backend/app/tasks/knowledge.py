@@ -2,10 +2,8 @@
 Knowledge Base 처리 태스크 (knowledge queue)
 
 - process_document   : 업로드된 파일에서 텍스트 추출 (PDF/DOCX/TXT/MD)
-- chunk_document     : 텍스트를 token-aware 청크로 분할
-- embed_and_store    : 청크 임베딩 생성 + PostgreSQL 저장 (pgvector)
-- reindex_knowledge  : 유저의 전체 Knowledge Base 재인덱싱
-- delete_embeddings  : 삭제된 파일의 임베딩 정리
+- embed_chunks       : 청크 임베딩 생성 + PostgreSQL 저장
+- process_and_embed  : 파이프라인: 파싱 → 청킹 → 임베딩 → 저장 (단일 태스크)
 """
 import io
 import json
@@ -155,18 +153,6 @@ def process_document(
         raise self.retry(exc=exc, countdown=10)
 
 
-@shared_task(bind=True, name="app.tasks.knowledge.chunk_document", max_retries=1)
-def chunk_document(
-    self,
-    text: str,
-    chunk_size: int = 1000,
-    overlap: int = 100,
-) -> dict:
-    """텍스트 → 청크 리스트. 임베딩 태스크에 체이닝해서 사용."""
-    chunks = _chunk_text(text, chunk_size, overlap)
-    return {"chunks": chunks, "count": len(chunks)}
-
-
 @shared_task(bind=True, name="app.tasks.knowledge.embed_chunks", max_retries=2)
 def embed_chunks(
     self,
@@ -263,19 +249,3 @@ def process_and_embed(
         raise self.retry(exc=exc, countdown=10)
 
 
-@shared_task(bind=True, name="app.tasks.knowledge.delete_embeddings", max_retries=2)
-def delete_embeddings(self, knowledge_id: str) -> dict:
-    """삭제된 파일의 임베딩 데이터 정리"""
-    try:
-        from app.core.database import sync_session
-        from app.models.workspace import KnowledgeItem
-
-        with sync_session() as db:
-            item = db.get(KnowledgeItem, knowledge_id)
-            if item:
-                item.embeddings_json = None
-                db.commit()
-
-        return {"knowledge_id": knowledge_id, "status": "deleted"}
-    except Exception as exc:
-        raise self.retry(exc=exc, countdown=5)
