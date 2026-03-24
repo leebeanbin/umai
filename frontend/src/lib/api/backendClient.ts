@@ -530,13 +530,6 @@ export async function apiEnqueueAgentTask(body: {
   });
 }
 
-export async function apiEnqueueWebSearch(query: string, maxResults = 5): Promise<TaskResponse> {
-  return apiFetch<TaskResponse>("/api/v1/tasks/ai/search", {
-    method: "POST",
-    body: JSON.stringify({ query, max_results: maxResults }),
-  });
-}
-
 export async function apiEnqueueImageAnalyze(
   source: string,
   prompt = "이 이미지를 자세히 설명해줘.",

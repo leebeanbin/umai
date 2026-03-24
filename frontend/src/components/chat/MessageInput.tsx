@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ImageIcon, ArrowUp, X, Brush, Globe, Sparkles, StopCircle, Wand2, ChevronUp, FileText, BookOpen, ScanText, Loader2 } from "lucide-react";
+import { ImageIcon, ArrowUp, X, Brush, Globe, Sparkles, StopCircle, Wand2, ChevronUp, FileText, BookOpen, ScanText, Loader2, Minimize2 } from "lucide-react";
 import MaskEditorModal from "./MaskEditorModal";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { loadSettings } from "@/lib/appStore";
 import { getModelCapabilities, type ModelCapabilities } from "@/lib/modelCapabilities";
-import { getStoredToken, apiEnqueueImageAnalyze, apiGetTask } from "@/lib/api/backendClient";
+import { getStoredToken, apiEnqueueImageAnalyze, apiEnqueueImageResize, apiGetTask } from "@/lib/api/backendClient";
 
 type AttachedImage = { id: string; dataUrl: string; name: string };
 
@@ -97,8 +97,9 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
   const [webSearch, setWebSearch]       = useState(false);
   const [useRag, setUseRag]             = useState(false);
   const [showEval, setShowEval]         = useState(false);
-  const [imageAnalysis, setImageAnalysis] = useState("");
+  const [imageAnalysis, setImageAnalysis]   = useState("");
   const [analyzingImage, setAnalyzingImage] = useState(false);
+  const [resizingIds, setResizingIds]       = useState<Set<string>>(new Set());
   const analyzePollerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [modelCaps, setModelCaps]   = useState<ModelCapabilities>(() =>
     getModelCapabilities(loadSettings().selectedModel)
@@ -246,6 +247,34 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
     setMaskTarget(null);
   }, []);
 
+  // 이미지 리사이즈 (Celery resize_image 태스크 → 완료 시 미리보기 교체)
+  const handleResize = useCallback(async (img: AttachedImage) => {
+    setResizingIds((prev) => new Set(prev).add(img.id));
+    try {
+      const task = await apiEnqueueImageResize(img.dataUrl, 1024, 85);
+      const poll = setInterval(async () => {
+        try {
+          const t = await apiGetTask(task.task_id);
+          if (t.status === "success" || t.status === "failed") {
+            clearInterval(poll);
+            if (t.status === "success") {
+              const r = t.result as { b64: string; format: string };
+              const mime = r.format === "PNG" ? "image/png" : r.format === "WEBP" ? "image/webp" : "image/jpeg";
+              const resizedDataUrl = `data:${mime};base64,${r.b64}`;
+              setImages((prev) => prev.map((i) => i.id === img.id ? { ...i, dataUrl: resizedDataUrl } : i));
+            }
+            setResizingIds((prev) => { const s = new Set(prev); s.delete(img.id); return s; });
+          }
+        } catch {
+          clearInterval(poll);
+          setResizingIds((prev) => { const s = new Set(prev); s.delete(img.id); return s; });
+        }
+      }, 2000);
+    } catch {
+      setResizingIds((prev) => { const s = new Set(prev); s.delete(img.id); return s; });
+    }
+  }, []);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -337,6 +366,18 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
                       className="absolute -bottom-1 -left-1 bg-blue-600 text-white rounded-full size-4 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition"
                     >
                       <Brush size={9} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleResize(img)}
+                      disabled={resizingIds.has(img.id)}
+                      title={lang === "ko" ? "1024px로 리사이즈" : "Resize to 1024px"}
+                      className="absolute -bottom-1 -right-1 bg-violet-600 text-white rounded-full size-4 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition disabled:opacity-60"
+                    >
+                      {resizingIds.has(img.id)
+                        ? <Loader2 size={9} className="animate-spin" />
+                        : <Minimize2 size={9} />
+                      }
                     </button>
                   </div>
                 ))}
