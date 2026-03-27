@@ -30,6 +30,38 @@ slowapi>=0.1.9
 
 # Image processing
 Pillow>=10.4.0
+numpy>=1.26.0              # Pillow/rembg/SAM2 공통 기반; 대부분 transitive이지만 명시
+
+# ── Image AI ──────────────────────────────────────────────────────────────────
+# 배경 제거 (remove_background 태스크)
+# rembg: U2Net / BiRefNet 모델 래퍼. 최초 실행 시 모델 자동 다운로드
+#   birefnet-general  ~170 MB  (범용 SOTA)
+#   birefnet-portrait ~170 MB  (인물 최적화)
+#   u2net             ~176 MB  (기존 fallback)
+rembg>=2.0.57
+
+# rembg의 ONNX 런타임 (CPU-only; GPU 환경은 onnxruntime-gpu 로 교체)
+onnxruntime>=1.18.0
+
+# alpha matting — rembg alpha_matting=True 옵션에 필요 (hair/edge 보정)
+pymatting>=1.1.12
+
+# scipy, scikit-image — rembg transitive; 명시 고정
+scipy>=1.13.0
+scikit-image>=0.23.0
+
+# ── SAM2 (click-to-segment) ────────────────────────────────────────────────────
+# segment_click 태스크에 필요. torch (~2 GB)가 포함되므로 선택적 설치.
+# 설치 방법 (택1):
+#   pip install ultralytics>=8.3          ← SAM2 포함, 간단
+#   pip install git+https://github.com/facebookresearch/sam2.git
+#
+# torch/torchvision은 환경(CUDA 버전)에 따라 별도 설치 필요:
+#   CPU:  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   CUDA: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#
+# 미설치 시 segment_click 태스크는 ImportError로 실패하므로 Celery retry → failed 처리됨.
+# ultralytics>=8.3
 
 # Document processing (Knowledge base)
 pymupdf>=1.24.0

@@ -24,32 +24,17 @@ from celery import shared_task
 from celery.utils.log import get_task_logger
 
 from app.core.config import settings
+from app.tasks._utils import publish_task_done
+from app.services.embedding_service import embed_query_sync
 
 logger = get_task_logger(__name__)
 
 OLLAMA_URL        = settings.OLLAMA_URL
 
-
 OPENAI_API_KEY    = settings.OPENAI_API_KEY
 ANTHROPIC_API_KEY = settings.ANTHROPIC_API_KEY
 GOOGLE_API_KEY    = settings.GOOGLE_API_KEY
-
-
-def _publish_task_done(task_id: str, task_name: str) -> None:
-    """태스크 완료를 소유자 전용 Redis 채널에 발행. non-fatal."""
-    try:
-        import redis as _sync_redis
-        r = _sync_redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-        owner = r.get(f"task_owner:{task_id}")
-        if owner:
-            r.publish(f"task:{owner}", json.dumps({
-                "type": "task_done",
-                "task_id": task_id,
-                "task": task_name,
-            }))
-        r.close()
-    except Exception as _exc:
-        logger.warning("_publish_task_done failed: %s", _exc)
+XAI_API_KEY       = settings.XAI_API_KEY
 
 # ── 도구 정의 (OpenAI function-calling 형식) ──────────────────────────────────
 
@@ -142,31 +127,7 @@ def _knowledge_search(query: str, top_k: int = 5, user_id: str | None = None) ->
             return json.dumps({"results": [], "note": "No knowledge items found"})
 
         # 쿼리 임베딩 (sync)
-        query_vector: list[float] | None = None
-        if OPENAI_API_KEY:
-            try:
-                with httpx.Client(timeout=20) as client:
-                    r = client.post(
-                        "https://api.openai.com/v1/embeddings",
-                        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                        json={"model": "text-embedding-3-small", "input": query},
-                    )
-                    if r.status_code == 200:
-                        query_vector = r.json()["data"][0]["embedding"]
-            except Exception:
-                pass
-
-        if query_vector is None:
-            try:
-                with httpx.Client(timeout=20) as client:
-                    r = client.post(
-                        f"{OLLAMA_URL}/api/embeddings",
-                        json={"model": "nomic-embed-text", "prompt": query},
-                    )
-                    if r.status_code == 200:
-                        query_vector = r.json().get("embedding")
-            except Exception:
-                pass
+        query_vector = embed_query_sync(query)
 
         scored: list[dict] = []
         keywords = query.lower().split()
@@ -284,6 +245,10 @@ def _call_llm(
         return _call_openai(messages, model, tools, temperature)
     elif provider == "anthropic":
         return _call_anthropic(messages, model, tools, temperature)
+    elif provider == "google":
+        return _call_google(messages, model, tools, temperature)
+    elif provider == "xai":
+        return _call_xai(messages, model, tools, temperature)
     else:
         raise ValueError(f"Unknown provider: {provider}")
 
@@ -412,6 +377,68 @@ def _call_ollama(messages: list, model: str, tools: list | None, temperature: fl
     }
 
 
+def _call_google(messages: list, model: str, tools: list | None, temperature: float) -> dict:
+    """Google Generative Language API (Gemini 2.x / 3.x)."""
+    if not GOOGLE_API_KEY:
+        raise ValueError("GOOGLE_API_KEY not configured")
+
+    # Convert OpenAI-style messages → Gemini format
+    contents = []
+    system_text = ""
+    for m in messages:
+        if m["role"] == "system":
+            system_text = m.get("content", "")
+            continue
+        role = "user" if m["role"] == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": m.get("content", "")}]})
+
+    body: dict[str, Any] = {
+        "contents": contents,
+        "generationConfig": {"temperature": temperature, "maxOutputTokens": 8192},
+    }
+    if system_text:
+        body["systemInstruction"] = {"parts": [{"text": system_text}]}
+
+    api_model = model or "gemini-2.0-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{api_model}:generateContent?key={GOOGLE_API_KEY}"
+
+    with httpx.Client(timeout=120) as client:
+        r = client.post(url, json=body)
+        r.raise_for_status()
+
+    data = r.json()
+    text = data["candidates"][0]["content"]["parts"][0].get("text", "")
+    return {"content": text, "tool_calls": None, "finish_reason": data["candidates"][0].get("finishReason", "STOP")}
+
+
+def _call_xai(messages: list, model: str, tools: list | None, temperature: float) -> dict:
+    """xAI Grok API — OpenAI-compatible endpoint."""
+    if not XAI_API_KEY:
+        raise ValueError("XAI_API_KEY not configured")
+    body: dict[str, Any] = {
+        "model": model or "grok-4.1",
+        "messages": messages,
+        "temperature": temperature,
+    }
+    if tools:
+        body["tools"] = tools
+        body["tool_choice"] = "auto"
+    with httpx.Client(timeout=120) as client:
+        r = client.post(
+            "https://api.x.ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {XAI_API_KEY}"},
+            json=body,
+        )
+        r.raise_for_status()
+    choice = r.json()["choices"][0]
+    msg = choice["message"]
+    return {
+        "content": msg.get("content"),
+        "tool_calls": msg.get("tool_calls"),
+        "finish_reason": choice.get("finish_reason"),
+    }
+
+
 # ── 메인 태스크 ───────────────────────────────────────────────────────────────
 
 @shared_task(bind=True, name="app.tasks.ai.run_agent", max_retries=1)
@@ -419,7 +446,7 @@ def run_agent(
     self,
     messages: list[dict],
     model: str,
-    provider: Literal["openai", "anthropic", "ollama"] = "openai",
+    provider: Literal["openai", "anthropic", "google", "xai", "ollama"] = "openai",
     enabled_tools: list[str] | None = None,
     max_steps: int = 10,
     temperature: float = 0.7,
@@ -453,7 +480,7 @@ def run_agent(
 
         # 도구 호출 없음 → 최종 응답
         if not response.get("tool_calls"):
-            _publish_task_done(self.request.id, "run_agent")
+            publish_task_done(self.request.id, "run_agent")
             return {
                 "content": response.get("content", ""),
                 "steps": steps,
@@ -491,7 +518,7 @@ def run_agent(
     logger.warning("run_agent reached max_steps=%d, forcing final response", max_steps)
     history.append({"role": "user", "content": "지금까지 수집된 정보를 바탕으로 최종 답변을 해줘."})
     final = _call_llm(history, model, provider, tools=None, temperature=temperature)
-    _publish_task_done(self.request.id, "run_agent")
+    publish_task_done(self.request.id, "run_agent")
     return {
         "content": final.get("content", ""),
         "steps": steps,
@@ -507,7 +534,7 @@ def web_search(self, query: str, max_results: int = 5) -> dict:
     """독립 웹 검색 태스크"""
     try:
         result = _web_search(query, max_results)
-        _publish_task_done(self.request.id, "web_search")
+        publish_task_done(self.request.id, "web_search")
         return {"query": query, "results": json.loads(result)}
     except Exception as exc:
         raise self.retry(exc=exc, countdown=5)
@@ -518,7 +545,7 @@ def chat_completion(
     self,
     messages: list[dict],
     model: str,
-    provider: Literal["openai", "anthropic", "ollama"] = "openai",
+    provider: Literal["openai", "anthropic", "google", "xai", "ollama"] = "openai",
     temperature: float = 0.7,
 ) -> dict:
     """스트리밍 불필요한 단순 LLM 호출 (요약, 분류, 변환 등)"""
