@@ -166,6 +166,7 @@ async def refresh(request: Request):
 
 
 @router.post("/logout")
+@limiter.limit("20/minute")
 async def logout(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
@@ -292,11 +293,13 @@ async def _oauth_finish(state: str, user_kwargs: dict, db: AsyncSession):
 # ── Google OAuth ──────────────────────────────────────────────────────────────
 
 @router.get("/oauth/google")
+@limiter.limit("20/minute")
 async def google_login(request: Request, db: AsyncSession = Depends(get_db)):
     return await _oauth_start("google", oauth.google, request, db)
 
 
 @router.get("/oauth/google/callback")
+@limiter.limit("20/minute")
 async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         token = await oauth.google.authorize_access_token(request)
@@ -325,11 +328,13 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
 # ── GitHub OAuth ──────────────────────────────────────────────────────────────
 
 @router.get("/oauth/github")
+@limiter.limit("20/minute")
 async def github_login(request: Request, db: AsyncSession = Depends(get_db)):
     return await _oauth_start("github", oauth.github, request, db)
 
 
 @router.get("/oauth/github/callback")
+@limiter.limit("20/minute")
 async def github_callback(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         token = await oauth.github.authorize_access_token(request)

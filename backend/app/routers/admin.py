@@ -163,7 +163,9 @@ async def update_user(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    user = (await db.execute(
+        select(User).where(User.id == user_id).with_for_update()
+    )).scalar_one_or_none()
     if not user:
         ErrCode.USER_NOT_FOUND.raise_it()
 

@@ -81,7 +81,7 @@ async def cache_del(key: str):
 #   - refresh 시 신규 토큰 등록 (기존은 15분 후 자동 만료)
 #   - TTL = ACCESS_TOKEN_EXPIRE_MINUTES 와 동일 (자동 만료)
 
-ACCESS_TTL = 60 * 15  # 15분 — config.ACCESS_TOKEN_EXPIRE_MINUTES 와 동기화
+ACCESS_TTL = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60  # config 값에서 파생 — 불일치 방지
 
 
 async def access_set(token: str, user_id: str):

@@ -1,0 +1,14 @@
+node_modules
+.next
+.turbo
+.cache
+coverage
+*.log
+.env
+.env.*
+!.env.example
+!.env.local.example
+cypress
+**/*.test.ts
+**/*.test.tsx
+**/__tests__

@@ -79,11 +79,11 @@ services:
         --maxmemory-policy allkeys-lru
         --save ""
         --appendonly no
-        --requirepass ${REDIS_PASSWORD:-redispass}
+        --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redispass}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD required}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 10
@@ -117,9 +117,9 @@ services:
     env_file: ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-umai}:${POSTGRES_PASSWORD:-umai}@postgres:5432/${POSTGRES_DB:-umai}
-      REDIS_URL: redis://:${REDIS_PASSWORD:-redispass}@redis:6379/0
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-redispass}@redis:6379/1
-      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-redispass}@redis:6379/2
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379/2
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       BACKEND_URL: ${BACKEND_URL:?BACKEND_URL required}
       FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL required}
@@ -161,9 +161,9 @@ services:
     env_file: ./backend/.env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-umai}:${POSTGRES_PASSWORD:-umai}@postgres:5432/${POSTGRES_DB:-umai}
-      REDIS_URL: redis://:${REDIS_PASSWORD:-redispass}@redis:6379/0
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-redispass}@redis:6379/1
-      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-redispass}@redis:6379/2
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379/2
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
     command: >
       celery -A app.core.celery_app worker
