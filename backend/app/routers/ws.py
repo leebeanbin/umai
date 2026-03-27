@@ -22,14 +22,17 @@ import uuid
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
+from app.core.constants import (
+    WS_MAX_CONN_PER_USER_PER_ROOM, WS_MAX_CONN_TASK_CHANNEL,
+    WS_MAX_MESSAGE_BYTES, WS_TOKEN_REVALIDATE_INTERVAL,
+)
 from app.core.database import AsyncSessionLocal
 from app.core.redis import access_get, check_ws_rate_limit, get_pubsub_client
 from app.services.chat_service import ChatService
 
 router = APIRouter(tags=["websocket"])
 
-MAX_CONNECTIONS_PER_USER_PER_ROOM = 5
-WS_MAX_MESSAGE_BYTES = 10_240  # 10 KB
+MAX_CONNECTIONS_PER_USER_PER_ROOM = WS_MAX_CONN_PER_USER_PER_ROOM
 
 
 class _ConnMeta:
@@ -79,7 +82,7 @@ async def _pubsub_forward(pubsub, websocket: WebSocket) -> None:
 
 
 async def _periodic_token_revalidate(
-    websocket: WebSocket, token: str, interval_s: int = 300
+    websocket: WebSocket, token: str, interval_s: int = WS_TOKEN_REVALIDATE_INTERVAL
 ) -> None:
     """M1: 5분마다 토큰 재검증 — 만료/로그아웃 후 stale 연결 종료."""
     try:
@@ -173,8 +176,8 @@ async def tasks_ws(
         await websocket.close(code=4001)
         return
 
-    # 연결 수 제한 (태스크 채널은 사용자당 1개만)
-    if manager.user_count("__tasks__", user_id) >= 3:
+    # 연결 수 제한 (태스크 채널은 사용자당 최대 WS_MAX_CONN_TASK_CHANNEL)
+    if manager.user_count("__tasks__", user_id) >= WS_MAX_CONN_TASK_CHANNEL:
         await websocket.close(code=4029)
         return
 

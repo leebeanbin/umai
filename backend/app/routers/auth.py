@@ -23,6 +23,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from authlib.integrations.starlette_client import OAuth, OAuthError
 
 from app.core.config import settings
+from app.core.constants import (
+    REFRESH_COOKIE_MAX_AGE, OAUTH_STATE_BYTES,
+    RATE_AUTH_REFRESH, RATE_AUTH_LOGOUT, RATE_AUTH_OAUTH,
+    RATE_AUTH_ONBOARD, RATE_AUTH_TOKEN_EXCH,
+)
 from app.core.database import get_db
 from app.core.errors import ErrCode
 from app.models.settings import SystemSettings
@@ -56,7 +61,7 @@ def _set_refresh_cookie(response: JSONResponse, token: str) -> None:
         httponly=True,
         secure=not settings.DEBUG,   # 개발: http 허용, 프로덕션: https 전용
         samesite="strict",
-        max_age=60 * 60 * 24 * 30,  # 30일 (settings.REFRESH_TOKEN_EXPIRE_DAYS 와 동기화)
+        max_age=REFRESH_COOKIE_MAX_AGE,
         path="/",
     )
 
@@ -141,7 +146,7 @@ async def _redirect_with_code(tokens: TokenResponse, frontend_origin: str) -> Re
 
 
 @router.post("/refresh", response_model=AccessTokenResponse)
-@limiter.limit("30/minute")
+@limiter.limit(RATE_AUTH_REFRESH)
 async def refresh(request: Request):
     """
     refresh token은 HttpOnly 쿠키에서 읽는다 (요청 body에 포함하지 않음).
@@ -166,7 +171,7 @@ async def refresh(request: Request):
 
 
 @router.post("/logout")
-@limiter.limit("20/minute")
+@limiter.limit(RATE_AUTH_LOGOUT)
 async def logout(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
@@ -227,7 +232,7 @@ async def update_me(
 
 
 @router.post("/onboard", response_model=UserOut)
-@limiter.limit("10/minute")
+@limiter.limit(RATE_AUTH_ONBOARD)
 async def onboard(
     request: Request,
     body: OnboardRequest,
@@ -254,7 +259,7 @@ async def onboard(
 # ── OAuth 코드 교환 (one-time) ────────────────────────────────────────────────
 
 @router.get("/token/exchange", response_model=AccessTokenResponse)
-@limiter.limit("10/minute")
+@limiter.limit(RATE_AUTH_TOKEN_EXCH)
 async def token_exchange(request: Request, code: str):
     """
     OAuth 콜백 후 프론트엔드가 code를 제출하면 access_token만 응답 body로 반환.
@@ -277,7 +282,7 @@ async def _oauth_start(provider: str, oauth_client, request: Request, db: AsyncS
     """OAuth 로그인 시작 — provider 활성화 확인 후 provider 인증 페이지로 리다이렉트."""
     await _check_oauth_enabled(db, provider)
     redirect_uri = f"{settings.BACKEND_URL}/api/v1/auth/oauth/{provider}/callback"
-    state = secrets.token_urlsafe(16)
+    state = secrets.token_urlsafe(OAUTH_STATE_BYTES)
     await oauth_origin_set(state, _extract_frontend_origin(request))
     return await oauth_client.authorize_redirect(request, redirect_uri, state=state)
 
@@ -293,13 +298,13 @@ async def _oauth_finish(state: str, user_kwargs: dict, db: AsyncSession):
 # ── Google OAuth ──────────────────────────────────────────────────────────────
 
 @router.get("/oauth/google")
-@limiter.limit("20/minute")
+@limiter.limit(RATE_AUTH_OAUTH)
 async def google_login(request: Request, db: AsyncSession = Depends(get_db)):
     return await _oauth_start("google", oauth.google, request, db)
 
 
 @router.get("/oauth/google/callback")
-@limiter.limit("20/minute")
+@limiter.limit(RATE_AUTH_OAUTH)
 async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         token = await oauth.google.authorize_access_token(request)
@@ -328,13 +333,13 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
 # ── GitHub OAuth ──────────────────────────────────────────────────────────────
 
 @router.get("/oauth/github")
-@limiter.limit("20/minute")
+@limiter.limit(RATE_AUTH_OAUTH)
 async def github_login(request: Request, db: AsyncSession = Depends(get_db)):
     return await _oauth_start("github", oauth.github, request, db)
 
 
 @router.get("/oauth/github/callback")
-@limiter.limit("20/minute")
+@limiter.limit(RATE_AUTH_OAUTH)
 async def github_callback(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         token = await oauth.github.authorize_access_token(request)

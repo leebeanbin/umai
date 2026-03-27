@@ -20,6 +20,11 @@ from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import (
+    RAG_DEFAULT_TOP_K, RAG_MAX_TOP_K, RAG_MAX_QUERY_LENGTH,
+    RAG_MAX_KNOWLEDGE_ITEMS, RAG_CONTENT_CHUNK_STRIDE, RAG_CONTENT_CHUNK_SIZE,
+    RATE_RAG_SEARCH,
+)
 from app.core.database import get_db
 from app.models.user import User
 from app.models.workspace import KnowledgeItem
@@ -55,7 +60,7 @@ def _keyword_search(query: str, items: list[Any], top_k: int) -> list[dict]:
         chunks = emb_data.get("chunks", [])
 
         if not chunks and item.content:
-            chunks = [item.content[i : i + 500] for i in range(0, len(item.content), 400)]
+            chunks = [item.content[i : i + RAG_CONTENT_CHUNK_SIZE] for i in range(0, len(item.content), RAG_CONTENT_CHUNK_STRIDE)]
 
         for chunk in chunks:
             score = sum(1 for kw in keywords if kw in chunk.lower())
@@ -69,11 +74,11 @@ def _keyword_search(query: str, items: list[Any], top_k: int) -> list[dict]:
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
 @router.get("/search")
-@limiter.limit("30/minute")  # M11: 임베딩 연산 집약적 — 분당 30회 상한
+@limiter.limit(RATE_RAG_SEARCH)
 async def rag_search(
     request: Request,
-    q: str = Query(..., min_length=1, max_length=500, description="검색 쿼리"),
-    top_k: int = Query(5, ge=1, le=20, description="반환할 최대 청크 수"),
+    q: str = Query(..., min_length=1, max_length=RAG_MAX_QUERY_LENGTH, description="검색 쿼리"),
+    top_k: int = Query(RAG_DEFAULT_TOP_K, ge=1, le=RAG_MAX_TOP_K, description="반환할 최대 청크 수"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -89,7 +94,7 @@ async def rag_search(
     result = await db.execute(
         select(KnowledgeItem)
         .where(KnowledgeItem.user_id == current_user.id)
-        .limit(500)
+        .limit(RAG_MAX_KNOWLEDGE_ITEMS)
     )
     items = result.scalars().all()
 

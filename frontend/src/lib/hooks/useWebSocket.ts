@@ -12,6 +12,10 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import { getStoredToken, isAuthenticated } from "@/lib/api/backendClient";
+import {
+  WS_MAX_RECONNECT_ATTEMPTS, WS_BACKOFF_BASE_MS, WS_BACKOFF_EXPONENT,
+  WS_BACKOFF_JITTER_MS, WS_BACKOFF_MAX_MS, WS_PING_INTERVAL_MS,
+} from "@/lib/constants";
 
 const WS_BASE =
   process.env.NEXT_PUBLIC_WS_URL ??
@@ -21,11 +25,12 @@ const WS_BASE =
 
 type WsEvent = Record<string, unknown> & { type: string };
 
-const MAX_RECONNECT_ATTEMPTS = 10;
-
-/** M8: 지수 백오프 + 지터 — 최대 30초 */
+/** M8: 지수 백오프 + 지터 */
 function backoffMs(attempt: number): number {
-  return Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 30_000);
+  return Math.min(
+    WS_BACKOFF_BASE_MS * Math.pow(WS_BACKOFF_EXPONENT, attempt) + Math.random() * WS_BACKOFF_JITTER_MS,
+    WS_BACKOFF_MAX_MS,
+  );
 }
 
 // ── 채팅방 이벤트 ─────────────────────────────────────────────────────────────
@@ -72,7 +77,7 @@ export function useChatSocket(
         // 정상 종료(1000) 또는 인증 실패(4001/4003)는 재연결 안 함
         if (destroyedRef.current || e.code === 1000 || e.code === 4001 || e.code === 4003) return;
         // max retry 초과 시 포기
-        if (attemptRef.current >= MAX_RECONNECT_ATTEMPTS) return;
+        if (attemptRef.current >= WS_MAX_RECONNECT_ATTEMPTS) return;
         // M8: 지수 백오프 재연결
         const delay = backoffMs(attemptRef.current++);
         timerRef.current = setTimeout(connect, delay);
@@ -129,7 +134,7 @@ export function useTaskSocket(
     // keepalive ping 30초마다
     const pingInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) ws.send("ping");
-    }, 30_000);
+    }, WS_PING_INTERVAL_MS);
 
     ws.onclose = (e) => {
       clearInterval(pingInterval);

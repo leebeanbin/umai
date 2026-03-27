@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/api/verifyAuth";
 import { resolveSettingsKey } from "@/lib/api/settingsKeyResolver";
+import { WEBSEARCH_MAX_QUERY_LEN, WEBSEARCH_MAX_RESULTS, WEBSEARCH_TIMEOUT_MS } from "@/lib/constants";
 
 export type SearchResult = {
   title: string;
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const q = (req.nextUrl.searchParams.get("q") ?? "").slice(0, 500);
+  const q = (req.nextUrl.searchParams.get("q") ?? "").slice(0, WEBSEARCH_MAX_QUERY_LEN);
   if (!q.trim()) return NextResponse.json({ results: [] });
 
   const apiKey = await resolveSettingsKey(
@@ -35,11 +36,11 @@ export async function GET(req: NextRequest) {
         api_key:        apiKey,
         query:          q,
         search_depth:   "basic",
-        max_results:    6,
+        max_results:    WEBSEARCH_MAX_RESULTS,
         include_answer: false,
         include_images: false,
       }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(WEBSEARCH_TIMEOUT_MS),
     });
 
     if (!r.ok) return NextResponse.json({ results: [] });
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
     };
 
     const results: SearchResult[] = (data.results ?? [])
-      .slice(0, 6)
+      .slice(0, WEBSEARCH_MAX_RESULTS)
       .map((item) => ({
         title:   item.title   ?? "",
         snippet: item.content ?? "",

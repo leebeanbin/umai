@@ -2,6 +2,13 @@ import json
 
 from redis.asyncio import Redis, from_url
 from app.core.config import settings
+from app.core.constants import (
+    REDIS_MAX_CONNECTIONS, REDIS_SOCKET_CONNECT_TIMEOUT, REDIS_SOCKET_TIMEOUT,
+    USER_CACHE_TTL as _USER_CACHE_TTL,
+    OAUTH_CODE_TTL as _OAUTH_CODE_TTL,
+    OAUTH_ORIGIN_TTL as _OAUTH_ORIGIN_TTL,
+    WS_RATE_LIMIT_WINDOW, WS_RATE_LIMIT_PER_MINUTE,
+)
 
 _redis: Redis | None = None
 
@@ -12,9 +19,9 @@ async def get_redis() -> Redis:
         _redis = await from_url(
             settings.REDIS_URL,
             decode_responses=True,
-            max_connections=20,          # 명시적 풀 크기 (기본값 없음)
-            socket_connect_timeout=5,    # 연결 타임아웃 5초
-            socket_timeout=5,            # 읽기/쓰기 타임아웃 5초
+            max_connections=REDIS_MAX_CONNECTIONS,
+            socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
+            socket_timeout=REDIS_SOCKET_TIMEOUT,
         )
     return _redis
 
@@ -31,8 +38,8 @@ async def get_pubsub_client() -> Redis:
     return await from_url(
         settings.REDIS_URL,
         decode_responses=True,
-        socket_connect_timeout=5,
-        socket_timeout=5,
+        socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
+        socket_timeout=REDIS_SOCKET_TIMEOUT,
     )
 
 
@@ -46,13 +53,13 @@ async def publish_event(channel: str, payload: dict) -> None:
 
 # ── WebSocket rate limit ──────────────────────────────────────────────────────
 
-async def check_ws_rate_limit(user_id: str, limit: int = 60) -> bool:
+async def check_ws_rate_limit(user_id: str, limit: int = WS_RATE_LIMIT_PER_MINUTE) -> bool:
     """WebSocket 메시지 rate limit (1분 슬라이딩 윈도우). True = 허용."""
     r = await get_redis()
     key = f"ws_rate:{user_id}"
     count = await r.incr(key)
     if count == 1:
-        await r.expire(key, 60)
+        await r.expire(key, WS_RATE_LIMIT_WINDOW)
     return count <= limit
 
 
@@ -124,7 +131,7 @@ async def session_del(token: str):
 # ── User 캐시 (N+1 방지) ─────────────────────────────────────────────────────
 # TTL: 15분 (access token 만료와 동일)
 
-USER_CACHE_TTL = 60 * 15
+USER_CACHE_TTL = _USER_CACHE_TTL
 
 
 async def user_cache_set(user_id: str, user_json: str):
@@ -144,7 +151,7 @@ async def user_cache_del(user_id: str):
 
 # ── OAuth 단기 코드 교환 ──────────────────────────────────────────────────────
 
-OAUTH_CODE_TTL = 60 * 5
+OAUTH_CODE_TTL = _OAUTH_CODE_TTL
 
 
 async def oauth_code_set(code: str, payload_json: str):
@@ -163,7 +170,7 @@ async def oauth_code_pop(code: str) -> str | None:
 
 # ── OAuth state → frontend origin ────────────────────────────────────────────
 
-OAUTH_ORIGIN_TTL = 60 * 10
+OAUTH_ORIGIN_TTL = _OAUTH_ORIGIN_TTL
 
 
 async def oauth_origin_set(state: str, origin: str):

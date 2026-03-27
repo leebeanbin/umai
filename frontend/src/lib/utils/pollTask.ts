@@ -1,4 +1,5 @@
 import { apiGetTask } from "@/lib/api/backendClient";
+import { POLL_DEFAULT_INTERVAL_MS, POLL_DEFAULT_MAX_POLLS } from "@/lib/constants";
 
 type TaskStatus = "pending" | "started" | "success" | "failed" | "revoked";
 
@@ -19,7 +20,7 @@ export async function pollTask<T = unknown>(
   taskId: string,
   options: PollOptions = {},
 ): Promise<T> {
-  const { interval = 2000, maxPolls = 60, signal } = options;
+  const { interval = POLL_DEFAULT_INTERVAL_MS, maxPolls = POLL_DEFAULT_MAX_POLLS, signal } = options;
 
   return new Promise((resolve, reject) => {
     let polls = 0;

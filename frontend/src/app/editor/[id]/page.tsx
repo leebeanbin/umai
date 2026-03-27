@@ -16,6 +16,10 @@ import {
 } from "@/lib/api/backendClient";
 import type { BackgroundPreset } from "@/components/editor/AssistPanel";
 import { pollTask } from "@/lib/utils/pollTask";
+import {
+  EDITOR_CANVAS_SIZE, EDITOR_MIN_INSTRUCTION_LEN,
+  POLL_MAX_POLLS_SLOW, POLL_MAX_POLLS_FAST,
+} from "@/lib/constants";
 
 type Phase = "idle" | "masking" | "ready" | "queued" | "processing" | "succeeded" | "failed";
 type Variant = { id: string; rank: number; url: string };
@@ -36,7 +40,7 @@ export default function EditorSession() {
   const [engine, setEngine] = useState<"gpt-image-1" | "comfyui">("gpt-image-1");
   const [segmentMode, setSegmentMode] = useState(false);
 
-  const SIZE = 1024;
+  const SIZE = EDITOR_CANVAS_SIZE;
   const isBusy = phase === "queued" || phase === "processing";
   const canRun = !!sourceImage && instruction.trim().length >= 5 && hasMask && !isBusy;
 
@@ -86,7 +90,7 @@ export default function EditorSession() {
     addLog("✂️ 배경 제거 중...");
     try {
       const task = await apiEnqueueRemoveBackground(sourceImage.dataUrl, "birefnet-general", true);
-      const res = await pollTask<{ b64: string; format: string }>(task.task_id, { maxPolls: 60 });
+      const res = await pollTask<{ b64: string; format: string }>(task.task_id, { maxPolls: POLL_MAX_POLLS_SLOW });
       setSourceImage({ dataUrl: `data:image/png;base64,${res.b64}`, name: sourceImage.name });
       setPhase("masking");
       addLog("✅ 누끼 완료 (BiRefNet + alpha matting)");
@@ -104,7 +108,7 @@ export default function EditorSession() {
     addLog(`🎯 세그먼트 중... (${(x * 100).toFixed(0)}%, ${(y * 100).toFixed(0)}%)`);
     try {
       const task = await apiEnqueueSegmentClick(sourceImage.dataUrl, x, y);
-      const res = await pollTask<{ mask_b64: string }>(task.task_id, { maxPolls: 30 });
+      const res = await pollTask<{ mask_b64: string }>(task.task_id, { maxPolls: POLL_MAX_POLLS_FAST });
       maskRef.current?.loadMask(res.mask_b64);
       setHasMask(true);
       addLog("✅ 세그먼트 완료");
@@ -126,7 +130,7 @@ export default function EditorSession() {
         true,
       );
       const rmRes = await pollTask<{ b64: string; width: number; height: number }>(
-        rmTask.task_id, { maxPolls: 60 },
+        rmTask.task_id, { maxPolls: POLL_MAX_POLLS_SLOW },
       );
       const fgB64 = rmRes.b64;
       addLog("✅ 누끼 완료 — 배경 합성 중...");
@@ -140,7 +144,7 @@ export default function EditorSession() {
         preset.bgColor2 ?? "#e0e0e0",
         SIZE,
       );
-      const compRes = await pollTask<{ b64: string }>(compTask.task_id, { maxPolls: 60 });
+      const compRes = await pollTask<{ b64: string }>(compTask.task_id, { maxPolls: POLL_MAX_POLLS_SLOW });
 
       const resultDataUrl = `data:image/png;base64,${compRes.b64}`;
       const newVariants: Variant[] = [{ id: crypto.randomUUID(), rank: 1, url: resultDataUrl }];
@@ -189,7 +193,7 @@ export default function EditorSession() {
 
       addLog(`🖌️ ${engine === "comfyui" ? "FLUX.1 Fill" : "gpt-image-1"} 인페인팅 중...`);
       const task = await apiEnqueueEditImage(squaredImageDataUrl, invertedMaskDataUrl, finalPrompt, engine, `${SIZE}x${SIZE}`);
-      const res = await pollTask<{ b64: string | null; url: string | null; prompt_id?: string }>(task.task_id, { maxPolls: 60 });
+      const res = await pollTask<{ b64: string | null; url: string | null; prompt_id?: string }>(task.task_id, { maxPolls: POLL_MAX_POLLS_SLOW });
 
       const imageUrl = res.b64
         ? `data:image/png;base64,${res.b64}`

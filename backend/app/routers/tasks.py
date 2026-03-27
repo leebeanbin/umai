@@ -27,6 +27,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.celery_app import celery_app
+from app.core.constants import (
+    TASK_OWNER_TTL, MAX_FILE_SIZE_BYTES, MAX_DOCUMENT_CHARS, MAX_DOCUMENT_PAGES,
+    RATE_TASK_KNOWLEDGE, RATE_TASK_EXTRACT,
+)
 from app.core.database import get_db
 from app.core.redis import get_redis
 from app.routers.deps import get_current_user
@@ -113,7 +117,7 @@ async def enqueue_resize(body: ImageResizeRequest, current_user: User = Depends(
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
     redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 7200, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
+    await redis.setex(f"task_owner:{task.id}", TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -125,7 +129,7 @@ async def enqueue_ocr(body: ImageOcrRequest, current_user: User = Depends(get_cu
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
     redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 7200, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
+    await redis.setex(f"task_owner:{task.id}", TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -137,7 +141,7 @@ async def enqueue_analyze(body: ImageAnalyzeRequest, current_user: User = Depend
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
     redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 7200, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
+    await redis.setex(f"task_owner:{task.id}", TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -149,7 +153,7 @@ async def enqueue_generate(body: ImageGenerateRequest, current_user: User = Depe
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
     redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 7200, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
+    await redis.setex(f"task_owner:{task.id}", TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -192,7 +196,7 @@ async def enqueue_remove_background(body: ImageRemoveBgRequest, current_user: Us
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
     redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 7200, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
+    await redis.setex(f"task_owner:{task.id}", TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -204,7 +208,7 @@ async def enqueue_compose_studio(body: ImageComposeStudioRequest, current_user: 
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
     redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 7200, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
+    await redis.setex(f"task_owner:{task.id}", TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -216,7 +220,7 @@ async def enqueue_segment_click(body: ImageSegmentClickRequest, current_user: Us
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
     redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 7200, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
+    await redis.setex(f"task_owner:{task.id}", TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -228,7 +232,7 @@ async def enqueue_edit_image(body: ImageEditRequest, current_user: User = Depend
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
     redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 7200, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
+    await redis.setex(f"task_owner:{task.id}", TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -255,7 +259,7 @@ async def enqueue_agent(body: AgentRequest, current_user: User = Depends(get_cur
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
     redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 7200, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
+    await redis.setex(f"task_owner:{task.id}", TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -267,14 +271,14 @@ async def enqueue_search(body: WebSearchRequest, current_user: User = Depends(ge
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
     redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 7200, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
+    await redis.setex(f"task_owner:{task.id}", TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
     return TaskResponse(task_id=task.id, status="queued")
 
 
 # ── Knowledge 태스크 ──────────────────────────────────────────────────────────
 
 @router.post("/knowledge/process", response_model=TaskResponse, status_code=202)
-@limiter.limit("10/hour")
+@limiter.limit(RATE_TASK_KNOWLEDGE)
 async def enqueue_knowledge_process(
     request: Request,
     knowledge_id: str = Form(...),
@@ -297,7 +301,7 @@ async def enqueue_knowledge_process(
         raise HTTPException(status_code=403, detail="Access denied")
 
     # 파일 크기 제한 (10 MB)
-    MAX_BYTES = 10 * 1024 * 1024
+    MAX_BYTES = MAX_FILE_SIZE_BYTES
     raw = await file.read(MAX_BYTES + 1)
     if len(raw) > MAX_BYTES:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File exceeds 10 MB limit")
@@ -316,7 +320,7 @@ async def enqueue_knowledge_process(
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
     redis = await get_redis()
-    await redis.setex(f"task_owner:{task.id}", 7200, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
+    await redis.setex(f"task_owner:{task.id}", TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
     return TaskResponse(task_id=task.id, status="queued")
 
 
@@ -351,11 +355,11 @@ async def extract_document(
     import io as _io
 
     # 사용자 파라미터 상한 클램프 (DoS 방지)
-    max_chars = min(max_chars, 200_000)
-    pages     = min(max(pages, 1), 50)
+    max_chars = min(max_chars, MAX_DOCUMENT_CHARS)
+    pages     = min(max(pages, 1), MAX_DOCUMENT_PAGES)
 
     # 파일 크기 제한 (10 MB)
-    MAX_BYTES = 10 * 1024 * 1024
+    MAX_BYTES = MAX_FILE_SIZE_BYTES
     raw = await file.read(MAX_BYTES + 1)
     if len(raw) > MAX_BYTES:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File exceeds 10 MB limit")

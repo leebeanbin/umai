@@ -19,6 +19,10 @@ from celery import Celery
 from kombu import Exchange, Queue
 
 from app.core.config import settings
+from app.core.constants import (
+    TASK_SOFT_TIME_LIMIT, TASK_HARD_TIME_LIMIT,
+    TASK_VISIBILITY_TIMEOUT, TASK_RESULT_EXPIRE,
+)
 
 celery_app = Celery(
     "umai",
@@ -73,18 +77,16 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
 
     # 결과 보관 시간
-    result_expires=settings.CELERY_TASK_RESULT_EXPIRES,
+    result_expires=TASK_RESULT_EXPIRE,
 
     # 진행 상태 추적 활성화 (STARTED 상태 기록)
     task_track_started=True,
 
-    # 재시도 정책 기본값
-    # run_agent: max_steps=10 × 120s = 1200s 가능 → 넉넉하게 설정
-    task_soft_time_limit=1500,  # 25분 soft limit (graceful shutdown signal)
-    task_time_limit=1800,       # 30분 hard kill
+    # 재시도 정책 기본값 (constants.py에서 관리)
+    task_soft_time_limit=TASK_SOFT_TIME_LIMIT,
+    task_time_limit=TASK_HARD_TIME_LIMIT,
 
-    # visibility_timeout > soft_time_limit 보장 — 워커 강제 종료 후 이중 실행 방지
-    # soft_time_limit(1500s)보다 길어야 실행 중 재큐 방지
+    # visibility_timeout >= task_time_limit — 워커 강제 종료 후 이중 실행 방지
     # Redis broker 전용 설정 (RabbitMQ는 무시됨)
-    broker_transport_options={"visibility_timeout": 1800},  # 30분 = task_time_limit
+    broker_transport_options={"visibility_timeout": TASK_VISIBILITY_TIMEOUT},
 )

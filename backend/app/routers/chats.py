@@ -22,6 +22,11 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import (
+    CHAT_LIST_DEFAULT_LIMIT, CHAT_LIST_MAX_LIMIT,
+    MSG_SAVE_MAX_RETRIES,
+    RATE_CHAT_CREATE, RATE_CHAT_MESSAGE,
+)
 from app.core.database import get_db, AsyncSessionLocal
 from app.models.chat import Message
 from app.models.user import User
@@ -86,7 +91,7 @@ def _member_out(member, user) -> ChatMemberOut:
 @router.get("", response_model=list[ChatOut])
 async def list_chats(
     page: int = Query(1, ge=1),
-    limit: int = Query(30, ge=1, le=100),
+    limit: int = Query(CHAT_LIST_DEFAULT_LIMIT, ge=1, le=CHAT_LIST_MAX_LIMIT),
     archived: bool = False,
     svc: ChatService = Depends(get_chat_service),
     user: User = Depends(get_current_user),
@@ -98,7 +103,7 @@ async def list_chats(
 # ── 생성 ─────────────────────────────────────────────────────────────────────
 
 @router.post("", response_model=ChatOut, status_code=201)
-@limiter.limit("60/minute")  # M11: DoS 방지 — 분당 60개 채팅 생성 상한
+@limiter.limit(RATE_CHAT_CREATE)
 async def create_chat(
     request: Request,
     body: CreateChatRequest,
@@ -171,7 +176,7 @@ async def delete_chat(
 # ── 메시지 추가 (editor 이상) ─────────────────────────────────────────────────
 
 @router.post("/{chat_id}/messages", status_code=201)
-@limiter.limit("120/minute")  # M11: 메시지 플러드 방지
+@limiter.limit(RATE_CHAT_MESSAGE)
 async def add_message(
     request: Request,
     chat_id: uuid.UUID,
@@ -191,7 +196,7 @@ async def _save_messages_bg(chat_id: uuid.UUID, rows: list[dict]) -> None:
     """채팅 메시지 배치를 DB에 저장하고 WS 이벤트를 발행한다 (BackgroundTask).
     C3: 최대 3회 지수 백오프 재시도 — 무음 소실 방지.
     """
-    for attempt in range(3):
+    for attempt in range(MSG_SAVE_MAX_RETRIES):
         try:
             async with AsyncSessionLocal() as db:
                 stmt = pg_insert(Message).values(rows).on_conflict_do_nothing(index_elements=["id"])
@@ -203,11 +208,11 @@ async def _save_messages_bg(chat_id: uuid.UUID, rows: list[dict]) -> None:
             })
             return  # 성공
         except Exception as exc:
-            if attempt >= 2:
+            if attempt >= MSG_SAVE_MAX_RETRIES - 1:
                 logger.error("_save_messages_bg failed after %d attempts (chat=%s): %s",
                              attempt + 1, chat_id, exc)
                 return
-            wait = 2 ** attempt  # 1s, 2s
+            wait = 2 ** attempt  # 1s, 2s, ...
             logger.warning("_save_messages_bg attempt %d failed, retry in %ds: %s",
                            attempt + 1, wait, exc)
             await asyncio.sleep(wait)
