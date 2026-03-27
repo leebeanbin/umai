@@ -87,11 +87,13 @@ export default function MaskEditorModal({ open, imageSrc, onClose, onApply }: Pr
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => resolve(img);
-    img.onerror = () => resolve(img);
+    // N5: reject on error so callers can handle broken images rather than
+    // silently drawing a blank/corrupt image onto the composite canvas
+    img.onerror = () => reject(new Error(`Failed to load image: ${src.slice(0, 80)}`));
     img.src = src;
   });
 }

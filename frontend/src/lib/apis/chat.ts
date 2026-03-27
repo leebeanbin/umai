@@ -35,19 +35,22 @@ type StreamChatOptions = {
 
 // ── Provider resolution ───────────────────────────────────────────────────────
 
-function getProvider(modelId: string): "openai" | "anthropic" | "google" | "ollama" | null {
+function getProvider(modelId: string): "openai" | "anthropic" | "google" | "xai" | "ollama" {
   const model = loadModels().find((m) => m.id === modelId);
   if (model) {
     const p = model.provider.toLowerCase();
     if (p === "openai")    return "openai";
     if (p === "anthropic") return "anthropic";
     if (p === "google")    return "google";
+    if (p === "xai")       return "xai";
     if (p === "ollama")    return "ollama";
   }
-  if (modelId.startsWith("gpt-") || modelId.startsWith("o1") || modelId.startsWith("o3") || modelId.startsWith("o4")) return "openai";
-  if (modelId.startsWith("claude-")) return "anthropic";
-  if (modelId.startsWith("gemini-")) return "google";
-  return null;
+  // ID 기반 패턴 fallback
+  if (/^(gpt-|gpt-oss|o1|o3|o4|chatgpt)/i.test(modelId)) return "openai";
+  if (/^claude-/i.test(modelId)) return "anthropic";
+  if (/^gemini/i.test(modelId)) return "google";
+  if (/^grok/i.test(modelId)) return "xai";
+  return "ollama";  // kimi, glm, qwen, deepseek, llama 등 모두 ollama
 }
 
 function buildSystemPrompt(base: string, outputLang: string): string {
@@ -139,10 +142,6 @@ export async function streamChat({
   const finalTopP      = topPOverride !== undefined ? topPOverride : null;
 
   const provider = getProvider(model);
-  if (!provider) {
-    onError("Unknown model. Please select a model in Settings → Models.");
-    return;
-  }
 
   // inputLang: inject translation hint on last user message
   let processedMessages = messages;
@@ -194,29 +193,34 @@ export async function streamChat({
     let buf             = "";
     let contentStarted  = false; // Skip leading \n (matches Open WebUI behavior)
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split("\n");
-      buf = lines.pop() ?? "";
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
 
-      for (const line of lines) {
-        const trimmed = line.replace(/^data: /, "").trim();
-        if (!trimmed || trimmed === "[DONE]") continue;
-        try {
-          const json = JSON.parse(trimmed) as {
-            choices?: { delta?: { content?: string } }[];
-          };
-          const delta = json.choices?.[0]?.delta?.content;
-          if (delta === undefined || delta === null) continue;
-          // Skip a leading newline before any real content has arrived
-          if (!contentStarted && delta === "\n") continue;
-          contentStarted = true;
-          batcher.push(delta);
-        } catch { /* skip malformed */ }
+        for (const line of lines) {
+          const trimmed = line.replace(/^data: /, "").trim();
+          if (!trimmed || trimmed === "[DONE]") continue;
+          try {
+            const json = JSON.parse(trimmed) as {
+              choices?: { delta?: { content?: string } }[];
+            };
+            const delta = json.choices?.[0]?.delta?.content;
+            if (delta === undefined || delta === null) continue;
+            // Skip a leading newline before any real content has arrived
+            if (!contentStarted && delta === "\n") continue;
+            contentStarted = true;
+            batcher.push(delta);
+          } catch { /* skip malformed */ }
+        }
       }
+    } finally {
+      // C5: always release the stream lock to prevent connection leaks
+      reader.cancel().catch(() => {});
     }
 
     // Flush any remaining buffered text before calling onDone

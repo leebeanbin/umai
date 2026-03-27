@@ -21,44 +21,69 @@ const WS_BASE =
 
 type WsEvent = Record<string, unknown> & { type: string };
 
+/** M8: 지수 백오프 + 지터 — 최대 30초 */
+function backoffMs(attempt: number): number {
+  return Math.min(1000 * Math.pow(2, attempt) + Math.random() * 500, 30_000);
+}
+
 // ── 채팅방 이벤트 ─────────────────────────────────────────────────────────────
 
 export function useChatSocket(
   chatId: string | undefined,
   onEvent: (event: WsEvent) => void,
 ) {
-  const wsRef     = useRef<WebSocket | null>(null);
-  const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
+  const wsRef       = useRef<WebSocket | null>(null);
+  const onEventRef  = useRef(onEvent);
+  const attemptRef  = useRef(0);
+  const timerRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const destroyedRef = useRef(false);
+
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  }, [onEvent]);
 
   useEffect(() => {
     if (!chatId || !isAuthenticated()) return;
 
-    const token = getStoredToken();
-    const url   = `${WS_BASE}/ws/chat/${chatId}?token=${encodeURIComponent(token)}`;
-    const ws    = new WebSocket(url);
-    wsRef.current = ws;
+    destroyedRef.current = false;
+    attemptRef.current = 0;
 
-    ws.onmessage = (e) => {
-      try {
-        onEventRef.current(JSON.parse(e.data) as WsEvent);
-      } catch { /* malformed JSON — ignore */ }
-    };
+    function connect() {
+      if (destroyedRef.current) return;
 
-    ws.onerror = () => { /* reconnect handled by onclose */ };
+      // M9: 재연결 시 신선한 토큰 사용
+      const token = getStoredToken();
+      const url   = `${WS_BASE}/ws/chat/${chatId}?token=${encodeURIComponent(token)}`;
+      const ws    = new WebSocket(url);
+      wsRef.current = ws;
 
-    ws.onclose = (e) => {
-      // 정상 종료(1000) 또는 인증 실패(4001/4003)는 재연결 안 함
-      if (e.code === 1000 || e.code === 4001 || e.code === 4003) return;
-      // 그 외에는 3초 후 재연결
-      const timer = setTimeout(() => {
-        if (wsRef.current === ws) wsRef.current = null;
-      }, 3000);
-      return () => clearTimeout(timer);
-    };
+      ws.onmessage = (e) => {
+        try {
+          onEventRef.current(JSON.parse(e.data) as WsEvent);
+        } catch { /* malformed JSON — ignore */ }
+      };
+
+      ws.onerror = () => { /* reconnect handled by onclose */ };
+
+      ws.onclose = (e) => {
+        wsRef.current = null;
+        // 정상 종료(1000) 또는 인증 실패(4001/4003)는 재연결 안 함
+        if (destroyedRef.current || e.code === 1000 || e.code === 4001 || e.code === 4003) return;
+        // M8: 지수 백오프 재연결
+        const delay = backoffMs(attemptRef.current++);
+        timerRef.current = setTimeout(connect, delay);
+      };
+    }
+
+    connect();
 
     return () => {
-      ws.close(1000);
+      destroyedRef.current = true;
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      wsRef.current?.close(1000);
       wsRef.current = null;
     };
   }, [chatId]);
@@ -69,13 +94,20 @@ export function useChatSocket(
 export function useTaskSocket(
   onTaskDone: (taskId: string, taskName: string) => void,
 ) {
-  const wsRef      = useRef<WebSocket | null>(null);
+  const wsRef       = useRef<WebSocket | null>(null);
   const callbackRef = useRef(onTaskDone);
-  callbackRef.current = onTaskDone;
+  const connectRef  = useRef<(() => void) | null>(null);
+  const attemptRef  = useRef(0);
+  const destroyedRef = useRef(false);
+
+  useEffect(() => {
+    callbackRef.current = onTaskDone;
+  }, [onTaskDone]);
 
   const connect = useCallback(() => {
-    if (!isAuthenticated()) return;
+    if (!isAuthenticated() || destroyedRef.current) return;
 
+    // M9: 재연결 시 신선한 토큰 사용
     const token = getStoredToken();
     const url   = `${WS_BASE}/ws/tasks?token=${encodeURIComponent(token)}`;
     const ws    = new WebSocket(url);
@@ -97,16 +129,28 @@ export function useTaskSocket(
 
     ws.onclose = (e) => {
       clearInterval(pingInterval);
-      if (e.code !== 1000 && e.code !== 4001) {
-        // 3초 후 재연결
-        setTimeout(connect, 3000);
-      }
+      wsRef.current = null;
+      if (destroyedRef.current || e.code === 1000 || e.code === 4001) return;
+      // M8: 지수 백오프 재연결
+      const delay = backoffMs(attemptRef.current++);
+      setTimeout(() => connectRef.current?.(), delay);
+    };
+
+    ws.onopen = () => {
+      // 연결 성공 시 재시도 카운터 초기화
+      attemptRef.current = 0;
     };
   }, []);
 
   useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
+  useEffect(() => {
+    destroyedRef.current = false;
     connect();
     return () => {
+      destroyedRef.current = true;
       wsRef.current?.close(1000);
       wsRef.current = null;
     };
