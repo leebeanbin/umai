@@ -217,7 +217,6 @@ describe("제목 생성 파이프라인 (generateTitle → apiGenerateChatTitle 
     // 단, 공백 문자열은 truthy이므로 updateSessionTitle이 호출되는지 확인
     // page.tsx: if (title) updateSessionTitle — "   "는 truthy이므로 호출됨
     // 이 동작이 의도에 맞는지 확인 (백엔드에서 이미 clean해서 올 것)
-    const session = loadSessions().find((s) => s.id === SESSION_ID);
     // 공백은 truthy → updateSessionTitle("   ") 호출됨 — 이건 백엔드가 clean해서 보내야 함
     expect(mockApiGenerateChatTitle).toHaveBeenCalledTimes(1);
   });

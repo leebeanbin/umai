@@ -21,11 +21,9 @@ export function useLanguage() {
 }
 
 export default function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [lang, setLangState] = useState<Lang>("ko");
+  const [lang, setLangState] = useState<Lang>(() => loadSettings().language ?? "ko");
 
   useEffect(() => {
-    setLangState(loadSettings().language ?? "ko");
-
     function handler() { setLangState(loadSettings().language ?? "ko"); }
     window.addEventListener("umai:lang-change", handler);
     return () => window.removeEventListener("umai:lang-change", handler);

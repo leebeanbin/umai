@@ -172,6 +172,8 @@ export default function AdminSettingsPage() {
   const [openaiBase, setOpenaiBase]       = useState("https://api.openai.com/v1");
   const [anthropicKey, setAnthropicKey]   = useState("");
   const [googleAiKey, setGoogleAiKey]     = useState("");
+  const [xaiKey, setXaiKey]              = useState("");
+  const [tavilyKey, setTavilyKey]        = useState("");
   const [customName, setCustomName]       = useState("");
   const [customBase, setCustomBase]       = useState("");
   const [customKey, setCustomKey]         = useState("");
@@ -195,12 +197,14 @@ export default function AdminSettingsPage() {
   const [userWebhooks, setUserWebhooks]       = useState(false);
 
   // Models — editable per-provider lists
-  const [openaiModels, setOpenaiModels]       = useState<string[]>(["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]);
-  const [anthropicModels, setAnthropicModels] = useState<string[]>(["claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-opus-4-6"]);
-  const [googleModels, setGoogleModels]       = useState<string[]>(["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]);
+  const [openaiModels, setOpenaiModels]       = useState<string[]>(["gpt-5.4-pro", "gpt-5.4", "gpt-4o", "gpt-4o-mini", "o4-mini", "o3", "gpt-oss-120b"]);
+  const [anthropicModels, setAnthropicModels] = useState<string[]>(["claude-opus-4-6", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5-20251001"]);
+  const [googleModels, setGoogleModels]       = useState<string[]>(["gemini-3.1-pro-preview", "gemini-3-flash", "gemini-2.5-pro", "gemini-2.0-flash"]);
+  const [xaiModels, setXaiModels]             = useState<string[]>(["grok-4.20", "grok-4.1"]);
   const [openaiInput, setOpenaiInput]         = useState("");
   const [anthropicInput, setAnthropicInput]   = useState("");
   const [googleInput, setGoogleInput]         = useState("");
+  const [xaiInput, setXaiInput]               = useState("");
   const [ollamaEnabledModels, setOllamaEnabledModels] = useState<string[]>([]);
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
   const [ollamaModelsFetched, setOllamaModelsFetched] = useState(false);
@@ -211,8 +215,8 @@ export default function AdminSettingsPage() {
   const [ollamaDeleting, setOllamaDeleting]         = useState<string | null>(null);
 
   // Documents (RAG)
-  const [embeddingEngine, setEmbeddingEngine] = useState<"ollama" | "openai">("openai");
-  const [embeddingModel, setEmbeddingModel]   = useState("text-embedding-3-small");
+  const [embeddingEngine, setEmbeddingEngine] = useState<"ollama" | "openai">("ollama");
+  const [embeddingModel, setEmbeddingModel]   = useState("qwen3-embedding:8b");
   const [chunkSize, setChunkSize]             = useState(1000);
   const [chunkOverlap, setChunkOverlap]       = useState(100);
   const [topK, setTopK]                       = useState(5);
@@ -350,6 +354,8 @@ export default function AdminSettingsPage() {
           setOpenaiBase(s.connections.openai_base_url || "https://api.openai.com/v1");
           setAnthropicKey(s.connections.anthropic_key || "");
           setGoogleAiKey(s.connections.google_key || "");
+          setXaiKey(s.connections.xai_key || "");
+          setTavilyKey(s.connections.tavily_key || "");
           setCustomName(s.connections.custom_name || "");
           setCustomBase(s.connections.custom_base_url || "");
           setCustomKey(s.connections.custom_key || "");
@@ -359,6 +365,7 @@ export default function AdminSettingsPage() {
           if (s.models.openai_enabled?.length)    setOpenaiModels(s.models.openai_enabled);
           if (s.models.anthropic_enabled?.length) setAnthropicModels(s.models.anthropic_enabled);
           if (s.models.google_enabled?.length)    setGoogleModels(s.models.google_enabled);
+          if (s.models.xai_enabled?.length)       setXaiModels(s.models.xai_enabled);
           setOllamaEnabledModels(s.models.ollama_enabled ?? []);
         }
         // OAuth
@@ -445,6 +452,8 @@ export default function AdminSettingsPage() {
             openai_base_url: openaiBase,
             anthropic_key: anthropicKey,
             google_key: googleAiKey,
+            xai_key: xaiKey,
+            tavily_key: tavilyKey,
             custom_name: customName,
             custom_base_url: customBase,
             custom_key: customKey,
@@ -456,6 +465,7 @@ export default function AdminSettingsPage() {
             openai_enabled: openaiModels,
             anthropic_enabled: anthropicModels,
             google_enabled: googleModels,
+            xai_enabled: xaiModels,
             ollama_enabled: ollamaEnabledModels,
           },
         };
@@ -740,7 +750,7 @@ export default function AdminSettingsPage() {
               </div>
             </Section>
 
-            <Section title="Google AI (Gemini)" description={lang === "ko" ? "Gemini 2.0 Flash, Pro 등 Google AI 모델에 연결합니다." : "Connect to Google AI Gemini models."}>
+            <Section title="Google AI (Gemini)" description={lang === "ko" ? "Gemini 3.1 Pro, Flash 등 Google AI 모델에 연결합니다." : "Connect to Google AI Gemini models (Gemini 3.1 Pro, Flash)."}>
               <Field label="API Key" value={googleAiKey} onChange={setGoogleAiKey} type="password" placeholder="AIza..." hint="aistudio.google.com/app/apikey" />
               <div className="flex items-center gap-2 mt-1">
                 <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs border border-border text-text-secondary hover:bg-hover transition-colors">
@@ -748,6 +758,27 @@ export default function AdminSettingsPage() {
                   {lang === "ko" ? "연결 테스트" : "Test Connection"}
                 </button>
                 {googleAiKey && <span className="flex items-center gap-1 text-xs text-accent"><CheckCircle2 size={11} />설정됨</span>}
+              </div>
+            </Section>
+
+            <Section title="xAI (Grok)" description={lang === "ko" ? "Grok 4.20, Grok 4.1 등 xAI 모델에 연결합니다." : "Connect to xAI Grok models (Grok 4.20, Grok 4.1)."}>
+              <Field label="API Key" value={xaiKey} onChange={setXaiKey} type="password" placeholder="xai-..." hint="console.x.ai" />
+              <div className="flex items-center gap-2 mt-1">
+                {xaiKey && <span className="flex items-center gap-1 text-xs text-accent"><CheckCircle2 size={11} />설정됨</span>}
+              </div>
+            </Section>
+
+            <Section
+              title={lang === "ko" ? "웹 검색 (Tavily)" : "Web Search (Tavily)"}
+              description={lang === "ko" ? "채팅 중 실시간 웹 검색에 사용합니다. tavily.com에서 무료로 발급 가능합니다." : "Used for real-time web search during chat. Free tier available at tavily.com."}
+            >
+              <Field label="API Key" value={tavilyKey} onChange={setTavilyKey} type="password" placeholder="tvly-..." hint="app.tavily.com/home" />
+              <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-1 text-xs text-text-muted">
+                  <Info size={10} className="shrink-0" />
+                  <span>{lang === "ko" ? "TAVILY_API_KEY 환경 변수로도 설정할 수 있습니다." : "Can also be set via TAVILY_API_KEY environment variable."}</span>
+                </div>
+                {tavilyKey && <span className="flex items-center gap-1 text-xs text-accent ml-auto"><CheckCircle2 size={11} />설정됨</span>}
               </div>
             </Section>
 
@@ -900,9 +931,10 @@ export default function AdminSettingsPage() {
 
             {/* Per-provider editable chip lists */}
             {([
-              { name: "OpenAI",     providerModels: openaiModels,    setModels: setOpenaiModels,    input: openaiInput,    setInput: setOpenaiInput,    placeholder: "e.g. gpt-4o-mini" },
+              { name: "OpenAI",     providerModels: openaiModels,    setModels: setOpenaiModels,    input: openaiInput,    setInput: setOpenaiInput,    placeholder: "e.g. gpt-5.4-pro" },
               { name: "Anthropic",  providerModels: anthropicModels, setModels: setAnthropicModels, input: anthropicInput, setInput: setAnthropicInput, placeholder: "e.g. claude-opus-4-6" },
-              { name: "Google AI",  providerModels: googleModels,    setModels: setGoogleModels,    input: googleInput,    setInput: setGoogleInput,    placeholder: "e.g. gemini-1.5-pro" },
+              { name: "Google AI",  providerModels: googleModels,    setModels: setGoogleModels,    input: googleInput,    setInput: setGoogleInput,    placeholder: "e.g. gemini-3.1-pro-preview" },
+              { name: "xAI (Grok)", providerModels: xaiModels,       setModels: setXaiModels,       input: xaiInput,       setInput: setXaiInput,       placeholder: "e.g. grok-4.20" },
             ]).map(({ name, providerModels, setModels, input, setInput, placeholder }) => (
               <div key={name} className="mb-6">
                 <h3 className="text-sm font-semibold text-text-primary mb-3">{name}</h3>

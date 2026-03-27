@@ -93,9 +93,12 @@ function saveMessages(chatId: string, messages: Message[]) {
 }
 
 // LLM 프로바이더 추론 (모델명 기반)
-export function inferProvider(model: string): "openai" | "anthropic" | "ollama" {
-  if (/^(gpt-|o1|o3|chatgpt)/i.test(model)) return "openai";
+// Celery run_agent 태스크에서 사용 — 백엔드 _call_llm() provider 인자와 매핑
+export function inferProvider(model: string): "openai" | "anthropic" | "google" | "xai" | "ollama" {
+  if (/^(gpt-|o1|o3|o4|chatgpt)/i.test(model)) return "openai";
   if (/^claude-/i.test(model)) return "anthropic";
+  if (/^gemini/i.test(model)) return "google";
+  if (/^grok/i.test(model)) return "xai";
   return "ollama";
 }
 

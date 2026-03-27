@@ -4,17 +4,25 @@
  * Supported providers:
  *   - OpenAI DALL-E 2 / DALL-E 3 (server-side OPENAI_API_KEY)
  *
+ * Key priority: OPENAI_API_KEY env → images.dalle_key DB → connections.openai_key DB
+ *
  * GET  /api/image  → { openai: bool }
  * POST /api/image  → { images: [{ url, revised_prompt }] }
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/api/verifyAuth";
+import { resolveSettingsKey } from "@/lib/api/settingsKeyResolver";
 
-export async function GET() {
-  return NextResponse.json({
-    openai: !!process.env.OPENAI_API_KEY,
-  });
+export async function GET(req: NextRequest) {
+  const authHeader = req.headers.get("authorization") ?? "";
+  const key = await resolveSettingsKey(
+    authHeader,
+    process.env.OPENAI_API_KEY,
+    { section: "images", field: "dalle_key" },
+    { section: "connections", field: "openai_key" },
+  );
+  return NextResponse.json({ openai: !!key });
 }
 
 export type ImageRequestBody = {
@@ -33,7 +41,8 @@ export type GeneratedImage = {
 };
 
 export async function POST(req: NextRequest) {
-  if (!await verifyToken(req.headers.get("authorization"))) {
+  const authHeader = req.headers.get("authorization") ?? "";
+  if (!await verifyToken(authHeader)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -44,7 +53,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unsupported provider" }, { status: 400 });
   }
 
-  const apiKey = process.env.OPENAI_API_KEY ?? "";
+  const apiKey = await resolveSettingsKey(
+    authHeader,
+    process.env.OPENAI_API_KEY,
+    { section: "images", field: "dalle_key" },
+    { section: "connections", field: "openai_key" },
+  );
   if (!apiKey) {
     return NextResponse.json({ error: "__NO_KEY__:openai" }, { status: 401 });
   }

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/api/verifyAuth";
-
-const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? "";
+import { resolveSettingsKey } from "@/lib/api/settingsKeyResolver";
 
 export type SearchResult = {
   title: string;
@@ -10,16 +9,21 @@ export type SearchResult = {
 };
 
 export async function GET(req: NextRequest) {
-  if (!await verifyToken(req.headers.get("authorization"))) {
+  const authHeader = req.headers.get("authorization") ?? "";
+  if (!await verifyToken(authHeader)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const q = (req.nextUrl.searchParams.get("q") ?? "").slice(0, 500);
   if (!q.trim()) return NextResponse.json({ results: [] });
 
-  if (!TAVILY_API_KEY) {
-    // Graceful fallback: return empty so web search silently no-ops
-    console.warn("[websearch] TAVILY_API_KEY not set");
+  const apiKey = await resolveSettingsKey(
+    authHeader,
+    process.env.TAVILY_API_KEY,
+    { section: "connections", field: "tavily_key" },
+  );
+  if (!apiKey) {
+    console.warn("[websearch] Tavily API key not configured (env TAVILY_API_KEY or admin settings → Connections → Tavily)");
     return NextResponse.json({ results: [] });
   }
 
@@ -28,7 +32,7 @@ export async function GET(req: NextRequest) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        api_key:        TAVILY_API_KEY,
+        api_key:        apiKey,
         query:          q,
         search_depth:   "basic",
         max_results:    6,

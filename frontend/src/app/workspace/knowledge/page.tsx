@@ -8,9 +8,9 @@ import {
   apiUploadKnowledge,
   apiDeleteKnowledge,
   apiEnqueueKnowledgeProcess,
-  apiGetTask,
   type KnowledgeItem,
 } from "@/lib/api/backendClient";
+import { pollTask } from "@/lib/utils/pollTask";
 
 const ACCEPTED = [".pdf", ".txt", ".md", ".docx"];
 const FILE_ICON_COLOR: Record<string, string> = {
@@ -41,10 +41,6 @@ export default function KnowledgePage() {
   // id → task status ("queued" | "running" | "success" | "failed")
   const [taskStatus, setTaskStatus] = useState<Record<string, string>>({});
   const fileRef = useRef<HTMLInputElement>(null);
-  const pollers = useRef<ReturnType<typeof setInterval>[]>([]);
-
-  // Clear all pollers on unmount
-  useEffect(() => () => { pollers.current.forEach(clearInterval); }, []);
 
   useEffect(() => {
     apiListKnowledge()
@@ -76,19 +72,10 @@ export default function KnowledgePage() {
         // Trigger Celery embedding task (best-effort, non-blocking)
         apiEnqueueKnowledgeProcess(item.id, file)
           .then((task) => {
-            setTaskStatus((prev) => ({ ...prev, [item.id]: task.status }));
-            // Poll until done
-            const poll = setInterval(async () => {
-              try {
-                const t = await apiGetTask(task.task_id);
-                setTaskStatus((prev) => ({ ...prev, [item.id]: t.status }));
-                if (t.status === "success" || t.status === "failed") {
-                  clearInterval(poll);
-                  pollers.current = pollers.current.filter((p) => p !== poll);
-                }
-              } catch { clearInterval(poll); pollers.current = pollers.current.filter((p) => p !== poll); }
-            }, 2000);
-            pollers.current.push(poll);
+            setTaskStatus((prev) => ({ ...prev, [item.id]: "started" }));
+            pollTask(task.task_id, { maxPolls: 120 }) // up to 4 min
+              .then(() => setTaskStatus((prev) => ({ ...prev, [item.id]: "success" })))
+              .catch(() => setTaskStatus((prev) => ({ ...prev, [item.id]: "failed" })));
           })
           .catch(() => {/* embedding failure is non-fatal */});
       } catch {

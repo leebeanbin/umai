@@ -31,6 +31,7 @@ function serverProviders(): Set<string> {
   if (process.env.OPENAI_API_KEY)    providers.add("OpenAI");
   if (process.env.ANTHROPIC_API_KEY) providers.add("Anthropic");
   if (process.env.GOOGLE_API_KEY)    providers.add("Google");
+  if (process.env.XAI_API_KEY)       providers.add("xAI");
   // Ollama is always potentially available (no key needed)
   providers.add("Ollama");
   return providers;
@@ -42,14 +43,20 @@ function inferTags(id: string, provider: string): string[] {
 
   if (
     idL.includes("vision") || idL.includes("4o") ||
-    idL.includes("gemini") || idL.includes("claude") ||
-    idL.includes("llava") || idL.includes("moondream")
+    idL.includes("gpt-5") || idL.includes("gpt-oss") ||
+    idL.includes("gemini") || idL.includes("gemma3") ||
+    idL.includes("claude") ||
+    idL.includes("grok-4") || idL.includes("grok-3") ||
+    idL.includes("kimi") || idL.includes("glm-5") || idL.includes("minimax") ||
+    idL.includes("llava") || idL.includes("moondream") ||
+    idL.includes("-vl") || idL.includes("vl:")
   ) tags.push("Vision");
 
   if (
     idL.includes("mini") || idL.includes("flash") ||
     idL.includes("haiku") || idL.includes("3b") ||
-    idL.includes("1b") || idL.includes("7b")
+    idL.includes("1b") || idL.includes("7b") ||
+    idL.includes("grok-4.1")
   ) tags.push("Fast");
 
   if (provider === "Ollama") tags.push("Local");
@@ -116,7 +123,14 @@ export async function GET(req: NextRequest) {
     }
     if (available.has("Google")) {
       fallback.push(
-        { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", provider: "Google", tags: ["Vision", "Fast"] },
+        { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro", provider: "Google", tags: ["Vision"] },
+        { id: "gemini-3-flash",         name: "Gemini 3 Flash",  provider: "Google", tags: ["Vision", "Fast"] },
+      );
+    }
+    if (available.has("xAI")) {
+      fallback.push(
+        { id: "grok-4.20", name: "Grok 4.20", provider: "xAI", tags: ["Vision"] },
+        { id: "grok-4.1",  name: "Grok 4.1",  provider: "xAI", tags: ["Vision", "Fast"] },
       );
     }
     return NextResponse.json(fallback, {

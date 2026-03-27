@@ -6,7 +6,8 @@ import MaskEditorModal from "./MaskEditorModal";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { loadSettings } from "@/lib/appStore";
 import { getModelCapabilities, type ModelCapabilities } from "@/lib/modelCapabilities";
-import { getStoredToken, apiEnqueueImageAnalyze, apiEnqueueImageResize, apiGetTask } from "@/lib/api/backendClient";
+import { getStoredToken, apiEnqueueImageAnalyze, apiEnqueueImageResize } from "@/lib/api/backendClient";
+import { pollTask } from "@/lib/utils/pollTask";
 
 type AttachedImage = { id: string; dataUrl: string; name: string };
 
@@ -100,7 +101,8 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
   const [imageAnalysis, setImageAnalysis]   = useState("");
   const [analyzingImage, setAnalyzingImage] = useState(false);
   const [resizingIds, setResizingIds]       = useState<Set<string>>(new Set());
-  const analyzePollerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Track the latest analyze task ID to discard stale results when images are removed
+  const analyzeTaskRef = useRef<string | null>(null);
   const [modelCaps, setModelCaps]   = useState<ModelCapabilities>(() =>
     getModelCapabilities(loadSettings().selectedModel)
   );
@@ -133,12 +135,12 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
     if (!input.trim()) setShowEval(false);
   }, [input]);
 
-  // 이미지가 모두 제거되면 분석 상태 초기화
+  // 이미지가 모두 제거되면 분석 상태 초기화 (analyzeTaskRef를 null로 설정해 stale 결과 무시)
   useEffect(() => {
     if (images.length === 0) {
+      analyzeTaskRef.current = null;
       setImageAnalysis("");
       setAnalyzingImage(false);
-      if (analyzePollerRef.current) { clearInterval(analyzePollerRef.current); analyzePollerRef.current = null; }
     }
   }, [images.length]);
 
@@ -153,30 +155,19 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
 
         // 이미지 첨부 즉시 Celery analyze_image 태스크로 선분석
         // 사용자가 메시지를 작성하는 동안 완료되어 전송 시 context에 자동 주입
-        if (analyzePollerRef.current) clearInterval(analyzePollerRef.current);
         setAnalyzingImage(true);
         setImageAnalysis("");
         try {
           const task = await apiEnqueueImageAnalyze(dataUrl);
-          analyzePollerRef.current = setInterval(async () => {
-            try {
-              const t = await apiGetTask(task.task_id);
-              if (t.status === "success" || t.status === "failed") {
-                clearInterval(analyzePollerRef.current!);
-                analyzePollerRef.current = null;
-                if (t.status === "success") {
-                  const r = t.result as Record<string, unknown>;
-                  const text = (r.analysis ?? r.text ?? r.content ?? "") as string;
-                  if (text) setImageAnalysis(text);
-                }
-                setAnalyzingImage(false);
-              }
-            } catch {
-              clearInterval(analyzePollerRef.current!);
-              analyzePollerRef.current = null;
+          analyzeTaskRef.current = task.task_id;
+          pollTask<Record<string, unknown>>(task.task_id)
+            .then((result) => {
+              if (analyzeTaskRef.current !== task.task_id) return; // superseded or cancelled
+              const text = (result.analysis ?? result.text ?? result.content ?? "") as string;
+              if (text) setImageAnalysis(text);
               setAnalyzingImage(false);
-            }
-          }, 2000);
+            })
+            .catch(() => setAnalyzingImage(false));
         } catch {
           setAnalyzingImage(false);
         }
@@ -237,8 +228,8 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
     setInput("");
     setImages([]);
     setDocs([]);
+    analyzeTaskRef.current = null;
     setImageAnalysis("");
-    if (analyzePollerRef.current) { clearInterval(analyzePollerRef.current); analyzePollerRef.current = null; }
     setAnalyzingImage(false);
   }, [input, images, docs, imageAnalysis, onSend, webSearch, useRag]);
 
@@ -250,28 +241,20 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
   // 이미지 리사이즈 (Celery resize_image 태스크 → 완료 시 미리보기 교체)
   const handleResize = useCallback(async (img: AttachedImage) => {
     setResizingIds((prev) => new Set(prev).add(img.id));
+    const clearResizing = () =>
+      setResizingIds((prev) => { const s = new Set(prev); s.delete(img.id); return s; });
     try {
       const task = await apiEnqueueImageResize(img.dataUrl, 1024, 85);
-      const poll = setInterval(async () => {
-        try {
-          const t = await apiGetTask(task.task_id);
-          if (t.status === "success" || t.status === "failed") {
-            clearInterval(poll);
-            if (t.status === "success") {
-              const r = t.result as { b64: string; format: string };
-              const mime = r.format === "PNG" ? "image/png" : r.format === "WEBP" ? "image/webp" : "image/jpeg";
-              const resizedDataUrl = `data:${mime};base64,${r.b64}`;
-              setImages((prev) => prev.map((i) => i.id === img.id ? { ...i, dataUrl: resizedDataUrl } : i));
-            }
-            setResizingIds((prev) => { const s = new Set(prev); s.delete(img.id); return s; });
-          }
-        } catch {
-          clearInterval(poll);
-          setResizingIds((prev) => { const s = new Set(prev); s.delete(img.id); return s; });
-        }
-      }, 2000);
+      pollTask<{ b64: string; format: string }>(task.task_id)
+        .then((result) => {
+          const mime = result.format === "PNG" ? "image/png" : result.format === "WEBP" ? "image/webp" : "image/jpeg";
+          const resizedDataUrl = `data:${mime};base64,${result.b64}`;
+          setImages((prev) => prev.map((i) => i.id === img.id ? { ...i, dataUrl: resizedDataUrl } : i));
+          clearResizing();
+        })
+        .catch(clearResizing);
     } catch {
-      setResizingIds((prev) => { const s = new Set(prev); s.delete(img.id); return s; });
+      clearResizing();
     }
   }, []);
 

@@ -35,9 +35,13 @@ export default function Sidebar() {
   const [search, setSearch]   = useState("");
   const [showSearch, setShowSearch] = useState(false);
   // SSR/클라이언트 hydration 불일치 방지:
-  // 서버에서는 빈 배열로 시작하고, 마운트 후 useEffect에서 localStorage를 읽는다.
-  const [folders, setFolders]   = useState<FolderType[]>([]);
-  const [sessions, setSessions] = useState<Session[]>([]);
+  // lazy initializer는 클라이언트에서만 실행되므로 SSR-safe.
+  const [folders, setFolders]   = useState<FolderType[]>(() =>
+    typeof window !== "undefined" ? loadFolders() : []
+  );
+  const [sessions, setSessions] = useState<Session[]>(() =>
+    typeof window !== "undefined" ? loadSessions() : []
+  );
   const [showSettings, setShowSettings] = useState(false);
   const [contextMenu, setContextMenu]   = useState<ContextTarget | null>(null);
   const [shareSessionId, setShareSessionId] = useState<string | null>(null);
@@ -45,7 +49,7 @@ export default function Sidebar() {
   const [renamingId, setRenamingId]     = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const renameInputRef  = useRef<HTMLInputElement>(null);
-  const hydratedRef     = useRef(false); // 초기 localStorage 로드 완료 여부
+  const hydratedRef     = useRef(typeof window !== "undefined"); // 클라이언트에서 즉시 true
 
   // ── Memoized computed values ──────────────────────────────────────────────
   const filteredSessions = useMemo(() =>
@@ -152,13 +156,6 @@ export default function Sidebar() {
     setFolderModal({ open: false, editing: null }),
     []
   );
-
-  // ── 마운트 후 localStorage 초기 로드 (SSR hydration 불일치 방지) ────────────
-  useEffect(() => {
-    setFolders(loadFolders());
-    setSessions(loadSessions());
-    hydratedRef.current = true;
-  }, []);
 
   // ── localStorage 자동 저장 (hydration 완료 후에만) ─────────────────────────
   useEffect(() => { if (hydratedRef.current) saveFolders(folders); }, [folders]);
@@ -639,12 +636,11 @@ type SessionItemProps = {
 const SessionItem = memo(function SessionItem({
   session, href, active, isRenaming, renameInputRef, onCommitRename, onContext,
 }: SessionItemProps) {
+  // editVal is only used for the rename <input>. session.title is the source of truth
+  // when not renaming. SessionItem is memo-wrapped so re-renders when session.title
+  // changes; useState initializer runs only on mount, so reset is handled by the parent
+  // passing key={session.id} (title changes remount the component via memo inequality).
   const [editVal, setEditVal] = useState(session.title);
-
-  // Sync editVal when not actively renaming (e.g., after external updateSessionTitle)
-  useEffect(() => {
-    if (!isRenaming) setEditVal(session.title);
-  }, [isRenaming, session.title]);
 
   // Handle focus with cleanup when rename starts
   useEffect(() => {

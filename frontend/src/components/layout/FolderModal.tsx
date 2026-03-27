@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { X, ImageIcon, Loader2, Cpu, BookOpen } from "lucide-react";
 import type { Folder } from "@/lib/store";
 import { useLanguage } from "@/components/providers/LanguageProvider";
@@ -12,27 +12,51 @@ type Props = {
   onSave: (data: Omit<Folder, "id" | "open">) => void;
 };
 
+type FormState = { name: string; systemPrompt: string; bgImageUrl: string | null; saving: boolean };
+type FormAction =
+  | { type: "init"; folder?: Folder | null }
+  | { type: "setName"; value: string }
+  | { type: "setSystemPrompt"; value: string }
+  | { type: "setBgImageUrl"; value: string | null }
+  | { type: "setSaving"; value: boolean };
+
+function formReducer(state: FormState, action: FormAction): FormState {
+  switch (action.type) {
+    case "init":       return { name: action.folder?.name ?? "", systemPrompt: action.folder?.systemPrompt ?? "", bgImageUrl: action.folder?.bgImageUrl ?? null, saving: false };
+    case "setName":    return { ...state, name: action.value };
+    case "setSystemPrompt": return { ...state, systemPrompt: action.value };
+    case "setBgImageUrl":   return { ...state, bgImageUrl: action.value };
+    case "setSaving":  return { ...state, saving: action.value };
+  }
+}
+
 export default function FolderModal({ open, folder, onClose, onSave }: Props) {
   const { t } = useLanguage();
   const nameRef    = useRef<HTMLInputElement>(null);
   const bgInputRef = useRef<HTMLInputElement>(null);
+  const wasOpenRef = useRef(false);
 
-  const [name, setName]             = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [bgImageUrl, setBgImageUrl] = useState<string | null>(null);
-  const [saving, setSaving]         = useState(false);
+  const [form, dispatch] = useReducer(formReducer, {
+    name: folder?.name ?? "",
+    systemPrompt: folder?.systemPrompt ?? "",
+    bgImageUrl: folder?.bgImageUrl ?? null,
+    saving: false,
+  });
+  const { name, systemPrompt, bgImageUrl, saving } = form;
+  const setName         = (value: string)           => dispatch({ type: "setName", value });
+  const setSystemPrompt = (value: string)           => dispatch({ type: "setSystemPrompt", value });
+  const setBgImageUrl   = (value: string | null)    => dispatch({ type: "setBgImageUrl", value });
+  const setSaving       = (value: boolean)          => dispatch({ type: "setSaving", value });
 
   useEffect(() => {
-    if (open) {
-      setName(folder?.name ?? "");
-      setSystemPrompt(folder?.systemPrompt ?? "");
-      setBgImageUrl(folder?.bgImageUrl ?? null);
-      setSaving(false);
+    if (open && !wasOpenRef.current) {
+      dispatch({ type: "init", folder });
       setTimeout(() => {
         nameRef.current?.focus();
         nameRef.current?.select();
       }, 50);
     }
+    wasOpenRef.current = open;
   }, [open, folder]);
 
   if (!open) return null;

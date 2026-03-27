@@ -8,14 +8,16 @@
  * All providers are normalized to OpenAI SSE format so the client
  * can use a single parser regardless of the upstream provider.
  *
- * GET  /api/chat  → { openai: bool, anthropic: bool, google: bool }
+ * GET  /api/chat  → { openai: bool, anthropic: bool, google: bool, xai: bool }
  * POST /api/chat  → SSE stream
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/api/verifyAuth";
 
-const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
+const OLLAMA_URL     = process.env.OLLAMA_URL      ?? "http://localhost:11434";
+const OPENAI_BASE    = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+const INTERNAL_API   = process.env.INTERNAL_API_URL ?? "http://localhost:8000";
 
 // ── Key resolution ────────────────────────────────────────────────────────────
 
@@ -23,6 +25,7 @@ function serverKey(provider: string): string {
   if (provider === "openai")    return process.env.OPENAI_API_KEY    ?? "";
   if (provider === "anthropic") return process.env.ANTHROPIC_API_KEY ?? "";
   if (provider === "google")    return process.env.GOOGLE_API_KEY    ?? "";
+  if (provider === "xai")       return process.env.XAI_API_KEY       ?? "";
   return "";
 }
 
@@ -38,6 +41,7 @@ export async function GET() {
     openai:    !!process.env.OPENAI_API_KEY,
     anthropic: !!process.env.ANTHROPIC_API_KEY,
     google:    !!process.env.GOOGLE_API_KEY,
+    xai:       !!process.env.XAI_API_KEY,
     ollama:    ollamaReachable,
   });
 }
@@ -76,6 +80,7 @@ export async function POST(req: NextRequest) {
   if (provider === "openai")    return proxyOpenAI({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP });
   if (provider === "anthropic") return proxyAnthropic({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP });
   if (provider === "google")    return proxyGoogle({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP });
+  if (provider === "xai")       return proxyXAI({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP });
 
   return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
 }
@@ -178,7 +183,7 @@ async function proxyOpenAI({ model, messages, apiKey, sysPrompt, temperature, ma
   if (maxTokens   != null) body.max_tokens  = maxTokens;
   if (topP        != null) body.top_p       = topP;
 
-  const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+  const upstream = await fetch(`${OPENAI_BASE}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -321,6 +326,55 @@ async function proxyOllama({ model, messages, sysPrompt, temperature, maxTokens 
   }
 
   // Ollama's /v1/chat/completions emits OpenAI-format SSE — pipe through directly.
+  return new Response(upstream.body, { headers: SSE_HEADERS });
+}
+
+// ─ xAI (Grok) ────────────────────────────────────────────────────────────────
+// xAI uses OpenAI-compatible API — reuse proxyOpenAI logic with different endpoint
+
+async function proxyXAI({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP }: ProxyArgs) {
+  const formattedMessages = messages.map((m) => {
+    if (m.images?.length && m.role === "user") {
+      return {
+        role: m.role,
+        content: [
+          ...m.images.map((img) => ({ type: "image_url" as const, image_url: { url: img } })),
+          { type: "text" as const, text: m.content },
+        ],
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
+
+  const body: Record<string, unknown> = {
+    model,
+    stream: true,
+    messages: sysPrompt
+      ? [{ role: "system", content: sysPrompt }, ...formattedMessages]
+      : formattedMessages,
+  };
+  if (temperature != null) body.temperature = temperature;
+  if (maxTokens   != null) body.max_tokens  = maxTokens;
+  if (topP        != null) body.top_p       = topP;
+
+  const upstream = await fetch("https://api.x.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!upstream.ok) {
+    const err = await upstream.json().catch(() => ({})) as Record<string, Record<string, string>>;
+    return NextResponse.json(
+      { error: err?.error?.message ?? `xAI error ${upstream.status}` },
+      { status: upstream.status }
+    );
+  }
+
+  // xAI emits OpenAI-format SSE — pipe through directly.
   return new Response(upstream.body, { headers: SSE_HEADERS });
 }
 
