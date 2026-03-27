@@ -24,6 +24,8 @@ from celery import shared_task
 from celery.utils.log import get_task_logger
 
 from app.core.config import settings
+from app.core.http_headers import openai_auth_headers, anthropic_auth_headers
+from app.core.model_registry import OPENAI_GPT_4O
 from app.tasks._utils import publish_task_done
 from app.services.embedding_service import embed_query_sync
 
@@ -263,7 +265,7 @@ def _call_openai(messages: list, model: str, tools: list | None, temperature: fl
     with httpx.Client(timeout=120) as client:
         r = client.post(
             "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            headers=openai_auth_headers(OPENAI_API_KEY),
             json=body,
         )
         r.raise_for_status()
@@ -306,7 +308,7 @@ def _call_anthropic(messages: list, model: str, tools: list | None, temperature:
     with httpx.Client(timeout=120) as client:
         r = client.post(
             "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01"},
+            headers=anthropic_auth_headers(ANTHROPIC_API_KEY),
             json=body,
         )
         r.raise_for_status()

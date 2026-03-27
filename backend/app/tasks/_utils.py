@@ -1,3 +1,4 @@
+from app.core.redis_keys import key_task_notification
 """
 Celery 태스크 공통 유틸리티
 
@@ -33,7 +34,7 @@ def publish_task_done(task_id: str, task: str) -> None:
         r = _get_redis()
         owner = r.get(f"task_owner:{task_id}")
         if owner:
-            r.publish(f"task:{owner}", json.dumps({
+            r.publish(key_task_notification(owner), json.dumps({
                 "type": "task_done",
                 "task_id": task_id,
                 "task": task,

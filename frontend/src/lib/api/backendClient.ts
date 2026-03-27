@@ -8,6 +8,9 @@
  * All functions throw on non-2xx responses.
  */
 
+import { API } from "@/lib/api/endpoints";
+import { DEFAULT_EMBEDDING_MODEL } from "@/lib/model-registry";
+
 const BASE = "";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -128,7 +131,7 @@ async function apiFetch<T>(
 async function tryRefresh(): Promise<boolean> {
   try {
     // 요청 body 없음 — 브라우저가 HttpOnly 쿠키(umai_refresh)를 자동 포함
-    const res = await fetch(`${BASE}/api/v1/auth/refresh`, {
+    const res = await fetch(`${BASE}${API.AUTH.REFRESH}`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -145,11 +148,11 @@ async function tryRefresh(): Promise<boolean> {
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export async function fetchMe(): Promise<UserOut> {
-  return apiFetch<UserOut>("/api/v1/auth/me");
+  return apiFetch<UserOut>(API.AUTH.ME);
 }
 
 export async function apiUpdateProfile(body: { name?: string; notification_email?: string }): Promise<UserOut> {
-  return apiFetch<UserOut>("/api/v1/auth/me", {
+  return apiFetch<UserOut>(API.AUTH.ME, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
@@ -158,7 +161,7 @@ export async function apiUpdateProfile(body: { name?: string; notification_email
 /** Exchange a one-time OAuth code for access + refresh tokens. */
 export async function apiTokenExchange(code: string): Promise<TokenResponse> {
   const tokens = await apiFetch<TokenResponse>(
-    `/api/v1/auth/token/exchange?code=${encodeURIComponent(code)}`,
+    `${API.AUTH.TOKEN_EXCHANGE}?code=${encodeURIComponent(code)}`,
     { method: "GET" },
     false, // no retry — this IS the auth step
   );
@@ -168,7 +171,7 @@ export async function apiTokenExchange(code: string): Promise<TokenResponse> {
 
 /** Complete onboarding (name + notification email) after OAuth sign-up. */
 export async function apiOnboard(name: string, notificationEmail: string): Promise<UserOut> {
-  return apiFetch<UserOut>("/api/v1/auth/onboard", {
+  return apiFetch<UserOut>(API.AUTH.ONBOARD, {
     method: "POST",
     body: JSON.stringify({ name, notification_email: notificationEmail }),
   });
@@ -177,7 +180,7 @@ export async function apiOnboard(name: string, notificationEmail: string): Promi
 
 export async function apiLogout(): Promise<void> {
   // refresh_token은 HttpOnly 쿠키 → body 불필요, 브라우저가 자동 포함
-  await apiFetch<void>("/api/v1/auth/logout", { method: "POST" }).catch(() => {/* best-effort */});
+  await apiFetch<void>(API.AUTH.LOGOUT, { method: "POST" }).catch(() => {/* best-effort */});
   clearTokens();
   // 로그아웃 시 채팅 히스토리 localStorage 삭제 (공용 PC 개인정보 보호)
   if (typeof window !== "undefined") {
@@ -190,11 +193,11 @@ export async function apiLogout(): Promise<void> {
 // ── Chats ─────────────────────────────────────────────────────────────────────
 
 export async function apiListChats(page = 1, limit = 50): Promise<ChatOut[]> {
-  return apiFetch<ChatOut[]>(`/api/v1/chats?page=${page}&limit=${limit}`);
+  return apiFetch<ChatOut[]>(`${API.CHATS.LIST}?page=${page}&limit=${limit}`);
 }
 
 export async function apiCreateChat(title: string, model?: string, folderId?: string): Promise<ChatOut> {
-  return apiFetch<ChatOut>("/api/v1/chats", {
+  return apiFetch<ChatOut>(API.CHATS.LIST, {
     method: "POST",
     body: JSON.stringify({ title, model: model ?? null, folder_id: folderId ?? null }),
   });
@@ -204,14 +207,14 @@ export async function apiUpdateChat(
   chatId: string,
   patch: { title?: string; is_pinned?: boolean; is_archived?: boolean; folder_id?: string | null },
 ): Promise<ChatOut> {
-  return apiFetch<ChatOut>(`/api/v1/chats/${chatId}`, {
+  return apiFetch<ChatOut>(API.CHATS.GET(chatId), {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
 }
 
 export async function apiDeleteChat(chatId: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/chats/${chatId}`, { method: "DELETE" });
+  return apiFetch<void>(API.CHATS.GET(chatId), { method: "DELETE" });
 }
 
 /**
@@ -226,7 +229,7 @@ export async function apiGenerateChatTitle(
   assistantContent: string,
   language = "en",
 ): Promise<string> {
-  const res = await apiFetch<{ title: string }>(`/api/v1/chats/${chatId}/title`, {
+  const res = await apiFetch<{ title: string }>(API.CHATS.TITLE(chatId), {
     method: "POST",
     body: JSON.stringify({ user_content: userContent, assistant_content: assistantContent, language }),
   });
@@ -236,11 +239,11 @@ export async function apiGenerateChatTitle(
 // ── Folders ───────────────────────────────────────────────────────────────────
 
 export async function apiListFolders(): Promise<FolderOut[]> {
-  return apiFetch<FolderOut[]>("/api/v1/folders");
+  return apiFetch<FolderOut[]>(API.FOLDERS.LIST);
 }
 
 export async function apiCreateFolder(name: string, description?: string, systemPrompt?: string): Promise<FolderOut> {
-  return apiFetch<FolderOut>("/api/v1/folders", {
+  return apiFetch<FolderOut>(API.FOLDERS.LIST, {
     method: "POST",
     body: JSON.stringify({ name, description: description ?? null, system_prompt: systemPrompt ?? null }),
   });
@@ -250,20 +253,20 @@ export async function apiUpdateFolder(
   folderId: string,
   patch: { name?: string; description?: string; system_prompt?: string; is_open?: boolean },
 ): Promise<FolderOut> {
-  return apiFetch<FolderOut>(`/api/v1/folders/${folderId}`, {
+  return apiFetch<FolderOut>(API.FOLDERS.GET(folderId), {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
 }
 
 export async function apiDeleteFolder(folderId: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/folders/${folderId}`, { method: "DELETE" });
+  return apiFetch<void>(API.FOLDERS.GET(folderId), { method: "DELETE" });
 }
 
 // ── Auth extras ───────────────────────────────────────────────────────────────
 
 export async function apiChangePassword(currentPassword: string, newPassword: string): Promise<void> {
-  return apiFetch<void>("/api/v1/auth/change-password", {
+  return apiFetch<void>(API.AUTH.ME + "/change-password", {
     method: "POST",
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   });
@@ -287,7 +290,7 @@ export type AdminStatsOut = {
 };
 
 export async function apiAdminStats(): Promise<AdminStatsOut> {
-  return apiFetch<AdminStatsOut>("/api/v1/admin/stats");
+  return apiFetch<AdminStatsOut>(API.ADMIN.STATS);
 }
 
 export type RatingEntryOut = {
@@ -303,7 +306,7 @@ export type RatingEntryOut = {
 export async function apiRateMessage(
   chatId: string, messageId: string, rating: "positive" | "negative" | null,
 ): Promise<void> {
-  await apiFetch(`/api/v1/chats/${chatId}/messages/${messageId}/rating`, {
+  await apiFetch(`${API.CHATS.MESSAGES(chatId)}/${messageId}/rating`, {
     method: "PATCH",
     body: JSON.stringify({ rating }),
   });
@@ -314,29 +317,29 @@ export async function apiAdminRatings(
 ): Promise<RatingEntryOut[]> {
   const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
   if (rating) params.set("rating", rating);
-  return apiFetch<RatingEntryOut[]>(`/api/v1/admin/ratings?${params}`);
+  return apiFetch<RatingEntryOut[]>(`${API.ADMIN.RATINGS}?${params}`);
 }
 
 export async function apiAdminListUsers(skip = 0, limit = 50): Promise<AdminUserOut[]> {
-  return apiFetch<AdminUserOut[]>(`/api/v1/admin/users?skip=${skip}&limit=${limit}`);
+  return apiFetch<AdminUserOut[]>(`${API.ADMIN.USERS}?skip=${skip}&limit=${limit}`);
 }
 
 export async function apiAdminUpdateUser(
   userId: string,
   patch: { role?: string; is_active?: boolean; name?: string },
 ): Promise<AdminUserOut> {
-  return apiFetch<AdminUserOut>(`/api/v1/admin/users/${userId}`, {
+  return apiFetch<AdminUserOut>(API.ADMIN.USER(`${userId}`, {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
 }
 
 export async function apiAdminDeleteUser(userId: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/admin/users/${userId}`, { method: "DELETE" });
+  return apiFetch<void>(API.ADMIN.USER(`${userId}`, { method: "DELETE" });
 }
 
 export async function apiAdminOllamaModels(): Promise<{ models: { name: string; size: number }[] }> {
-  return apiFetch<{ models: { name: string; size: number }[] }>("/api/v1/admin/ollama/models");
+  return apiFetch<{ models: { name: string; size: number }[] }>(API.ADMIN.OLLAMA_PULL.replace("/pull", "/models"));
 }
 
 export type OllamaModelCapabilities = {
@@ -351,7 +354,7 @@ export type OllamaModelCapabilities = {
 
 export async function apiAdminOllamaModelCapabilities(modelName: string): Promise<OllamaModelCapabilities> {
   return apiFetch<OllamaModelCapabilities>(
-    `/api/v1/admin/ollama/models/${encodeURIComponent(modelName)}/capabilities`,
+    `${API.ADMIN.OLLAMA_PULL.replace("/pull", "/models")}/${encodeURIComponent(modelName)}/capabilities`,
   );
 }
 
@@ -365,7 +368,7 @@ export async function apiAdminOllamaPull(
   signal?: AbortSignal,
 ): Promise<void> {
   const token = getStoredToken();
-  const res = await fetch(`${BASE}/api/v1/admin/ollama/pull`, {
+  const res = await fetch(`${BASE}${API.ADMIN.OLLAMA_PULL}`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -394,7 +397,7 @@ export async function apiAdminOllamaPull(
 }
 
 export async function apiAdminOllamaDelete(modelName: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/admin/ollama/models/${encodeURIComponent(modelName)}`, {
+  return apiFetch<void>(`${API.ADMIN.OLLAMA_PULL.replace("/pull", "/models")}/${encodeURIComponent(modelName)}`, {
     method: "DELETE",
   });
 }
@@ -423,7 +426,7 @@ export type KnowledgeItem = {
 
 export async function apiListWorkspaceItems(type?: WorkspaceItemType): Promise<WorkspaceItem[]> {
   const qs = type ? `?item_type=${type}` : "";
-  return apiFetch<WorkspaceItem[]>(`/api/v1/workspace/items${qs}`);
+  return apiFetch<WorkspaceItem[]>(`${API.WORKSPACE.ITEMS}${qs}`);
 }
 
 export async function apiCreateWorkspaceItem(
@@ -432,7 +435,7 @@ export async function apiCreateWorkspaceItem(
   data: Record<string, unknown> = {},
   is_enabled = true,
 ): Promise<WorkspaceItem> {
-  return apiFetch<WorkspaceItem>("/api/v1/workspace/items", {
+  return apiFetch<WorkspaceItem>(API.WORKSPACE.ITEMS, {
     method: "POST",
     body: JSON.stringify({ item_type, name, data, is_enabled }),
   });
@@ -442,25 +445,25 @@ export async function apiUpdateWorkspaceItem(
   id: string,
   patch: { name?: string; data?: Record<string, unknown>; is_enabled?: boolean },
 ): Promise<WorkspaceItem> {
-  return apiFetch<WorkspaceItem>(`/api/v1/workspace/items/${id}`, {
+  return apiFetch<WorkspaceItem>(API.WORKSPACE.ITEM(id), {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
 }
 
 export async function apiDeleteWorkspaceItem(id: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/workspace/items/${id}`, { method: "DELETE" });
+  return apiFetch<void>(API.WORKSPACE.ITEM(id), { method: "DELETE" });
 }
 
 export async function apiListKnowledge(): Promise<KnowledgeItem[]> {
-  return apiFetch<KnowledgeItem[]>("/api/v1/workspace/knowledge");
+  return apiFetch<KnowledgeItem[]>(API.WORKSPACE.KNOWLEDGE);
 }
 
 export async function apiUploadKnowledge(file: File): Promise<KnowledgeItem> {
   const fd = new FormData();
   fd.append("file", file);
   const token = getStoredToken();
-  const res = await fetch(`${BASE}/api/v1/workspace/knowledge`, {
+  const res = await fetch(`${BASE}${API.WORKSPACE.KNOWLEDGE}`, {
     method: "POST",
     credentials: "include",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -474,7 +477,7 @@ export async function apiUploadKnowledge(file: File): Promise<KnowledgeItem> {
 }
 
 export async function apiDeleteKnowledge(id: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/workspace/knowledge/${id}`, { method: "DELETE" });
+  return apiFetch<void>(API.WORKSPACE.KNOWLEDGE_ITEM(id), { method: "DELETE" });
 }
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -487,14 +490,14 @@ export type TaskResponse = {
 };
 
 export async function apiGetTask(taskId: string): Promise<TaskResponse> {
-  return apiFetch<TaskResponse>(`/api/v1/tasks/${taskId}`);
+  return apiFetch<TaskResponse>(API.TASKS.GET(taskId));
 }
 
 export async function apiEnqueueKnowledgeProcess(
   knowledgeId: string,
   file: File,
   embeddingProvider: "openai" | "ollama" = "ollama",
-  embeddingModel = "nomic-embed-text",
+  embeddingModel = DEFAULT_EMBEDDING_MODEL,
 ): Promise<TaskResponse> {
   const fd = new FormData();
   fd.append("knowledge_id", knowledgeId);
@@ -502,7 +505,7 @@ export async function apiEnqueueKnowledgeProcess(
   fd.append("embedding_model", embeddingModel);
   fd.append("file", file);
   const token = getStoredToken();
-  const res = await fetch(`${BASE}/api/v1/tasks/knowledge/process`, {
+  const res = await fetch(`${BASE}${API.TASKS.KNOWLEDGE.PROCESS}`, {
     method: "POST",
     credentials: "include",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -524,7 +527,7 @@ export async function apiEnqueueAgentTask(body: {
   temperature?: number;
   chat_id?: string;
 }): Promise<TaskResponse> {
-  return apiFetch<TaskResponse>("/api/v1/tasks/ai/agent", {
+  return apiFetch<TaskResponse>(API.TASKS.AI.AGENT, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -535,7 +538,7 @@ export async function apiEnqueueImageAnalyze(
   prompt = "이 이미지를 자세히 설명해줘.",
   provider: "openai" | "ollama" = "ollama",
 ): Promise<TaskResponse> {
-  return apiFetch<TaskResponse>("/api/v1/tasks/image/analyze", {
+  return apiFetch<TaskResponse>(API.TASKS.IMAGE.ANALYZE, {
     method: "POST",
     body: JSON.stringify({ source, prompt, provider }),
   });
@@ -546,7 +549,7 @@ export async function apiEnqueueImageResize(
   maxSize = 1024,
   quality = 85,
 ): Promise<TaskResponse> {
-  return apiFetch<TaskResponse>("/api/v1/tasks/image/resize", {
+  return apiFetch<TaskResponse>(API.TASKS.IMAGE.RESIZE, {
     method: "POST",
     body: JSON.stringify({ source, max_size: maxSize, quality }),
   });
@@ -557,7 +560,7 @@ export async function apiEnqueueRemoveBackground(
   model: "birefnet-general" | "birefnet-portrait" | "u2net" = "birefnet-general",
   alphMatting = true,
 ): Promise<TaskResponse> {
-  return apiFetch<TaskResponse>("/api/v1/tasks/image/remove-background", {
+  return apiFetch<TaskResponse>(API.TASKS.IMAGE.REMOVE_BG, {
     method: "POST",
     body: JSON.stringify({ source, model, alpha_matting: alphMatting }),
   });
@@ -571,7 +574,7 @@ export async function apiEnqueueComposeStudio(
   bgColor2 = "#e0e0e0",
   size = 1024,
 ): Promise<TaskResponse> {
-  return apiFetch<TaskResponse>("/api/v1/tasks/image/compose-studio", {
+  return apiFetch<TaskResponse>(API.TASKS.IMAGE.COMPOSE, {
     method: "POST",
     body: JSON.stringify({
       foreground_b64: foregroundB64,
@@ -589,7 +592,7 @@ export async function apiEnqueueSegmentClick(
   x: number,
   y: number,
 ): Promise<TaskResponse> {
-  return apiFetch<TaskResponse>("/api/v1/tasks/image/segment-click", {
+  return apiFetch<TaskResponse>(API.TASKS.IMAGE.SEGMENT, {
     method: "POST",
     body: JSON.stringify({ source, x, y }),
   });
@@ -602,7 +605,7 @@ export async function apiEnqueueEditImage(
   provider: "gpt-image-1" | "comfyui" = "gpt-image-1",
   size = "1024x1024",
 ): Promise<TaskResponse> {
-  return apiFetch<TaskResponse>("/api/v1/tasks/image/edit", {
+  return apiFetch<TaskResponse>(API.TASKS.IMAGE.EDIT, {
     method: "POST",
     body: JSON.stringify({ source, mask, prompt, provider, size }),
   });
@@ -714,18 +717,18 @@ export type PublicSettings = {
 };
 
 export async function apiGetAdminSettings(): Promise<AdminSettings> {
-  return apiFetch<AdminSettings>("/api/v1/admin/settings");
+  return apiFetch<AdminSettings>(API.ADMIN.SETTINGS);
 }
 
 export async function apiPatchAdminSettings(patch: Partial<AdminSettings>): Promise<AdminSettings> {
-  return apiFetch<AdminSettings>("/api/v1/admin/settings", {
+  return apiFetch<AdminSettings>(API.ADMIN.SETTINGS, {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
 }
 
 export async function apiGetPublicSettings(): Promise<PublicSettings> {
-  const res = await fetch("/api/v1/admin/settings/public");
+  const res = await fetch(API.ADMIN.SETTINGS_PUBLIC);
   if (!res.ok) {
     // Graceful fallback — if settings endpoint not available, assume defaults
     return { google_oauth_enabled: true, github_oauth_enabled: true, allow_signup: true };

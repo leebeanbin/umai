@@ -22,6 +22,7 @@ import uuid
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
+from app.core.redis_keys import key_chat_channel
 from app.core.constants import (
     WS_MAX_CONN_PER_USER_PER_ROOM, WS_MAX_CONN_TASK_CHANNEL,
     WS_MAX_MESSAGE_BYTES, WS_TOKEN_REVALIDATE_INTERVAL,
@@ -138,7 +139,7 @@ async def chat_ws(
     # 5. pub/sub 구독 (독립 연결)
     pubsub_client = await get_pubsub_client()
     pubsub = pubsub_client.pubsub()
-    await pubsub.subscribe(f"chat:{chat_id}")
+    await pubsub.subscribe(key_chat_channel(chat_id))
 
     forward_task  = asyncio.create_task(_pubsub_forward(pubsub, websocket))
     reauth_task   = asyncio.create_task(_periodic_token_revalidate(websocket, token))
@@ -159,7 +160,7 @@ async def chat_ws(
         forward_task.cancel()
         reauth_task.cancel()
         manager.remove(chat_id, meta)
-        await pubsub.unsubscribe(f"chat:{chat_id}")
+        await pubsub.unsubscribe(key_chat_channel(chat_id))
         await pubsub_client.aclose()
 
 

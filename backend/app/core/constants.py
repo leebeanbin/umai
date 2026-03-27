@@ -96,3 +96,12 @@ AGENT_STDERR_MAX_CHARS = 1024
 # ── Knowledge 청킹 ────────────────────────────────────────────────────────────
 KNOWLEDGE_DEFAULT_CHUNK_SIZE    = 1000  # 토큰 단위
 KNOWLEDGE_DEFAULT_CHUNK_OVERLAP = 100   # 청크 간 겹침
+
+# ── 지원 파일 형식 ─────────────────────────────────────────────────────────────
+SUPPORTED_DOCUMENT_TYPES: frozenset[str] = frozenset({
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain",
+    "text/markdown",
+    "text/x-markdown",
+})

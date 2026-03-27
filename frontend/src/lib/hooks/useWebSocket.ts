@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import { getStoredToken, isAuthenticated } from "@/lib/api/backendClient";
+import { API } from "@/lib/api/endpoints";
 import {
   WS_MAX_RECONNECT_ATTEMPTS, WS_BACKOFF_BASE_MS, WS_BACKOFF_EXPONENT,
   WS_BACKOFF_JITTER_MS, WS_BACKOFF_MAX_MS, WS_PING_INTERVAL_MS,
@@ -60,7 +61,7 @@ export function useChatSocket(
 
       // M9: 재연결 시 신선한 토큰 사용
       const token = getStoredToken();
-      const url   = `${WS_BASE}/ws/chat/${chatId}?token=${encodeURIComponent(token)}`;
+      const url   = `${WS_BASE}${API.WS.CHAT(chatId, token)}`;
       const ws    = new WebSocket(url);
       wsRef.current = ws;
 
@@ -118,7 +119,7 @@ export function useTaskSocket(
 
     // M9: 재연결 시 신선한 토큰 사용
     const token = getStoredToken();
-    const url   = `${WS_BASE}/ws/tasks?token=${encodeURIComponent(token)}`;
+    const url   = `${WS_BASE}${API.WS.TASKS(token)}`;
     const ws    = new WebSocket(url);
     wsRef.current = ws;
 

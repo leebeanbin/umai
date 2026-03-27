@@ -2,6 +2,11 @@ import json
 
 from redis.asyncio import Redis, from_url
 from app.core.config import settings
+from app.core.redis_keys import (
+    key_access, key_session, key_user_cache,
+    key_oauth_code, key_oauth_origin,
+    key_ws_rate_limit,
+)
 from app.core.constants import (
     REDIS_MAX_CONNECTIONS, REDIS_SOCKET_CONNECT_TIMEOUT, REDIS_SOCKET_TIMEOUT,
     USER_CACHE_TTL as _USER_CACHE_TTL,
@@ -56,7 +61,7 @@ async def publish_event(channel: str, payload: dict) -> None:
 async def check_ws_rate_limit(user_id: str, limit: int = WS_RATE_LIMIT_PER_MINUTE) -> bool:
     """WebSocket 메시지 rate limit (1분 슬라이딩 윈도우). True = 허용."""
     r = await get_redis()
-    key = f"ws_rate:{user_id}"
+    key = key_ws_rate_limit(user_id)
     count = await r.incr(key)
     if count == 1:
         await r.expire(key, WS_RATE_LIMIT_WINDOW)
@@ -94,19 +99,19 @@ ACCESS_TTL = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60  # config 값에서 파�
 async def access_set(token: str, user_id: str):
     """액세스 토큰 발급 시 Redis 등록."""
     r = await get_redis()
-    await r.setex(f"access:{token}", ACCESS_TTL, user_id)
+    await r.setex(key_access(token), ACCESS_TTL, user_id)
 
 
 async def access_get(token: str) -> str | None:
     """Redis에 존재하면 user_id 반환, 없으면 None (만료 또는 폐기)."""
     r = await get_redis()
-    return await r.get(f"access:{token}")
+    return await r.get(key_access(token))
 
 
 async def access_del(token: str):
     """로그아웃 시 즉시 폐기."""
     r = await get_redis()
-    await r.delete(f"access:{token}")
+    await r.delete(key_access(token))
 
 
 # ── Refresh token (장기, rotation 방식) ──────────────────────────────────────
@@ -114,18 +119,18 @@ async def access_del(token: str):
 async def session_set(token: str, user_id: str, ttl_days: int = 30):
     """JWT 리프레시 토큰 → user_id 매핑."""
     r = await get_redis()
-    await r.setex(f"session:{token}", ttl_days * 86400, user_id)
+    await r.setex(key_session(token), ttl_days * 86400, user_id)
 
 
 async def session_get(token: str) -> str | None:
     r = await get_redis()
-    return await r.get(f"session:{token}")
+    return await r.get(key_session(token))
 
 
 async def session_del(token: str):
     """로그아웃 / rotation: 리프레시 토큰 무효화."""
     r = await get_redis()
-    await r.delete(f"session:{token}")
+    await r.delete(key_session(token))
 
 
 # ── User 캐시 (N+1 방지) ─────────────────────────────────────────────────────
@@ -136,17 +141,17 @@ USER_CACHE_TTL = _USER_CACHE_TTL
 
 async def user_cache_set(user_id: str, user_json: str):
     r = await get_redis()
-    await r.setex(f"user:{user_id}", USER_CACHE_TTL, user_json)
+    await r.setex(key_user_cache(user_id), USER_CACHE_TTL, user_json)
 
 
 async def user_cache_get(user_id: str) -> str | None:
     r = await get_redis()
-    return await r.get(f"user:{user_id}")
+    return await r.get(key_user_cache(user_id))
 
 
 async def user_cache_del(user_id: str):
     r = await get_redis()
-    await r.delete(f"user:{user_id}")
+    await r.delete(key_user_cache(user_id))
 
 
 # ── OAuth 단기 코드 교환 ──────────────────────────────────────────────────────
@@ -156,12 +161,12 @@ OAUTH_CODE_TTL = _OAUTH_CODE_TTL
 
 async def oauth_code_set(code: str, payload_json: str):
     r = await get_redis()
-    await r.setex(f"oauth_code:{code}", OAUTH_CODE_TTL, payload_json)
+    await r.setex(key_oauth_code(code), OAUTH_CODE_TTL, payload_json)
 
 
 async def oauth_code_pop(code: str) -> str | None:
     r = await get_redis()
-    key = f"oauth_code:{code}"
+    key = key_oauth_code(code)
     payload = await r.get(key)
     if payload:
         await r.delete(key)
@@ -175,12 +180,12 @@ OAUTH_ORIGIN_TTL = _OAUTH_ORIGIN_TTL
 
 async def oauth_origin_set(state: str, origin: str):
     r = await get_redis()
-    await r.setex(f"oauth_origin:{state}", OAUTH_ORIGIN_TTL, origin)
+    await r.setex(key_oauth_origin(state), OAUTH_ORIGIN_TTL, origin)
 
 
 async def oauth_origin_pop(state: str) -> str | None:
     r = await get_redis()
-    key = f"oauth_origin:{state}"
+    key = key_oauth_origin(state)
     origin = await r.get(key)
     if origin:
         await r.delete(key)

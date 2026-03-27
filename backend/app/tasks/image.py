@@ -21,6 +21,9 @@ from celery.utils.log import get_task_logger
 from PIL import Image
 
 from app.core.config import settings
+from app.core.redis_keys import key_task_dalle_cache
+from app.core.model_registry import OPENAI_DALLE_3, OPENAI_GPT_IMAGE_1
+from app.core.http_headers import openai_auth_headers
 from app.tasks._utils import publish_task_done
 
 logger = get_task_logger(__name__)
@@ -403,7 +406,7 @@ def compose_studio(
                 raise ValueError("OPENAI_API_KEY not configured")
             # Retry 시 이중 과금 방지: DALL-E 결과를 Redis에 캐시 (2시간)
             _r = _get_task_redis()
-            _cache_key = f"task_dalle:{self.request.id}"
+            _cache_key = key_task_dalle_cache(self.request.id)
             bg_b64 = _r.get(_cache_key)
             if bg_b64 is None:
                 enhanced_prompt = (
@@ -416,7 +419,7 @@ def compose_studio(
                         "https://api.openai.com/v1/images/generations",
                         headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
                         json={
-                            "model": "dall-e-3",
+                            "model": OPENAI_DALLE_3,
                             "prompt": enhanced_prompt,
                             "n": 1,
                             "size": "1024x1024",
@@ -521,7 +524,7 @@ def edit_image(
                         "mask":  ("mask.png",  mask_bytes, "image/png"),
                     },
                     data={
-                        "model": "gpt-image-1",
+                        "model": OPENAI_GPT_IMAGE_1,
                         "prompt": prompt,
                         "n": "1",
                         "size": size,

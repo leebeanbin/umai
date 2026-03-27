@@ -1,0 +1,70 @@
+"""
+Redis 키 빌더 — 모든 키 패턴을 한 곳에서 관리.
+
+사용 목적:
+  - 키 접두어 오타·불일치 방지
+  - 키 변경 시 이 파일만 수정
+  - 타입 힌트로 인자 실수 방지
+
+규칙:
+  - 함수 이름은 key_<domain>_<entity> 형식
+  - 반환값은 항상 str (Redis 키)
+"""
+
+
+# ── 인증 ───────────────────────────────────────────────────────────────────────
+
+def key_access(token: str) -> str:
+    """단기 액세스 토큰 → user_id 매핑."""
+    return f"access:{token}"
+
+
+def key_session(token: str) -> str:
+    """장기 리프레시 토큰 → user_id 매핑."""
+    return f"session:{token}"
+
+
+def key_user_cache(user_id: str) -> str:
+    """유저 객체 캐시 (N+1 방지)."""
+    return f"user:{user_id}"
+
+
+# ── OAuth ──────────────────────────────────────────────────────────────────────
+
+def key_oauth_code(code: str) -> str:
+    """OAuth one-time 코드 → 토큰 페이로드."""
+    return f"oauth_code:{code}"
+
+
+def key_oauth_origin(state: str) -> str:
+    """OAuth state → frontend origin 매핑."""
+    return f"oauth_origin:{state}"
+
+
+# ── Celery 태스크 ──────────────────────────────────────────────────────────────
+
+def key_task_owner(task_id: str) -> str:
+    """task_id → owner user_id (태스크 소유권 검증)."""
+    return f"task_owner:{task_id}"
+
+
+def key_task_notification(user_id: str) -> str:
+    """태스크 완료 알림 pub/sub 채널 (사용자 전용)."""
+    return f"task:{user_id}"
+
+
+def key_task_dalle_cache(task_id: str) -> str:
+    """DALL-E 결과 캐시 (retry 이중 과금 방지)."""
+    return f"task_dalle:{task_id}"
+
+
+# ── WebSocket ─────────────────────────────────────────────────────────────────
+
+def key_ws_rate_limit(user_id: str) -> str:
+    """WebSocket 메시지 rate limit 슬라이딩 윈도우."""
+    return f"ws_rate:{user_id}"
+
+
+def key_chat_channel(chat_id: str) -> str:
+    """채팅방 이벤트 pub/sub 채널."""
+    return f"chat:{chat_id}"
