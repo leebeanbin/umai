@@ -345,6 +345,8 @@ export function useChat(chatId?: string) {
   }, [push]);
 
   const regenerate = useCallback((messageId: string) => {
+    // abort any in-flight generation before starting a new one
+    abortRef.current?.abort();
     const snap = msgRef.current;
     const idx  = snap.findIndex((m) => m.id === messageId);
     if (idx < 0) return;
@@ -352,7 +354,7 @@ export function useChat(chatId?: string) {
     if (!userMsg) return;
     push((prev) => prev.filter((m) => m.id !== messageId), false);
     send(userMsg.content, []);
-  }, [push, send]);
+  }, [push, send, abortRef]);
 
   const clear = useCallback(() => {
     setMessages([]);
