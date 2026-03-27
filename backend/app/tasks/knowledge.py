@@ -6,38 +6,16 @@ Knowledge Base 처리 태스크 (knowledge queue)
 - process_and_embed  : 파이프라인: 파싱 → 청킹 → 임베딩 → 저장 (단일 태스크)
 """
 import io
-import json
-import os
 from typing import Literal
 
-import httpx
 import tiktoken
 from celery import shared_task
 from celery.utils.log import get_task_logger
 
-from app.core.config import settings
+from app.tasks._utils import publish_task_done
+from app.services.embedding_service import embed_texts_sync
 
 logger = get_task_logger(__name__)
-
-OLLAMA_URL     = settings.OLLAMA_URL
-OPENAI_API_KEY = settings.OPENAI_API_KEY
-
-
-def _publish_task_done(task_id: str, task_name: str) -> None:
-    """태스크 완료를 소유자 전용 Redis 채널에 발행. non-fatal."""
-    try:
-        import redis as _sync_redis
-        r = _sync_redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-        owner = r.get(f"task_owner:{task_id}")
-        if owner:
-            r.publish(f"task:{owner}", json.dumps({
-                "type": "task_done",
-                "task_id": task_id,
-                "task": task_name,
-            }))
-        r.close()
-    except Exception as _exc:
-        logger.warning("_publish_task_done failed: %s", _exc)
 
 
 # ── 텍스트 추출 ────────────────────────────────────────────────────────────────
@@ -87,34 +65,6 @@ def _chunk_text(
     return chunks
 
 
-# ── 임베딩 ────────────────────────────────────────────────────────────────────
-
-def _embed_openai(texts: list[str], model: str = "text-embedding-3-small") -> list[list[float]]:
-    if not OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY not configured")
-    with httpx.Client(timeout=60) as client:
-        r = client.post(
-            "https://api.openai.com/v1/embeddings",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            json={"model": model, "input": texts},
-        )
-        r.raise_for_status()
-    return [d["embedding"] for d in r.json()["data"]]
-
-
-def _embed_ollama(texts: list[str], model: str = "nomic-embed-text") -> list[list[float]]:
-    embeddings = []
-    with httpx.Client(timeout=60) as client:
-        for text in texts:
-            r = client.post(
-                f"{OLLAMA_URL}/api/embeddings",
-                json={"model": model, "prompt": text},
-            )
-            r.raise_for_status()
-            embeddings.append(r.json()["embedding"])
-    return embeddings
-
-
 # ── 태스크 ────────────────────────────────────────────────────────────────────
 
 @shared_task(bind=True, name="app.tasks.knowledge.process_document", max_retries=2)
@@ -147,9 +97,13 @@ def process_document(
                 db.commit()
 
         logger.info("process_document OK: id=%s chars=%d", knowledge_id, len(text))
-        return {"knowledge_id": knowledge_id, "text_length": len(text), "status": "ok"}
+        result = {"knowledge_id": knowledge_id, "text_length": len(text), "status": "ok"}
+        publish_task_done(self.request.id, "process_document")
+        return result
     except Exception as exc:
         logger.error("process_document failed: %s", exc)
+        if self.request.retries >= self.max_retries:
+            publish_task_done(self.request.id, "process_document")
         raise self.retry(exc=exc, countdown=10)
 
 
@@ -167,10 +121,7 @@ def embed_chunks(
     Returns: {"knowledge_id": str, "embedded_count": int}
     """
     try:
-        if embedding_provider == "openai":
-            vectors = _embed_openai(chunks, embedding_model)
-        else:
-            vectors = _embed_ollama(chunks, embedding_model)
+        vectors = embed_texts_sync(chunks, embedding_provider, embedding_model)
 
         # 임베딩 결과를 JSON으로 저장 (pgvector 없이도 동작)
         from app.core.database import sync_session
@@ -179,18 +130,22 @@ def embed_chunks(
         with sync_session() as db:
             item = db.get(KnowledgeItem, knowledge_id)
             if item:
-                item.embeddings_json = json.dumps({
+                item.embeddings_json = {
                     "chunks": chunks,
                     "vectors": vectors,
                     "model": embedding_model,
                     "provider": embedding_provider,
-                })
+                }
                 db.commit()
 
         logger.info("embed_chunks OK: id=%s count=%d", knowledge_id, len(vectors))
-        return {"knowledge_id": knowledge_id, "embedded_count": len(vectors)}
+        result = {"knowledge_id": knowledge_id, "embedded_count": len(vectors)}
+        publish_task_done(self.request.id, "embed_chunks")
+        return result
     except Exception as exc:
         logger.error("embed_chunks failed: %s", exc)
+        if self.request.retries >= self.max_retries:
+            publish_task_done(self.request.id, "embed_chunks")
         raise self.retry(exc=exc, countdown=15)
 
 
@@ -219,24 +174,21 @@ def process_and_embed(
         text = _extract_text(raw, content_type, filename)
         chunks = _chunk_text(text, chunk_size, overlap)
 
-        if embedding_provider == "openai":
-            vectors = _embed_openai(chunks, embedding_model)
-        else:
-            vectors = _embed_ollama(chunks, embedding_model)
+        vectors = embed_texts_sync(chunks, embedding_provider, embedding_model)
 
         with sync_session() as db:
             item = db.get(KnowledgeItem, knowledge_id)
             if item:
                 item.content = text
-                item.embeddings_json = json.dumps({
+                item.embeddings_json = {
                     "chunks": chunks,
                     "vectors": vectors,
                     "model": embedding_model,
                     "provider": embedding_provider,
-                })
+                }
                 db.commit()
 
-        _publish_task_done(self.request.id, "process_and_embed")
+        publish_task_done(self.request.id, "process_and_embed")
         return {
             "knowledge_id": knowledge_id,
             "text_length": len(text),

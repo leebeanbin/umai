@@ -78,6 +78,23 @@ async def _pubsub_forward(pubsub, websocket: WebSocket) -> None:
         pass
 
 
+async def _periodic_token_revalidate(
+    websocket: WebSocket, token: str, interval_s: int = 300
+) -> None:
+    """M1: 5분마다 토큰 재검증 — 만료/로그아웃 후 stale 연결 종료."""
+    try:
+        while True:
+            await asyncio.sleep(interval_s)
+            uid = await access_get(token)
+            if not uid:
+                await websocket.close(code=4001)
+                return
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        pass
+
+
 # ── 채팅방 이벤트 채널 ────────────────────────────────────────────────────────
 
 @router.websocket("/ws/chat/{chat_id}")
@@ -120,7 +137,8 @@ async def chat_ws(
     pubsub = pubsub_client.pubsub()
     await pubsub.subscribe(f"chat:{chat_id}")
 
-    forward_task = asyncio.create_task(_pubsub_forward(pubsub, websocket))
+    forward_task  = asyncio.create_task(_pubsub_forward(pubsub, websocket))
+    reauth_task   = asyncio.create_task(_periodic_token_revalidate(websocket, token))
 
     try:
         while True:
@@ -136,6 +154,7 @@ async def chat_ws(
         pass
     finally:
         forward_task.cancel()
+        reauth_task.cancel()
         manager.remove(chat_id, meta)
         await pubsub.unsubscribe(f"chat:{chat_id}")
         await pubsub_client.aclose()
@@ -165,9 +184,14 @@ async def tasks_ws(
 
     pubsub_client = await get_pubsub_client()
     pubsub = pubsub_client.pubsub()
+    # Security: subscribe only to the authenticated user's private channel.
+    # publish_task_done() in tasks/_utils.py publishes to task:{owner_id}, so
+    # this subscription is already scoped to the current user — no cross-user
+    # event leakage is possible via this channel.
     await pubsub.subscribe(f"task:{user_id}")
 
     forward_task = asyncio.create_task(_pubsub_forward(pubsub, websocket))
+    reauth_task  = asyncio.create_task(_periodic_token_revalidate(websocket, token))
 
     try:
         while True:
@@ -176,6 +200,7 @@ async def tasks_ws(
         pass
     finally:
         forward_task.cancel()
+        reauth_task.cancel()
         manager.remove("__tasks__", meta)
         await pubsub.unsubscribe(f"task:{user_id}")
         await pubsub_client.aclose()

@@ -35,9 +35,15 @@ class Settings(BaseSettings):
 
     # ── Ollama ────────────────────────────────────────────────────────────────
     OLLAMA_URL: str = "http://localhost:11434"
-    # 제목 생성 전용 경량 모델 (llama3.2:1b 기본 — 빠르고 저렴)
-    OLLAMA_TITLE_MODEL: str = "llama3.2:1b"
+    # 제목 생성 전용 경량 모델 (phi4-mini:3.8b — llama3.2:1b보다 품질 우수, 동급 속도)
+    OLLAMA_TITLE_MODEL: str = "phi4-mini:3.8b"
     OLLAMA_TITLE_TIMEOUT: int = 10  # seconds
+    # 임베딩 모델
+    # qwen3-embedding:8b — 100+ 언어 지원, 2026년 다국어 SOTA
+    # mxbai-embed-large  — English SOTA (MTEB), OpenAI 3-large 능가
+    # bge-m3             — 다국어 + hybrid search (dense+sparse)
+    OLLAMA_EMBED_MODEL: str = "qwen3-embedding:8b"
+    OPENAI_EMBED_MODEL: str = "text-embedding-3-small"
 
     # ── 이미지 생성 백엔드 ────────────────────────────────────────────────────
     COMFYUI_URL: str = "http://localhost:8188"
@@ -53,6 +59,8 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""
+    XAI_API_KEY: str = ""        # xAI Grok (https://console.x.ai)
+    TAVILY_API_KEY: str = ""     # Tavily 웹 검색 (https://tavily.com)
 
     # ── CORS ─────────────────────────────────────────────────────────────────
     @property

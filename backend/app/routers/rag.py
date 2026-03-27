@@ -11,22 +11,23 @@ GET /rag/search?q=query&top_k=5
   - 없으면 Ollama nomic-embed-text
 """
 
-import json
 import math
 from typing import Any
 
-import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User
 from app.models.workspace import KnowledgeItem
 from app.routers.deps import get_current_user
+from app.services.embedding_service import embed_query_async
 
 router = APIRouter(prefix="/rag", tags=["rag"])
+limiter = Limiter(key_func=get_remote_address)
 
 # ── Embedding helpers ─────────────────────────────────────────────────────────
 
@@ -40,39 +41,6 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
-async def _embed_query(query: str) -> list[float] | None:
-    """쿼리 임베딩 생성. OpenAI → Ollama 순으로 시도."""
-    # 1. OpenAI (text-embedding-3-small, 1536-dim)
-    if settings.OPENAI_API_KEY:
-        try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                r = await client.post(
-                    "https://api.openai.com/v1/embeddings",
-                    headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
-                    json={"model": "text-embedding-3-small", "input": query},
-                )
-                if r.status_code == 200:
-                    return r.json()["data"][0]["embedding"]
-        except Exception:
-            pass
-
-    # 2. Ollama (nomic-embed-text, 768-dim)
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.post(
-                f"{settings.OLLAMA_URL}/api/embeddings",
-                json={"model": "nomic-embed-text", "prompt": query},
-            )
-            if r.status_code == 200:
-                emb = r.json().get("embedding")
-                if emb:
-                    return emb
-    except Exception:
-        pass
-
-    return None
-
-
 # ── Keyword fallback ──────────────────────────────────────────────────────────
 
 def _keyword_search(query: str, items: list[Any], top_k: int) -> list[dict]:
@@ -83,11 +51,8 @@ def _keyword_search(query: str, items: list[Any], top_k: int) -> list[dict]:
     for item in items:
         # 임베딩 JSON에서 청크 가져오기 or content를 500자 단위로 분할
         chunks: list[str] = []
-        try:
-            emb_data = json.loads(item.embeddings_json or "{}")
-            chunks = emb_data.get("chunks", [])
-        except Exception:
-            pass
+        emb_data: dict = item.embeddings_json or {}
+        chunks = emb_data.get("chunks", [])
 
         if not chunks and item.content:
             chunks = [item.content[i : i + 500] for i in range(0, len(item.content), 400)]
@@ -104,7 +69,9 @@ def _keyword_search(query: str, items: list[Any], top_k: int) -> list[dict]:
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
 @router.get("/search")
+@limiter.limit("30/minute")  # M11: 임베딩 연산 집약적 — 분당 30회 상한
 async def rag_search(
+    request: Request,
     q: str = Query(..., min_length=1, max_length=500, description="검색 쿼리"),
     top_k: int = Query(5, ge=1, le=20, description="반환할 최대 청크 수"),
     current_user: User = Depends(get_current_user),
@@ -118,10 +85,11 @@ async def rag_search(
     3. 코사인 유사도로 top_k 청크 반환
     4. 임베딩 불가 시 키워드 매칭 fallback
     """
-    # 유저의 임베딩 완료 항목 로드
+    # 유저의 임베딩 완료 항목 로드 (OOM 방지: 500건 상한)
     result = await db.execute(
         select(KnowledgeItem)
         .where(KnowledgeItem.user_id == current_user.id)
+        .limit(500)
     )
     items = result.scalars().all()
 
@@ -146,7 +114,7 @@ async def rag_search(
         }
 
     # 쿼리 임베딩 생성
-    query_vector = await _embed_query(q)
+    query_vector = await embed_query_async(q)
 
     if query_vector is None:
         # 임베딩 생성 실패 → 키워드 fallback
@@ -156,15 +124,20 @@ async def rag_search(
     # 코사인 유사도 계산
     scored: list[dict] = []
     for item in items_with_embeddings:
-        try:
-            emb_data = json.loads(item.embeddings_json)  # type: ignore[arg-type]
-            chunks: list[str]        = emb_data.get("chunks", [])
-            vectors: list[list[float]] = emb_data.get("vectors", [])
-        except (json.JSONDecodeError, TypeError):
+        emb_data: dict = item.embeddings_json or {}
+        if not emb_data:
             continue
+        chunks: list[str]          = emb_data.get("chunks", [])
+        vectors: list[list[float]] = emb_data.get("vectors", [])
 
-        # 임베딩 차원 불일치 방어 (OpenAI 1536 vs Ollama 768)
+        # C8: 임베딩 차원 불일치 — 무음 스킵 대신 경고 로깅
         if vectors and len(vectors[0]) != len(query_vector):
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "RAG: skipping item '%s' — vector dim mismatch (%d vs query %d). "
+                "Re-embed with current provider to fix.",
+                item.name, len(vectors[0]), len(query_vector),
+            )
             continue
 
         for chunk, vec in zip(chunks, vectors):

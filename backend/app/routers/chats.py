@@ -14,9 +14,10 @@
 - PATCH  /chats/{id}/members/{uid}    멤버 역할 변경 — owner only
 - DELETE /chats/{id}/members/{uid}    멤버 추방 — owner only
 """
+import asyncio
 import logging
 import uuid
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,10 @@ from app.models.user import User
 from app.routers.deps import get_current_user
 from app.core.config import settings
 from app.core.errors import ErrCode
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
 from app.core.redis import publish_event
 from app.services.chat_service import ChatService
 from app.services.title_service import (
@@ -93,7 +98,9 @@ async def list_chats(
 # ── 생성 ─────────────────────────────────────────────────────────────────────
 
 @router.post("", response_model=ChatOut, status_code=201)
+@limiter.limit("60/minute")  # M11: DoS 방지 — 분당 60개 채팅 생성 상한
 async def create_chat(
+    request: Request,
     body: CreateChatRequest,
     svc: ChatService = Depends(get_chat_service),
     user: User = Depends(get_current_user),
@@ -164,7 +171,9 @@ async def delete_chat(
 # ── 메시지 추가 (editor 이상) ─────────────────────────────────────────────────
 
 @router.post("/{chat_id}/messages", status_code=201)
+@limiter.limit("120/minute")  # M11: 메시지 플러드 방지
 async def add_message(
+    request: Request,
     chat_id: uuid.UUID,
     body: AddMessageRequest,
     svc: ChatService = Depends(get_chat_service),
@@ -179,18 +188,29 @@ async def add_message(
 # ── 메시지 배치 저장 — BackgroundTask write-back (editor 이상) ──────────────
 
 async def _save_messages_bg(chat_id: uuid.UUID, rows: list[dict]) -> None:
-    """채팅 메시지 배치를 DB에 저장하고 WS 이벤트를 발행한다 (BackgroundTask)."""
-    try:
-        async with AsyncSessionLocal() as db:
-            stmt = pg_insert(Message).values(rows).on_conflict_do_nothing(index_elements=["id"])
-            await db.execute(stmt)
-            await db.commit()
-        await publish_event(f"chat:{chat_id}", {
-            "type": "messages_saved",
-            "ids": [str(r["id"]) for r in rows],
-        })
-    except Exception as exc:
-        logger.warning("_save_messages_bg failed: %s", exc)  # non-fatal: localStorage 캐시로 복구
+    """채팅 메시지 배치를 DB에 저장하고 WS 이벤트를 발행한다 (BackgroundTask).
+    C3: 최대 3회 지수 백오프 재시도 — 무음 소실 방지.
+    """
+    for attempt in range(3):
+        try:
+            async with AsyncSessionLocal() as db:
+                stmt = pg_insert(Message).values(rows).on_conflict_do_nothing(index_elements=["id"])
+                await db.execute(stmt)
+                await db.commit()
+            await publish_event(f"chat:{chat_id}", {
+                "type": "messages_saved",
+                "ids": [str(r["id"]) for r in rows],
+            })
+            return  # 성공
+        except Exception as exc:
+            if attempt >= 2:
+                logger.error("_save_messages_bg failed after %d attempts (chat=%s): %s",
+                             attempt + 1, chat_id, exc)
+                return
+            wait = 2 ** attempt  # 1s, 2s
+            logger.warning("_save_messages_bg attempt %d failed, retry in %ds: %s",
+                           attempt + 1, wait, exc)
+            await asyncio.sleep(wait)
 
 
 @router.post("/{chat_id}/messages/batch", status_code=202)

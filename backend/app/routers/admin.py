@@ -17,7 +17,7 @@ from typing import Any, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -181,6 +181,9 @@ async def update_user(
         user.name = body.name
 
     await db.flush()
+    # M12: 캐시 무효화 — 수정된 역할/상태가 즉시 반영되도록
+    from app.core.redis import user_cache_del
+    await user_cache_del(str(user.id))
     return user
 
 
@@ -200,6 +203,9 @@ async def delete_user(
         ErrCode.USER_NOT_FOUND.raise_it()
 
     await db.delete(user)
+    # M12: 삭제된 유저 캐시도 즉시 제거
+    from app.core.redis import user_cache_del
+    await user_cache_del(str(user_id))
 
 
 # ── Ollama 프록시 ───────────────────────────────────────────────────────────────
@@ -346,20 +352,23 @@ async def delete_ollama_model(
 # ── 시스템 설정 헬퍼 ─────────────────────────────────────────────────────────────
 
 async def _get_settings_row(db: AsyncSession) -> SystemSettings:
-    result = await db.execute(select(SystemSettings).where(SystemSettings.id == 1))
-    row = result.scalar_one_or_none()
-    if row is None:
-        row = SystemSettings(id=1, data=json.dumps(DEFAULT_SETTINGS))
-        db.add(row)
-        await db.flush()
-    return row
+    # UPSERT: 동시 INSERT 경쟁 방지 (PK 충돌 → ON CONFLICT DO NOTHING → 재조회)
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    await db.execute(
+        pg_insert(SystemSettings)
+        .values(id=1, data=DEFAULT_SETTINGS)
+        .on_conflict_do_nothing(index_elements=["id"])
+    )
+    result = await db.execute(
+        select(SystemSettings)
+        .where(SystemSettings.id == 1)
+        .with_for_update()  # C2: 동시 PATCH lost-update 방지
+    )
+    return result.scalar_one()
 
 
 def _parse_settings(row: SystemSettings) -> dict:
-    try:
-        data = json.loads(row.data)
-    except Exception:
-        data = {}
+    data: dict = row.data or {}
     # Deep merge with defaults to handle missing keys from older schemas
     merged: dict = {}
     for section, defaults in DEFAULT_SETTINGS.items():
@@ -406,6 +415,10 @@ async def list_enabled_models(
     # Google
     for mid in models_cfg.get("google_enabled", []):
         result.append({"id": mid, "name": mid, "provider": "Google"})
+
+    # xAI (Grok)
+    for mid in models_cfg.get("xai_enabled", []):
+        result.append({"id": mid, "name": mid, "provider": "xAI"})
 
     # Ollama — live query
     ollama_url = connections.get("ollama_url", "") or settings.OLLAMA_URL
@@ -457,17 +470,33 @@ async def get_settings(
 
 # ── PATCH /admin/settings (admin only) ──────────────────────────────────────────
 
+class SettingsPatch(BaseModel):
+    """Typed patch payload for system settings. Only known top-level sections are accepted."""
+    general:     dict[str, Any] | None = None
+    connections: dict[str, Any] | None = None
+    models:      dict[str, Any] | None = None
+    oauth:       dict[str, Any] | None = None
+    features:    dict[str, Any] | None = None
+    documents:   dict[str, Any] | None = None
+    audio:       dict[str, Any] | None = None
+    images:      dict[str, Any] | None = None
+    evaluations: dict[str, Any] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 @router.patch("/settings")
 async def patch_settings(
-    body: dict,
+    body: SettingsPatch,
     _admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """시스템 설정 부분 업데이트 (섹션 단위 또는 필드 단위)."""
+    patch_dict = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     row = await _get_settings_row(db)
     current = _parse_settings(row)
-    merged = _deep_merge(current, body)
-    row.data = json.dumps(merged)
+    merged = _deep_merge(current, patch_dict)
+    row.data = merged
     row.updated_at = datetime.now(timezone.utc)
     await db.flush()
     return merged

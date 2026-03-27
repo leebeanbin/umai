@@ -70,11 +70,8 @@ async def _check_oauth_enabled(db: AsyncSession, provider: str) -> None:
     row = result.scalar_one_or_none()
     enabled = False
     if row is not None:
-        try:
-            data = json.loads(row.data)
-            enabled = data.get("oauth", {}).get(f"{provider}_enabled", False)
-        except Exception:
-            pass
+        data: dict = row.data or {}
+        enabled = data.get("oauth", {}).get(f"{provider}_enabled", False)
     if not enabled:
         ErrCode.OAUTH_DISABLED.raise_it(f"{provider.capitalize()} OAuth is disabled")
 
@@ -158,8 +155,10 @@ async def refresh(request: Request):
     if not user_id:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
 
-    await session_del(token)
+    # M3: 새 토큰 먼저 생성 → 성공 후 기존 토큰 폐기
+    # (기존 순서: delete → create 시 create 실패 → 재로그인 강요)
     new_tokens = await make_tokens(user_id)
+    await session_del(token)
 
     res = JSONResponse({"access_token": new_tokens.access_token, "token_type": "bearer"})
     _set_refresh_cookie(res, new_tokens.refresh_token)

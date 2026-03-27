@@ -82,4 +82,8 @@ celery_app.conf.update(
     # run_agent: max_steps=10 × 120s = 1200s 가능 → 넉넉하게 설정
     task_soft_time_limit=1500,  # 25분 soft limit (graceful shutdown signal)
     task_time_limit=1800,       # 30분 hard kill
+
+    # visibility_timeout < soft_time_limit 보장 — 워커 강제 종료 후 이중 실행 방지
+    # Redis broker 전용 설정 (RabbitMQ는 무시됨)
+    broker_transport_options={"visibility_timeout": 900},  # 15분
 )
