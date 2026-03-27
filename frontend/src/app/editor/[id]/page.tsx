@@ -1,14 +1,21 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ArrowUp, ImageIcon, StopCircle, CheckCircle2 } from "lucide-react";
+import { ArrowUp, ImageIcon, Layers, MousePointer2, Scissors, StopCircle, CheckCircle2 } from "lucide-react";
 import { MaskCanvas, MaskCanvasHandle } from "@/components/canvas/MaskCanvas";
 import AssistPanel from "@/components/editor/AssistPanel";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { streamChat } from "@/lib/apis/chat";
 import { getModelCapabilities } from "@/lib/modelCapabilities";
 import { loadSettings } from "@/lib/appStore";
-import { getStoredToken } from "@/lib/api/backendClient";
+import {
+  apiEnqueueRemoveBackground,
+  apiEnqueueSegmentClick,
+  apiEnqueueEditImage,
+  apiEnqueueComposeStudio,
+} from "@/lib/api/backendClient";
+import type { BackgroundPreset } from "@/components/editor/AssistPanel";
+import { pollTask } from "@/lib/utils/pollTask";
 
 type Phase = "idle" | "masking" | "ready" | "queued" | "processing" | "succeeded" | "failed";
 type Variant = { id: string; rank: number; url: string };
@@ -26,8 +33,12 @@ export default function EditorSession() {
   const [variants, setVariants] = useState<Variant[]>([]);
   const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [engine, setEngine] = useState<"gpt-image-1" | "comfyui">("gpt-image-1");
+  const [segmentMode, setSegmentMode] = useState(false);
 
-  const canRun = !!sourceImage && instruction.trim().length >= 5 && hasMask && phase !== "queued" && phase !== "processing";
+  const SIZE = 1024;
+  const isBusy = phase === "queued" || phase === "processing";
+  const canRun = !!sourceImage && instruction.trim().length >= 5 && hasMask && !isBusy;
 
   /** Use a vision-capable model to generate a better DALL-E prompt from the image + instruction */
   function enhancePromptWithVision(imageDataUrl: string, userInstruction: string): Promise<string> {
@@ -39,7 +50,7 @@ export default function EditorSession() {
         messages: [{
           role: "user",
           content:
-            "You are a DALL-E 2 inpainting prompt expert. Look at the provided image, then rewrite the following editing instruction as a precise, detailed English inpainting prompt that accurately describes what should appear in the edited area. Output only the improved prompt — no explanation, no quotes, no extra text.\n\n" +
+            "You are a gpt-image-1 inpainting prompt expert. Look at the provided image, then rewrite the following editing instruction as a precise, detailed English inpainting prompt that accurately describes what should appear in the edited area. Output only the improved prompt — no explanation, no quotes, no extra text.\n\n" +
             `Instruction: ${userInstruction.trim()}`,
           images: [imageDataUrl],
         }],
@@ -69,88 +80,139 @@ export default function EditorSession() {
     e.target.value = "";
   }
 
+  async function handleRemoveBg() {
+    if (!sourceImage || isBusy) return;
+    setPhase("processing");
+    addLog("✂️ 배경 제거 중...");
+    try {
+      const task = await apiEnqueueRemoveBackground(sourceImage.dataUrl, "birefnet-general", true);
+      const res = await pollTask<{ b64: string; format: string }>(task.task_id, { maxPolls: 60 });
+      setSourceImage({ dataUrl: `data:image/png;base64,${res.b64}`, name: sourceImage.name });
+      setPhase("masking");
+      addLog("✅ 누끼 완료 (BiRefNet + alpha matting)");
+    } catch {
+      setPhase("failed");
+      addLog("❌ 배경 제거 실패");
+    }
+  }
+
+  async function handleCanvasClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (!segmentMode || !sourceImage || isBusy) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top)  / rect.height;
+    addLog(`🎯 세그먼트 중... (${(x * 100).toFixed(0)}%, ${(y * 100).toFixed(0)}%)`);
+    try {
+      const task = await apiEnqueueSegmentClick(sourceImage.dataUrl, x, y);
+      const res = await pollTask<{ mask_b64: string }>(task.task_id, { maxPolls: 30 });
+      maskRef.current?.loadMask(res.mask_b64);
+      setHasMask(true);
+      addLog("✅ 세그먼트 완료");
+    } catch {
+      addLog("❌ 세그먼트 실패");
+    }
+  }
+
+  async function handleApplyBackground(preset: BackgroundPreset) {
+    if (!sourceImage || isBusy) return;
+    setPhase("processing");
+
+    try {
+      // Step 1: BiRefNet + alpha matting으로 고품질 누끼
+      addLog(`✂️ 누끼 추출 중 (BiRefNet${preset.bgType !== "ai" ? ", 즉시 합성" : " + DALL-E 3"})...`);
+      const rmTask = await apiEnqueueRemoveBackground(
+        sourceImage.dataUrl,
+        "birefnet-general",
+        true,
+      );
+      const rmRes = await pollTask<{ b64: string; width: number; height: number }>(
+        rmTask.task_id, { maxPolls: 60 },
+      );
+      const fgB64 = rmRes.b64;
+      addLog("✅ 누끼 완료 — 배경 합성 중...");
+
+      // Step 2: 배경 합성 (solid/gradient는 즉시, ai는 DALL-E 3 생성 후 PIL composite)
+      const compTask = await apiEnqueueComposeStudio(
+        fgB64,
+        preset.prompt,
+        preset.bgType,
+        preset.bgColor ?? "#ffffff",
+        preset.bgColor2 ?? "#e0e0e0",
+        SIZE,
+      );
+      const compRes = await pollTask<{ b64: string }>(compTask.task_id, { maxPolls: 60 });
+
+      const resultDataUrl = `data:image/png;base64,${compRes.b64}`;
+      const newVariants: Variant[] = [{ id: crypto.randomUUID(), rank: 1, url: resultDataUrl }];
+      setVariants(newVariants);
+      setSelectedVariant(newVariants[0].id);
+      setPhase("succeeded");
+      addLog(`✅ ${preset.label} 배경 적용 완료`);
+    } catch (err) {
+      setPhase("failed");
+      addLog(`❌ 배경 교체 실패: ${(err as Error).message}`);
+    }
+  }
+
   async function runEdit() {
-    if (!sourceImage) return;
+    const maskDataUrl = maskRef.current?.exportMaskDataUrl();
+    if (!sourceImage || !maskDataUrl) {
+      setPhase("failed");
+      addLog(!sourceImage ? "❌ 이미지를 업로드해주세요." : "❌ 마스크를 그려주세요.");
+      return;
+    }
+    await runEditWithParams(sourceImage.dataUrl, maskDataUrl, instruction);
+  }
+
+  async function runEditWithParams(imgDataUrl: string, rawMaskDataUrl: string, prompt: string) {
     setPhase("queued");
     addLog(t("editor.log.sending"));
-
-    // 1) OpenAI 키 확인
-    const capRes = await fetch("/api/image").catch(() => null);
-    const caps = capRes?.ok ? await capRes.json() as { openai: boolean } : null;
-    if (!caps?.openai) {
-      setPhase("failed");
-      addLog("❌ 이미지 편집에는 OpenAI API 키(DALL-E 2)가 필요합니다. 관리자 설정 → Connections에서 키를 추가해주세요.");
-      return;
-    }
-
-    // 2) 마스크 추출 및 DALL-E 형식으로 반전
-    //    Canvas mask: 흰색 = 편집 영역, 투명 = 유지 영역
-    //    DALL-E mask: 투명 = 편집 영역, 불투명 = 유지 영역  → 색상 반전 필요
-    const maskDataUrl = maskRef.current?.exportMaskDataUrl();
-    if (!maskDataUrl) {
-      setPhase("failed");
-      addLog("❌ 마스크를 그려주세요.");
-      return;
-    }
-
     setPhase("processing");
     addLog(t("editor.log.processing"));
 
     try {
-      // 3) Vision 모델로 DALL-E 프롬프트 자동 개선 (vision 모델 연결 시)
+      // Vision 모델로 프롬프트 자동 개선
       const caps = getModelCapabilities(loadSettings().selectedModel);
-      let finalPrompt = instruction.trim();
+      let finalPrompt = prompt.trim();
       if (caps.vision) {
         addLog("🔍 이미지 분석 중 (멀티모달 프롬프트 개선)...");
-        finalPrompt = await enhancePromptWithVision(sourceImage.dataUrl, instruction.trim());
-        if (finalPrompt !== instruction.trim()) {
+        const enhanced = await enhancePromptWithVision(imgDataUrl, finalPrompt);
+        if (enhanced !== finalPrompt) {
+          finalPrompt = enhanced;
           addLog(`✨ 개선된 프롬프트: ${finalPrompt.slice(0, 80)}${finalPrompt.length > 80 ? "…" : ""}`);
         }
       }
 
-      // 4) 마스크 반전: 흰색↔투명 교환, 512x512로 크롭/패드 (DALL-E 2는 정사각형 요구)
-      const SIZE = 1024;
-      const invertedMaskBlob = await invertAndSquareMask(maskDataUrl, SIZE);
-      const squaredImageBlob = await squareImage(sourceImage.dataUrl, SIZE);
+      // 마스크 반전 + 정사각형 패딩
+      const invertedMaskDataUrl = await blobToDataUrl(await invertAndSquareMask(rawMaskDataUrl, SIZE));
+      const squaredImageDataUrl  = await blobToDataUrl(await squareImage(imgDataUrl, SIZE));
 
-      // 5) API 호출
-      const fd = new FormData();
-      fd.append("image",  squaredImageBlob, "image.png");
-      fd.append("mask",   invertedMaskBlob, "mask.png");
-      fd.append("prompt", finalPrompt);
-      fd.append("n",      "2");
-      fd.append("size",   `${SIZE}x${SIZE}`);
+      addLog(`🖌️ ${engine === "comfyui" ? "FLUX.1 Fill" : "gpt-image-1"} 인페인팅 중...`);
+      const task = await apiEnqueueEditImage(squaredImageDataUrl, invertedMaskDataUrl, finalPrompt, engine, `${SIZE}x${SIZE}`);
+      const res = await pollTask<{ b64: string | null; url: string | null; prompt_id?: string }>(task.task_id, { maxPolls: 60 });
 
-      const token = getStoredToken();
-      const res = await fetch("/api/image/edit", {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: fd,
-      });
-      const data = await res.json() as { images?: { url: string }[]; error?: string };
+      const imageUrl = res.b64
+        ? `data:image/png;base64,${res.b64}`
+        : res.url ?? null;
 
-      if (!res.ok || data.error) {
-        setPhase("failed");
-        addLog(`❌ ${data.error ?? "편집 실패"}`);
+      if (!imageUrl) {
+        setPhase("succeeded");
+        addLog(`✅ ComfyUI 작업 전송됨 (prompt_id: ${res.prompt_id ?? "?"})`);
         return;
       }
 
-      const newVariants: Variant[] = (data.images ?? []).map((img, i) => ({
-        id: crypto.randomUUID(),
-        rank: i + 1,
-        url: img.url,
-      }));
+      const newVariants: Variant[] = [{ id: crypto.randomUUID(), rank: 1, url: imageUrl }];
       setVariants(newVariants);
-      setSelectedVariant(newVariants[0]?.id ?? null);
+      setSelectedVariant(newVariants[0].id);
       setPhase("succeeded");
-      addLog(t("editor.log.done").replace("{n}", String(newVariants.length)));
+      addLog(t("editor.log.done").replace("{n}", "1"));
     } catch (err) {
       setPhase("failed");
       addLog(`❌ ${(err as Error).message}`);
     }
   }
 
-  /** DALL-E 2 마스크: 흰색→투명(편집 영역), 투명→흰색(유지 영역), 정사각형으로 맞춤 */
+  /** gpt-image-1 마스크: 흰색→투명(편집 영역), 투명→흰색(유지 영역), 정사각형으로 맞춤 */
   async function invertAndSquareMask(dataUrl: string, size: number): Promise<Blob> {
     const img = await loadImage(dataUrl);
     const canvas = document.createElement("canvas");
@@ -226,6 +288,39 @@ export default function EditorSession() {
     );
   }
 
+  function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res(reader.result as string);
+      reader.onerror = rej;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /** 투명 픽셀을 흰색(편집 영역), 불투명 픽셀을 투명(유지 영역)으로 변환 — DALL-E 형식 마스크 */
+  async function generateTransparencyMask(dataUrl: string, size: number): Promise<string> {
+    const img = await loadImage(dataUrl);
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(img, 0, 0, size, size);
+    const { data: px } = ctx.getImageData(0, 0, size, size);
+    const id = ctx.createImageData(size, size);
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i + 3] < 10) {
+        // 투명 픽셀 → 흰색 불투명 (DALL-E: 편집 영역)
+        id.data[i] = id.data[i + 1] = id.data[i + 2] = 255;
+        id.data[i + 3] = 255;
+      } else {
+        // 불투명 픽셀 → 투명 (DALL-E: 유지 영역)
+        id.data[i] = id.data[i + 1] = id.data[i + 2] = 0;
+        id.data[i + 3] = 0;
+      }
+    }
+    ctx.putImageData(id, 0, 0);
+    return canvas.toDataURL("image/png");
+  }
+
   const displayImage = variants.find((v) => v.id === selectedVariant)?.url ?? sourceImage?.dataUrl ?? null;
 
   return (
@@ -255,7 +350,7 @@ export default function EditorSession() {
                 : "bg-hover text-text-muted cursor-not-allowed"
             }`}
           >
-            {phase === "queued" || phase === "processing" ? (
+            {isBusy ? (
               <><StopCircle size={14} />{t("editor.running")}</>
             ) : (
               <><ArrowUp size={14} />{t("editor.runEdit")}</>
@@ -291,6 +386,41 @@ export default function EditorSession() {
               <ImageIcon size={13} />{t("editor.uploadImage")}
             </button>
             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+
+            {sourceImage && (
+              <>
+                <button
+                  onClick={handleRemoveBg}
+                  disabled={isBusy}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-elevated border border-border text-text-secondary hover:border-accent/50 hover:text-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Scissors size={13} />누끼
+                </button>
+
+                <button
+                  onClick={() => setSegmentMode((v) => !v)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                    segmentMode
+                      ? "bg-accent/15 border-accent/50 text-accent"
+                      : "bg-elevated border-border text-text-secondary hover:border-accent/50 hover:text-accent"
+                  }`}
+                >
+                  <MousePointer2 size={13} />{segmentMode ? "클릭 모드 ON" : "클릭 세그먼트"}
+                </button>
+
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-elevated border border-border">
+                  <Layers size={12} className="text-text-muted" />
+                  <select
+                    value={engine}
+                    onChange={(e) => setEngine(e.target.value as "gpt-image-1" | "comfyui")}
+                    className="text-xs text-text-secondary bg-transparent outline-none cursor-pointer"
+                  >
+                    <option value="gpt-image-1">gpt-image-1</option>
+                    <option value="comfyui">FLUX.1 Fill</option>
+                  </select>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Variant 선택 */}
@@ -320,7 +450,16 @@ export default function EditorSession() {
         </div>
 
         {/* 캔버스 영역 */}
-        <div className="flex-1 overflow-auto p-4">
+        <div
+          className="flex-1 overflow-auto p-4"
+          onClick={segmentMode ? handleCanvasClick : undefined}
+          style={segmentMode ? { cursor: "crosshair" } : undefined}
+        >
+          {segmentMode && (
+            <div className="mb-2 text-xs text-accent bg-accent/10 border border-accent/20 rounded-lg px-3 py-1.5">
+              클릭 세그먼트 모드 — 오브젝트를 클릭하면 자동으로 마스크가 생성됩니다
+            </div>
+          )}
           <MaskCanvas
             ref={maskRef}
             imageSrc={displayImage}
@@ -339,6 +478,7 @@ export default function EditorSession() {
           phase={phase}
           imageSrc={sourceImage?.dataUrl}
           onApplySuggestion={(s) => setInstruction(s)}
+          onApplyBackground={handleApplyBackground as (p: BackgroundPreset) => void}
         />
       </div>
     </div>

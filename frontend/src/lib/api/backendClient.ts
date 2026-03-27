@@ -518,7 +518,7 @@ export async function apiEnqueueKnowledgeProcess(
 export async function apiEnqueueAgentTask(body: {
   messages: { role: string; content: string }[];
   model: string;
-  provider?: "openai" | "anthropic" | "ollama";
+  provider?: "openai" | "anthropic" | "google" | "xai" | "ollama";
   enabled_tools?: string[];
   max_steps?: number;
   temperature?: number;
@@ -552,6 +552,62 @@ export async function apiEnqueueImageResize(
   });
 }
 
+export async function apiEnqueueRemoveBackground(
+  source: string,
+  model: "birefnet-general" | "birefnet-portrait" | "u2net" = "birefnet-general",
+  alphMatting = true,
+): Promise<TaskResponse> {
+  return apiFetch<TaskResponse>("/api/v1/tasks/image/remove-background", {
+    method: "POST",
+    body: JSON.stringify({ source, model, alpha_matting: alphMatting }),
+  });
+}
+
+export async function apiEnqueueComposeStudio(
+  foregroundB64: string,
+  backgroundPrompt: string,
+  bgType: "solid" | "gradient" | "ai" = "ai",
+  bgColor = "#ffffff",
+  bgColor2 = "#e0e0e0",
+  size = 1024,
+): Promise<TaskResponse> {
+  return apiFetch<TaskResponse>("/api/v1/tasks/image/compose-studio", {
+    method: "POST",
+    body: JSON.stringify({
+      foreground_b64: foregroundB64,
+      background_prompt: backgroundPrompt,
+      bg_type: bgType,
+      bg_color: bgColor,
+      bg_color2: bgColor2,
+      size,
+    }),
+  });
+}
+
+export async function apiEnqueueSegmentClick(
+  source: string,
+  x: number,
+  y: number,
+): Promise<TaskResponse> {
+  return apiFetch<TaskResponse>("/api/v1/tasks/image/segment-click", {
+    method: "POST",
+    body: JSON.stringify({ source, x, y }),
+  });
+}
+
+export async function apiEnqueueEditImage(
+  source: string,
+  mask: string,
+  prompt: string,
+  provider: "gpt-image-1" | "comfyui" = "gpt-image-1",
+  size = "1024x1024",
+): Promise<TaskResponse> {
+  return apiFetch<TaskResponse>("/api/v1/tasks/image/edit", {
+    method: "POST",
+    body: JSON.stringify({ source, mask, prompt, provider, size }),
+  });
+}
+
 // ── Admin Settings ─────────────────────────────────────────────────────────────
 
 export type AdminSettingsGeneral = {
@@ -571,6 +627,8 @@ export type AdminSettingsConnections = {
   openai_base_url: string;
   anthropic_key: string;
   google_key: string;
+  xai_key: string;
+  tavily_key: string;
   custom_name: string;
   custom_base_url: string;
   custom_key: string;
@@ -580,6 +638,7 @@ export type AdminSettingsModels = {
   openai_enabled: string[];
   anthropic_enabled: string[];
   google_enabled: string[];
+  xai_enabled: string[];
   ollama_enabled: string[];
 };
 

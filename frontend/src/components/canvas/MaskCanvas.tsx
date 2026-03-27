@@ -7,6 +7,7 @@ export type MaskCanvasHandle = {
   exportMaskDataUrl: () => string | null;
   hasMask: () => boolean;
   clear: () => void;
+  loadMask: (b64: string) => void;
 };
 
 type Tool = "brush" | "rect";
@@ -38,6 +39,17 @@ export const MaskCanvas = forwardRef<MaskCanvasHandle, Props>(function MaskCanva
     },
     hasMask: () => masked,
     clear,
+    loadMask: (b64: string) => {
+      const ctx = canvasRef.current?.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, width, height);
+      const img = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, width, height);
+        setMask(true);
+      };
+      img.src = b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`;
+    },
   }));
 
   useEffect(() => { clear(); }, [imageSrc]);

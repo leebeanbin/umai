@@ -1,16 +1,41 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Lightbulb, Sparkles, StopCircle, Zap } from "lucide-react";
+import { AlertTriangle, ImageIcon, Lightbulb, Sparkles, StopCircle, Zap } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { streamChat } from "@/lib/apis/chat";
 
 type Phase = "idle" | "masking" | "ready" | "queued" | "processing" | "succeeded" | "failed";
 
+export type BackgroundPreset = {
+  label: string;
+  icon: string;
+  bgType: "solid" | "gradient" | "ai";
+  bgColor?: string;
+  bgColor2?: string;
+  prompt: string;
+};
+
+export const BACKGROUNDS: BackgroundPreset[] = [
+  // solid / gradient (즉시, API 비용 없음)
+  { label: "화이트",    icon: "⬜", bgType: "solid",    bgColor: "#ffffff", prompt: "" },
+  { label: "블랙",     icon: "⬛", bgType: "solid",    bgColor: "#111111", prompt: "" },
+  { label: "그레이",    icon: "🔳", bgType: "gradient", bgColor: "#f5f5f5", bgColor2: "#c0c0c0", prompt: "" },
+  { label: "크림",     icon: "🟫", bgType: "gradient", bgColor: "#fdf6ec", bgColor2: "#e8d5b0", prompt: "" },
+  // AI 생성 배경 (DALL-E 3, 실제 사진 품질)
+  { label: "선셋",     icon: "🌅", bgType: "ai", prompt: "beautiful golden sunset sky, warm orange and pink gradient clouds, cinematic" },
+  { label: "도시 야경", icon: "🌃", bgType: "ai", prompt: "city night skyline, glowing windows, bokeh lights, cinematic photography" },
+  { label: "숲 배경",  icon: "🌿", bgType: "ai", prompt: "lush green forest, natural soft dappled light, shallow depth of field" },
+  { label: "Bokeh",  icon: "✨", bgType: "ai", prompt: "soft pastel bokeh background, dreamy blur, shallow depth of field" },
+  { label: "우주",     icon: "🌌", bgType: "ai", prompt: "deep space nebula background, purple and blue cosmic, stars" },
+  { label: "스튜디오", icon: "💡", bgType: "ai", prompt: "professional studio photography background, soft gradient grey, rim lighting" },
+];
+
 type Props = {
   instruction: string;
   phase: Phase;
   onApplySuggestion: (text: string) => void;
+  onApplyBackground?: (preset: BackgroundPreset) => void;
   /** Optional source image (data URL) — passed to the vision model for image-aware prompt enhancement */
   imageSrc?: string;
 };
@@ -25,18 +50,20 @@ const PHASE_COLORS: Record<Phase, string> = {
   failed:     "text-danger",
 };
 
-export default function AssistPanel({ instruction, phase, onApplySuggestion, imageSrc }: Props) {
+export default function AssistPanel({
+  instruction, phase, onApplySuggestion, onApplyBackground, imageSrc,
+}: Props) {
   const { t } = useLanguage();
-  const [enhanced, setEnhanced]   = useState("");
+  // Snapshot pattern: store which instruction the enhancement was computed for.
+  // When instruction changes, enhanced/enhErr auto-derive as empty — no useEffect needed.
+  const [enhState, setEnhState] = useState({ forInstruction: instruction, text: "", err: "" });
   const [enhancing, setEnhancing] = useState(false);
-  const [enhErr, setEnhErr]       = useState("");
   const abortRef = useRef<AbortController | null>(null);
 
-  // Reset enhancement when instruction changes significantly
-  useEffect(() => {
-    setEnhanced("");
-    setEnhErr("");
-  }, [instruction]);
+  const enhanced = enhState.forInstruction === instruction ? enhState.text : "";
+  const enhErr   = enhState.forInstruction === instruction ? enhState.err  : "";
+  const setEnhanced = (text: string) => setEnhState({ forInstruction: instruction, text, err: "" });
+  const setEnhErr   = (err: string)  => setEnhState((s) => ({ ...s, forInstruction: instruction, err }));
 
   // Cleanup abort on unmount
   useEffect(() => () => { abortRef.current?.abort(); }, []);
@@ -58,8 +85,8 @@ export default function AssistPanel({ instruction, phase, onApplySuggestion, ima
     let built = "";
     const hasImage = !!imageSrc;
     const baseInstruction = hasImage
-      ? `You are a DALL-E 2 inpainting prompt expert. Look at the provided image, then rewrite the following editing instruction as a precise, detailed English inpainting prompt that accurately describes what should appear in the edited area. Output only the improved prompt — no explanation, no quotes, no extra text.\n\nInstruction: ${instruction.trim()}`
-      : `You are a DALL-E 2 inpainting prompt expert. Rewrite the following image editing instruction as a precise, detailed English inpainting prompt. Output only the improved prompt — no explanation, no quotes, no extra text.\n\nInstruction: ${instruction.trim()}`;
+      ? `You are a gpt-image-1 inpainting prompt expert. Look at the provided image, then rewrite the following editing instruction as a precise, detailed English inpainting prompt that accurately describes what should appear in the edited area. Output only the improved prompt — no explanation, no quotes, no extra text.\n\nInstruction: ${instruction.trim()}`
+      : `You are a gpt-image-1 inpainting prompt expert. Rewrite the following image editing instruction as a precise, detailed English inpainting prompt. Output only the improved prompt — no explanation, no quotes, no extra text.\n\nInstruction: ${instruction.trim()}`;
 
     await streamChat({
       signal: ctrl.signal,
@@ -147,7 +174,7 @@ export default function AssistPanel({ instruction, phase, onApplySuggestion, ima
 
           {!enhanced && !enhancing && (
             <p className="text-[10px] text-text-muted leading-relaxed px-0.5">
-              Ollama 또는 연결된 모델로 편집 지시문을 DALL-E 2에 최적화된 프롬프트로 자동 변환합니다.
+              Ollama 또는 연결된 모델로 편집 지시문을 gpt-image-1에 최적화된 프롬프트로 자동 변환합니다.
             </p>
           )}
         </div>
@@ -199,6 +226,38 @@ export default function AssistPanel({ instruction, phase, onApplySuggestion, ima
             {t("editor.applyPrompt")}
           </button>
         </div>
+
+        {/* 스튜디오 배경 프리셋 */}
+        {onApplyBackground && (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-1.5">
+              <ImageIcon size={13} className="text-accent" />
+              <p className="text-xs font-medium text-text-muted">스튜디오 배경</p>
+            </div>
+            <p className="text-[10px] text-text-muted leading-relaxed px-0.5">
+              자동 누끼 후 배경 교체. <span className="text-text-secondary">⬜⬛🔳🟫 즉시</span> · <span className="text-accent">AI 배경은 DALL-E 3 사용</span>
+            </p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {BACKGROUNDS.map((bg) => (
+                <button
+                  key={bg.label}
+                  onClick={() => onApplyBackground(bg)}
+                  disabled={phase === "queued" || phase === "processing"}
+                  className={`flex items-center gap-1.5 px-2 py-2 rounded-lg text-[10px] font-medium transition-colors text-left leading-tight
+                    disabled:opacity-40 disabled:cursor-not-allowed
+                    ${bg.bgType === "ai"
+                      ? "text-accent bg-accent/5 border border-accent/20 hover:bg-accent/10 hover:border-accent/40"
+                      : "text-text-secondary bg-elevated border border-border hover:border-accent/40 hover:text-accent"
+                    }`}
+                >
+                  <span>{bg.icon}</span>
+                  <span>{bg.label}</span>
+                  {bg.bgType === "ai" && <span className="ml-auto text-[9px] opacity-60">AI</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

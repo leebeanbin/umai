@@ -1,25 +1,32 @@
 /**
- * POST /api/image/edit — DALL-E 2 inpainting proxy
+ * POST /api/image/edit — gpt-image-1 inpainting proxy
  *
  * Accepts multipart FormData:
- *   image    File  PNG, < 4MB, square
+ *   image    File  PNG, square (1024×1024 recommended)
  *   mask     File  PNG same size; transparent pixels = areas to edit
  *   prompt   string
  *   n        string  "1"–"4"
- *   size     string  "256x256" | "512x512" | "1024x1024"
+ *   size     string  "1024x1024" | "1536x1024" | "1024x1536"
  *
- * Returns { images: [{ url: string }] }
+ * Returns { images: [{ b64: string }] }
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/api/verifyAuth";
+import { resolveSettingsKey } from "@/lib/api/settingsKeyResolver";
 
 export async function POST(req: NextRequest) {
-  if (!await verifyToken(req.headers.get("authorization"))) {
+  const authHeader = req.headers.get("authorization") ?? "";
+  if (!await verifyToken(authHeader)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const apiKey = process.env.OPENAI_API_KEY ?? "";
+  const apiKey = await resolveSettingsKey(
+    authHeader,
+    process.env.OPENAI_API_KEY,
+    { section: "images", field: "dalle_key" },
+    { section: "connections", field: "openai_key" },
+  );
   if (!apiKey) {
     return NextResponse.json({ error: "__NO_KEY__:openai" }, { status: 401 });
   }
@@ -39,10 +46,10 @@ export async function POST(req: NextRequest) {
   fd.append("image",  image,  "image.png");
   fd.append("mask",   mask,   "mask.png");
   fd.append("prompt", prompt);
-  fd.append("model",  "dall-e-2");
-  fd.append("n",      n ?? "2");
+  fd.append("model",  "gpt-image-1");
+  fd.append("n",      n ?? "1");
   fd.append("size",   size ?? "1024x1024");
-  fd.append("response_format", "url");
+  fd.append("response_format", "b64_json");
 
   const upstream = await fetch("https://api.openai.com/v1/images/edits", {
     method: "POST",
@@ -58,6 +65,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const data = await upstream.json() as { data: { url: string }[] };
-  return NextResponse.json({ images: data.data.map((d) => ({ url: d.url })) });
+  const data = await upstream.json() as { data: { b64_json: string }[] };
+  return NextResponse.json({ images: data.data.map((d) => ({ b64: d.b64_json })) });
 }
