@@ -92,14 +92,18 @@ export const API = {
 
   // ── Workflow ───────────────────────────────────────────────────────────────
   WORKFLOW: {
-    LIST:   `${V1}/workflow/`,
-    CREATE: `${V1}/workflow/`,
-    GET:    (id: string) => `${V1}/workflow/${id}`,
-    UPDATE: (id: string) => `${V1}/workflow/${id}`,
-    DELETE: (id: string) => `${V1}/workflow/${id}`,
-    RUN:    (id: string) => `${V1}/workflow/${id}/run`,
+    LIST:       `${V1}/workflow/`,
+    CREATE:     `${V1}/workflow/`,
+    GET:        (id: string) => `${V1}/workflow/${id}`,
+    UPDATE:     (id: string) => `${V1}/workflow/${id}`,
+    DELETE:     (id: string) => `${V1}/workflow/${id}`,
+    RUN:        (id: string) => `${V1}/workflow/${id}/run`,
+    RUNS_LIST:  (id: string, page = 1, limit = 20) =>
+      `${V1}/workflow/${id}/runs?page=${page}&limit=${limit}`,
+    STATS:      (id: string) => `${V1}/workflow/${id}/stats`,
     RUN_STATUS: (runId: string) => `${V1}/workflow/runs/${runId}`,
     RESUME:     (runId: string) => `${V1}/workflow/runs/${runId}/resume`,
+    CANCEL:     (runId: string) => `${V1}/workflow/runs/${runId}`,
   },
 
   // ── WebSocket ──────────────────────────────────────────────────────────────

@@ -210,6 +210,18 @@ export function NodeConfigPanel({ node, onChange, onClose }: NodeConfigPanelProp
             워크플로우 실행 시 입력값은 context에 자동으로 주입됩니다.
           </p>
         )}
+
+        {/* 실행 출력 인스펙터 — 실행 후 노드에 _output_data가 주입된 경우 표시 */}
+        {d._output_data && Object.keys(d._output_data as object).length > 0 && (
+          <div className="mt-2 pt-3 border-t border-border">
+            <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-2">
+              마지막 실행 출력
+            </p>
+            <pre className="text-[11px] text-text-primary bg-elevated rounded-lg px-3 py-2 whitespace-pre-wrap font-mono overflow-x-auto max-h-48 overflow-y-auto">
+              {JSON.stringify(d._output_data, null, 2)}
+            </pre>
+          </div>
+        )}
       </div>
     </aside>
   );

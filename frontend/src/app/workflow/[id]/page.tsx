@@ -39,7 +39,8 @@ import {
 // useWorkflowSocket: task:{user_id} 채널의 모든 이벤트 수신
 // (useTaskSocket은 task_done 만 필터링하므로 workflow_* 이벤트 수신 불가)
 import { useWorkflowSocket } from "@/lib/hooks/useWebSocket";
-import { Play, Save, Loader2, CheckCircle2, XCircle, PauseCircle } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Play, Save, Loader2, CheckCircle2, XCircle, PauseCircle, History } from "lucide-react";
 
 // ── 노드 타입 등록 ────────────────────────────────────────────────────────────
 
@@ -80,6 +81,7 @@ function RunStatusBadge({ run }: { run: RunOut | null }) {
 // ── 메인 컴포넌트 ─────────────────────────────────────────────────────────────
 
 function WorkflowCanvas({ workflowId }: { workflowId: string }) {
+  const router = useRouter();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
@@ -209,6 +211,8 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
             data: {
               ...n.data,
               _status: step.status,
+              // 완료된 노드의 출력 데이터 주입 → NodeConfigPanel에서 인스펙터로 표시
+              _output_data: step.output_data,
               // HumanNode suspended → 승인/거부 콜백을 fresh 참조로 주입
               ...(step.status === "suspended" && n.type === "human"
                 ? {
@@ -307,6 +311,12 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
           />
           {saving && <span className="text-[11px] text-text-muted">저장 중...</span>}
           <RunStatusBadge run={run} />
+          <button
+            onClick={() => router.push(`/workflow/${workflowId}/runs`)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-border hover:bg-hover text-xs font-medium text-text-primary transition-colors"
+          >
+            <History size={13} /> 기록
+          </button>
           <button
             onClick={handleSave}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-border hover:bg-hover text-xs font-medium text-text-primary transition-colors"

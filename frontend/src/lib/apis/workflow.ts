@@ -36,6 +36,24 @@ export interface RunOut {
   steps: RunStepOut[];
 }
 
+export interface RunListItem {
+  run_id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  duration_s: number | null;
+  step_count: number;
+}
+
+export interface WorkflowStats {
+  total_runs: number;
+  done: number;
+  failed: number;
+  suspended: number;
+  running: number;
+  avg_duration_s: number | null;
+}
+
 // xyflow 노드/엣지 최소 타입
 export interface AppNode {
   id: string;
@@ -106,4 +124,20 @@ export async function apiResumeRun(
     method: "POST",
     body: JSON.stringify({ approved, note }),
   });
+}
+
+export async function apiListRuns(
+  workflowId: string,
+  page = 1,
+  limit = 20,
+): Promise<RunListItem[]> {
+  return apiFetch<RunListItem[]>(API.WORKFLOW.RUNS_LIST(workflowId, page, limit));
+}
+
+export async function apiCancelRun(runId: string): Promise<void> {
+  await apiFetch<void>(API.WORKFLOW.CANCEL(runId), { method: "DELETE" });
+}
+
+export async function apiGetStats(workflowId: string): Promise<WorkflowStats> {
+  return apiFetch<WorkflowStats>(API.WORKFLOW.STATS(workflowId));
 }

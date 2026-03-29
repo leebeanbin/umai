@@ -16,9 +16,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -94,6 +94,24 @@ class RunOut(BaseModel):
 class ResumeRequest(BaseModel):
     approved: bool
     note: str = ""
+
+
+class RunListItem(BaseModel):
+    run_id: str
+    status: str
+    started_at: str
+    finished_at: str | None
+    duration_s: float | None
+    step_count: int
+
+
+class WorkflowStats(BaseModel):
+    total_runs: int
+    done: int
+    failed: int
+    suspended: int
+    running: int
+    avg_duration_s: float | None
 
 
 # ── 헬퍼 ─────────────────────────────────────────────────────────────────────
@@ -256,9 +274,9 @@ async def run_workflow(
     await db.commit()
     await db.refresh(run)
 
-    # Celery 비동기 실행
+    # Celery 비동기 실행 — task_id=run_id 로 설정해 취소 시 별도 컬럼 없이 revoke 가능
     from app.tasks.workflow import execute_workflow  # lazy import
-    execute_workflow.apply_async(args=[str(run.id)], queue="ai")
+    execute_workflow.apply_async(args=[str(run.id)], queue="ai", task_id=str(run.id))
 
     return _run_out(run, [])
 
@@ -339,3 +357,127 @@ async def resume_run(
     )
     steps = list(steps_result.scalars().all())
     return _run_out(run, steps)
+
+
+# ── 실행 히스토리 ──────────────────────────────────────────────────────────────
+
+@router.get("/{workflow_id}/runs", response_model=list[RunListItem])
+async def list_runs(
+    workflow_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[RunListItem]:
+    wf = await db.get(Workflow, uuid.UUID(workflow_id))
+    if not wf:
+        raise HTTPException(404, "Workflow not found")
+    _assert_owner(wf.owner_id, current_user, "Workflow")
+
+    runs_result = await db.execute(
+        select(WorkflowRun)
+        .where(WorkflowRun.workflow_id == wf.id)
+        .order_by(WorkflowRun.started_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+    )
+    runs = list(runs_result.scalars().all())
+
+    # 스텝 수 한번에 집계
+    if runs:
+        run_ids = [r.id for r in runs]
+        counts_result = await db.execute(
+            select(WorkflowRunStep.run_id, func.count().label("cnt"))
+            .where(WorkflowRunStep.run_id.in_(run_ids))
+            .group_by(WorkflowRunStep.run_id)
+        )
+        step_counts: dict[uuid.UUID, int] = {row.run_id: row.cnt for row in counts_result}
+    else:
+        step_counts = {}
+
+    items: list[RunListItem] = []
+    for r in runs:
+        duration = None
+        if r.finished_at and r.started_at:
+            duration = (r.finished_at - r.started_at).total_seconds()
+        items.append(RunListItem(
+            run_id=str(r.id),
+            status=r.status,
+            started_at=r.started_at.isoformat(),
+            finished_at=r.finished_at.isoformat() if r.finished_at else None,
+            duration_s=duration,
+            step_count=step_counts.get(r.id, 0),
+        ))
+    return items
+
+
+# ── 실행 취소 ─────────────────────────────────────────────────────────────────
+
+@router.delete("/runs/{run_id}", status_code=204)
+async def cancel_run(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    run = await db.get(WorkflowRun, uuid.UUID(run_id))
+    if not run:
+        raise HTTPException(404, "Run not found")
+    _assert_owner(run.owner_id, current_user, "Run")
+
+    if run.status not in ("running", "suspended"):
+        raise HTTPException(400, f"Cannot cancel run with status '{run.status}'")
+
+    # Celery task revoke — task_id == run_id 패턴
+    from app.core.celery_app import celery_app
+    celery_app.control.revoke(run_id, terminate=True, signal="SIGTERM")
+
+    run.status = "failed"
+    run.finished_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    from app.tasks._utils import publish_workflow_event
+    publish_workflow_event(str(run.owner_id), "workflow_failed", {
+        "run_id": run_id,
+        "error": "Cancelled by user",
+    })
+
+
+# ── 워크플로우 통계 ────────────────────────────────────────────────────────────
+
+@router.get("/{workflow_id}/stats", response_model=WorkflowStats)
+async def get_workflow_stats(
+    workflow_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowStats:
+    wf = await db.get(Workflow, uuid.UUID(workflow_id))
+    if not wf:
+        raise HTTPException(404, "Workflow not found")
+    _assert_owner(wf.owner_id, current_user, "Workflow")
+
+    result = await db.execute(
+        select(WorkflowRun).where(WorkflowRun.workflow_id == wf.id)
+    )
+    runs = list(result.scalars().all())
+
+    total = len(runs)
+    done = sum(1 for r in runs if r.status == "done")
+    failed = sum(1 for r in runs if r.status == "failed")
+    suspended = sum(1 for r in runs if r.status == "suspended")
+    running = sum(1 for r in runs if r.status == "running")
+
+    durations = [
+        (r.finished_at - r.started_at).total_seconds()
+        for r in runs
+        if r.finished_at and r.started_at and r.status == "done"
+    ]
+    avg_duration = sum(durations) / len(durations) if durations else None
+
+    return WorkflowStats(
+        total_runs=total,
+        done=done,
+        failed=failed,
+        suspended=suspended,
+        running=running,
+        avg_duration_s=avg_duration,
+    )
