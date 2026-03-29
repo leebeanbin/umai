@@ -68,3 +68,10 @@ def key_ws_rate_limit(user_id: str) -> str:
 def key_chat_channel(chat_id: str) -> str:
     """채팅방 이벤트 pub/sub 채널."""
     return f"chat:{chat_id}"
+
+
+# ── 워크플로우 ─────────────────────────────────────────────────────────────────
+
+def key_workflow_suspend(run_id: str) -> str:
+    """워크플로우 HumanNode 일시정지 상태 (TTL: 24h)."""
+    return f"wf_suspend:{run_id}"

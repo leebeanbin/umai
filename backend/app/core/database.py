@@ -43,7 +43,7 @@ async def get_db() -> AsyncSession:
 # ── Sync engine (Celery workers) ─────────────────────────────────────────────
 # asyncpg URL → psycopg2 URL 변환
 _sync_url = settings.DATABASE_URL.replace("+asyncpg", "").replace("postgresql+asyncpg", "postgresql")
-sync_engine = create_engine(_sync_url, pool_size=5, max_overflow=10, pool_pre_ping=True)
+sync_engine = create_engine(_sync_url, pool_size=20, max_overflow=40, pool_pre_ping=True, pool_recycle=3600)
 SyncSessionLocal = sessionmaker(sync_engine, expire_on_commit=False)
 
 
@@ -64,5 +64,5 @@ def sync_session() -> Session:
 async def create_tables():
     """개발용: 테이블 자동 생성 (프로덕션은 Alembic 사용)"""
     async with engine.begin() as conn:
-        from app.models import user, chat, workspace, settings  # noqa: F401
+        from app.models import user, chat, workspace, settings, workflow  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)

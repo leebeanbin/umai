@@ -58,14 +58,24 @@ async def publish_event(channel: str, payload: dict) -> None:
 
 # ── WebSocket rate limit ──────────────────────────────────────────────────────
 
+_RATE_LIMIT_SCRIPT = """
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+end
+return count
+"""
+
+
 async def check_ws_rate_limit(user_id: str, limit: int = WS_RATE_LIMIT_PER_MINUTE) -> bool:
-    """WebSocket 메시지 rate limit (1분 슬라이딩 윈도우). True = 허용."""
+    """WebSocket 메시지 rate limit (1분 슬라이딩 윈도우). True = 허용.
+
+    Lua 스크립트로 INCR+EXPIRE 원자적 실행 — TOCTOU 레이스 컨디션 방지.
+    """
     r = await get_redis()
     key = key_ws_rate_limit(user_id)
-    count = await r.incr(key)
-    if count == 1:
-        await r.expire(key, WS_RATE_LIMIT_WINDOW)
-    return count <= limit
+    count = await r.eval(_RATE_LIMIT_SCRIPT, 1, key, WS_RATE_LIMIT_WINDOW)  # type: ignore[arg-type]
+    return int(count) <= limit
 
 
 # ── 편의 헬퍼 ────────────────────────────────────────────────────────────────
@@ -165,12 +175,9 @@ async def oauth_code_set(code: str, payload_json: str):
 
 
 async def oauth_code_pop(code: str) -> str | None:
+    """OAuth 코드 원자적 조회+삭제 — getdel로 TOCTOU 레이스 방지 (Redis 6.2+)."""
     r = await get_redis()
-    key = key_oauth_code(code)
-    payload = await r.get(key)
-    if payload:
-        await r.delete(key)
-    return payload
+    return await r.getdel(key_oauth_code(code))
 
 
 # ── OAuth state → frontend origin ────────────────────────────────────────────
@@ -184,9 +191,6 @@ async def oauth_origin_set(state: str, origin: str):
 
 
 async def oauth_origin_pop(state: str) -> str | None:
+    """OAuth origin 원자적 조회+삭제 — getdel로 TOCTOU 레이스 방지 (Redis 6.2+)."""
     r = await get_redis()
-    key = key_oauth_origin(state)
-    origin = await r.get(key)
-    if origin:
-        await r.delete(key)
-    return origin
+    return await r.getdel(key_oauth_origin(state))

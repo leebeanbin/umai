@@ -32,6 +32,7 @@ celery_app = Celery(
         "app.tasks.image",
         "app.tasks.ai",
         "app.tasks.knowledge",
+        "app.tasks.workflow",
     ],
 )
 
@@ -58,6 +59,7 @@ celery_app.conf.task_routes = {
     "app.tasks.image.*":     {"queue": "image"},
     "app.tasks.ai.*":        {"queue": "ai"},
     "app.tasks.knowledge.*": {"queue": "knowledge"},
+    "app.tasks.workflow.*":  {"queue": "ai"},
 }
 
 # ── 직렬화 / 안정성 설정 ──────────────────────────────────────────────────────

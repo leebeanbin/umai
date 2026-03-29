@@ -90,6 +90,18 @@ export const API = {
     SEARCH: `${V1}/rag/search`,
   },
 
+  // ── Workflow ───────────────────────────────────────────────────────────────
+  WORKFLOW: {
+    LIST:   `${V1}/workflow/`,
+    CREATE: `${V1}/workflow/`,
+    GET:    (id: string) => `${V1}/workflow/${id}`,
+    UPDATE: (id: string) => `${V1}/workflow/${id}`,
+    DELETE: (id: string) => `${V1}/workflow/${id}`,
+    RUN:    (id: string) => `${V1}/workflow/${id}/run`,
+    RUN_STATUS: (runId: string) => `${V1}/workflow/runs/${runId}`,
+    RESUME:     (runId: string) => `${V1}/workflow/runs/${runId}/resume`,
+  },
+
   // ── WebSocket ──────────────────────────────────────────────────────────────
   WS: {
     CHAT:  (chatId: string, token: string) =>

@@ -3,8 +3,9 @@
 /**
  * WebSocket 클라이언트 훅
  *
- * useChatSocket(chatId)   — 채팅방 이벤트 수신 (messages_saved 등)
- * useTaskSocket()         — 태스크 완료 알림 수신 (task_done, 폴링 대체)
+ * useChatSocket(chatId)    — 채팅방 이벤트 수신 (messages_saved 등)
+ * useTaskSocket()          — 태스크 완료 알림 수신 (task_done 만 필터링)
+ * useWorkflowSocket()      — 워크플로우 이벤트 수신 (task:{user_id} 채널 전체 이벤트)
  *
  * 연결 URL: NEXT_PUBLIC_WS_URL env (없으면 ws://localhost:8000)
  * 인증:     ?token=<access_token> (HTTPS 환경에서만 안전)
@@ -141,7 +142,7 @@ export function useTaskSocket(
       clearInterval(pingInterval);
       wsRef.current = null;
       if (destroyedRef.current || e.code === 1000 || e.code === 4001) return;
-      if (attemptRef.current >= MAX_RECONNECT_ATTEMPTS) return;
+      if (attemptRef.current >= WS_MAX_RECONNECT_ATTEMPTS) return;
       // M8: 지수 백오프 재연결
       const delay = backoffMs(attemptRef.current++);
       setTimeout(() => connectRef.current?.(), delay);
@@ -156,6 +157,65 @@ export function useTaskSocket(
   useEffect(() => {
     connectRef.current = connect;
   }, [connect]);
+
+  useEffect(() => {
+    destroyedRef.current = false;
+    connect();
+    return () => {
+      destroyedRef.current = true;
+      wsRef.current?.close(1000);
+      wsRef.current = null;
+    };
+  }, [connect]);
+}
+
+// ── 워크플로우 이벤트 채널 ─────────────────────────────────────────────────────
+// task:{user_id} 채널에서 workflow_* 이벤트 타입도 수신해야 하므로
+// useTaskSocket과 달리 모든 이벤트를 그대로 콜백에 전달함.
+
+export function useWorkflowSocket(onEvent: (event: WsEvent) => void) {
+  const wsRef        = useRef<WebSocket | null>(null);
+  const onEventRef   = useRef(onEvent);
+  const connectRef   = useRef<(() => void) | null>(null);
+  const attemptRef   = useRef(0);
+  const destroyedRef = useRef(false);
+
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  }, [onEvent]);
+
+  const connect = useCallback(() => {
+    if (!isAuthenticated() || destroyedRef.current) return;
+
+    const token = getStoredToken();
+    const url   = `${WS_BASE}${API.WS.TASKS(token)}`;
+    const ws    = new WebSocket(url);
+    wsRef.current = ws;
+
+    ws.onmessage = (e) => {
+      try {
+        onEventRef.current(JSON.parse(e.data) as WsEvent);
+      } catch { /* ignore */ }
+    };
+
+    // keepalive ping
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send("ping");
+    }, WS_PING_INTERVAL_MS);
+
+    ws.onclose = (e) => {
+      clearInterval(pingInterval);
+      wsRef.current = null;
+      if (destroyedRef.current || e.code === 1000 || e.code === 4001) return;
+      if (attemptRef.current >= WS_MAX_RECONNECT_ATTEMPTS) return;
+      const delay = backoffMs(attemptRef.current++);
+      setTimeout(() => connectRef.current?.(), delay);
+    };
+
+    ws.onopen = () => { attemptRef.current = 0; };
+  }, []);
+
+  useEffect(() => { connectRef.current = connect; }, [connect]);
 
   useEffect(() => {
     destroyedRef.current = false;

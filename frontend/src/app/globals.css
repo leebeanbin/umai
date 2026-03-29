@@ -21,6 +21,20 @@
   --color-success:        #4ade80;
   --color-warning:        #fbbf24;
 
+  /* 워크플로우 노드 타입 색상 (라이트) */
+  --color-node-input:   #3b82f6;
+  --color-node-input-bg:#eff6ff;
+  --color-node-llm:     #8b5cf6;
+  --color-node-llm-bg:  #f5f3ff;
+  --color-node-tool:    #16a34a;
+  --color-node-tool-bg: #f0fdf4;
+  --color-node-human:   #d97706;
+  --color-node-human-bg:#fffbeb;
+  --color-node-branch:  #ea580c;
+  --color-node-branch-bg:#fff7ed;
+  --color-node-output:  #64748b;
+  --color-node-output-bg:#f8fafc;
+
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -32,6 +46,14 @@
   --color-hover:          #252733;
   --color-border:         #2a2d3a;
   --color-border-subtle:  #1f2130;
+
+  /* 워크플로우 노드 타입 색상 (다크) */
+  --color-node-input-bg:#1e3a5f;
+  --color-node-llm-bg:  #2e1065;
+  --color-node-tool-bg: #052e16;
+  --color-node-human-bg:#451a03;
+  --color-node-branch-bg:#431407;
+  --color-node-output-bg:#0f172a;
 
   --color-text-primary:   #e8eaf0;
   --color-text-secondary: #8b8fa8;

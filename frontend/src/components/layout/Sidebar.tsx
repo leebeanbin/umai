@@ -7,7 +7,7 @@ import {
   MessageSquare, ImageIcon, Plus, Search, Settings,
   ChevronRight, Folder, FolderOpen, MoreHorizontal,
   PenLine, Trash2, FolderPlus, X, LayoutGrid, PanelLeft,
-  FlaskConical, Shield, ChevronUp, Share2, FolderInput,
+  FlaskConical, Shield, ChevronUp, Share2, FolderInput, GitFork,
 } from "lucide-react";
 import ChatShareModal from "@/components/chat/ChatShareModal";
 import {
@@ -312,6 +312,7 @@ export default function Sidebar() {
           <IconNavItem href="/chat"       icon={<MessageSquare size={16} />} label={t("nav.chat")}       active={pathname === "/chat"} />
           <IconNavItem href="/editor"     icon={<ImageIcon size={16} />}     label={t("nav.editor")}     active={pathname.startsWith("/editor")} />
           <IconNavItem href="/workspace"  icon={<LayoutGrid size={16} />}    label={t("nav.workspace")}  active={pathname.startsWith("/workspace")} />
+          <IconNavItem href="/workflow"   icon={<GitFork size={16} />}       label={t("nav.workflow")}   active={pathname.startsWith("/workflow")} />
           <IconNavItem href="/playground" icon={<FlaskConical size={16} />}  label={t("nav.playground")} active={pathname.startsWith("/playground")} />
 
           <div className="flex-1" />
@@ -421,6 +422,7 @@ export default function Sidebar() {
             <NavItem href="/chat"       icon={<MessageSquare size={14} />} label={t("nav.chat")}       active={pathname === "/chat"} />
             <NavItem href="/editor"     icon={<ImageIcon size={14} />}     label={t("nav.editor")}     active={pathname.startsWith("/editor")} />
             <NavItem href="/workspace"  icon={<LayoutGrid size={14} />}    label={t("nav.workspace")}  active={pathname.startsWith("/workspace")} />
+            <NavItem href="/workflow"   icon={<GitFork size={14} />}       label={t("nav.workflow")}   active={pathname.startsWith("/workflow")} />
             <NavItem href="/playground" icon={<FlaskConical size={14} />}  label={t("nav.playground")} active={pathname.startsWith("/playground")} />
           </nav>
 
