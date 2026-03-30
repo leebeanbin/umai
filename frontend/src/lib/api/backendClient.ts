@@ -90,7 +90,7 @@ function clearTokens() {
 // Shared promise so concurrent 401 responses share one refresh call.
 let refreshPromise: Promise<boolean> | null = null;
 
-async function apiFetch<T>(
+export async function apiFetch<T>(
   path: string,
   init: RequestInit = {},
   retry = true,
@@ -328,14 +328,14 @@ export async function apiAdminUpdateUser(
   userId: string,
   patch: { role?: string; is_active?: boolean; name?: string },
 ): Promise<AdminUserOut> {
-  return apiFetch<AdminUserOut>(API.ADMIN.USER(`${userId}`, {
+  return apiFetch<AdminUserOut>(API.ADMIN.USER(userId), {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
 }
 
 export async function apiAdminDeleteUser(userId: string): Promise<void> {
-  return apiFetch<void>(API.ADMIN.USER(`${userId}`, { method: "DELETE" });
+  return apiFetch<void>(API.ADMIN.USER(userId), { method: "DELETE" });
 }
 
 export async function apiAdminOllamaModels(): Promise<{ models: { name: string; size: number }[] }> {

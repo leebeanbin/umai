@@ -12,8 +12,7 @@ import {
   useNodesState,
   type Connection,
   type Node,
-  type OnDrop,
-  type OnDragOver,
+  type Edge,
   ReactFlowProvider,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -83,7 +82,7 @@ function RunStatusBadge({ run }: { run: RunOut | null }) {
 function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   const router = useRouter();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [workflowName, setWorkflowName] = useState("New Workflow");
   const [run, setRun] = useState<RunOut | null>(null);
@@ -110,7 +109,7 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
     apiGetWorkflow(workflowId).then((wf) => {
       setWorkflowName(wf.name);
       if (wf.graph?.nodes) setNodes(wf.graph.nodes as Node[]);
-      if (wf.graph?.edges) setEdges(wf.graph.edges);
+      if (wf.graph?.edges) setEdges(wf.graph.edges as Edge[]);
     });
   }, [workflowId, setNodes, setEdges]);
 
@@ -144,13 +143,13 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   );
 
   // ── 드롭 (팔레트 → 캔버스) ───────────────────────────────────────────────
-  const onDragOver: OnDragOver = useCallback((e) => {
+  const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
   }, []);
 
-  const onDrop: OnDrop = useCallback(
-    (e) => {
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
       e.preventDefault();
       const raw = e.dataTransfer.getData("application/workflow-node");
       if (!raw) return;

@@ -61,8 +61,8 @@ export function useChatSocket(
       if (destroyedRef.current) return;
 
       // M9: 재연결 시 신선한 토큰 사용
-      const token = getStoredToken();
-      const url   = `${WS_BASE}${API.WS.CHAT(chatId, token)}`;
+      const token = getStoredToken() ?? "";
+      const url   = `${WS_BASE}${API.WS.CHAT(chatId!, token)}`;
       const ws    = new WebSocket(url);
       wsRef.current = ws;
 
@@ -119,7 +119,7 @@ export function useTaskSocket(
     if (!isAuthenticated() || destroyedRef.current) return;
 
     // M9: 재연결 시 신선한 토큰 사용
-    const token = getStoredToken();
+    const token = getStoredToken() ?? "";
     const url   = `${WS_BASE}${API.WS.TASKS(token)}`;
     const ws    = new WebSocket(url);
     wsRef.current = ws;
@@ -187,7 +187,7 @@ export function useWorkflowSocket(onEvent: (event: WsEvent) => void) {
   const connect = useCallback(() => {
     if (!isAuthenticated() || destroyedRef.current) return;
 
-    const token = getStoredToken();
+    const token = getStoredToken() ?? "";
     const url   = `${WS_BASE}${API.WS.TASKS(token)}`;
     const ws    = new WebSocket(url);
     wsRef.current = ws;
