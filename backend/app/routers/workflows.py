@@ -316,7 +316,6 @@ async def resume_run(
         run.finished_at = datetime.now(timezone.utc)
         await db.commit()
         from app.tasks._utils import publish_workflow_event
-        from app.tasks.workflow import execute_workflow  # noqa: F401 (import side-effect)
         publish_workflow_event(str(run.owner_id), "workflow_failed", {
             "run_id": run_id,
             "error": f"Human node '{node_id}' rejected: {body.note}",

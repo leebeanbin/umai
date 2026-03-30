@@ -18,6 +18,7 @@ const nextConfig: NextConfig = {
   },
 
   async headers() {
+    const isDev = process.env.NODE_ENV === "development";
     return [
       // ── 보안 헤더 (모든 경로) ─────────────────────────────────────────────
       {
@@ -37,21 +38,25 @@ const nextConfig: NextConfig = {
           // XSS 필터 (레거시 브라우저)
           { key: "X-XSS-Protection", value: "1; mode=block" },
           // Content-Security-Policy
-          // sha256 해시는 layout.tsx의 THEME_SCRIPT 인라인 스크립트 허용용
+          // 개발: Turbopack/HMR 인라인 스크립트 허용 (unsafe-inline)
+          // 운영: layout.tsx THEME_SCRIPT sha256 해시만 허용
           {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              // Next.js 인라인 스크립트(테마) + 청크 스크립트 허용
-              "script-src 'self' 'sha256-LF5M/cDVBp3pRxj7LvvnHVGyozxUrS/2arCIwarejmo='",
+              isDev
+                ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+                : "script-src 'self' 'sha256-LF5M/cDVBp3pRxj7LvvnHVGyozxUrS/2arCIwarejmo='",
               // Tailwind 인라인 스타일 허용
               "style-src 'self' 'unsafe-inline'",
               // 이미지: self + data URI (base64 업로드 미리보기) + HTTPS
               "img-src 'self' data: https:",
               // 폰트: Google Fonts
               "font-src 'self' https://fonts.gstatic.com",
-              // API 연결: same-origin + OAuth providers
-              "connect-src 'self' https://accounts.google.com https://github.com",
+              // API + WebSocket: same-origin + OAuth providers + ws/wss
+              isDev
+                ? "connect-src 'self' ws: wss: https://accounts.google.com https://github.com"
+                : "connect-src 'self' wss: https://accounts.google.com https://github.com",
               // iframe 완전 차단
               "frame-ancestors 'none'",
               // 폼 same-origin 전송만 허용

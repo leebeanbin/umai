@@ -24,7 +24,7 @@ from celery import shared_task
 from celery.utils.log import get_task_logger
 
 from app.core.database import sync_session
-from app.core.redis_keys import key_workflow_suspend, key_task_notification
+from app.core.redis_keys import key_workflow_suspend
 from app.tasks._utils import publish_workflow_event, _get_redis
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 
