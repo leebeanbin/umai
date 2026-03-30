@@ -36,12 +36,14 @@ export default function Sidebar() {
   const [showSearch, setShowSearch] = useState(false);
   // SSR/클라이언트 hydration 불일치 방지:
   // lazy initializer는 클라이언트에서만 실행되므로 SSR-safe.
-  const [folders, setFolders]   = useState<FolderType[]>(() =>
-    typeof window !== "undefined" ? loadFolders() : []
-  );
-  const [sessions, setSessions] = useState<Session[]>(() =>
-    typeof window !== "undefined" ? loadSessions() : []
-  );
+  const [folders, setFolders]   = useState<FolderType[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
+
+  // SSR/CSR hydration 불일치 방지: 클라이언트에서만 localStorage 로드
+  useEffect(() => {
+    setFolders(loadFolders());
+    setSessions(loadSessions());
+  }, []);
   const [showSettings, setShowSettings] = useState(false);
   const [contextMenu, setContextMenu]   = useState<ContextTarget | null>(null);
   const [shareSessionId, setShareSessionId] = useState<string | null>(null);
