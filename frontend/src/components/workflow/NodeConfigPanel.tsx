@@ -212,7 +212,9 @@ export function NodeConfigPanel({ node, onChange, onClose }: NodeConfigPanelProp
         )}
 
         {/* 실행 출력 인스펙터 — 실행 후 노드에 _output_data가 주입된 경우 표시 */}
-        {d._output_data && Object.keys(d._output_data as object).length > 0 && (
+        {d._output_data !== null &&
+          typeof d._output_data === "object" &&
+          Object.keys(d._output_data as Record<string, unknown>).length > 0 && (
           <div className="mt-2 pt-3 border-t border-border">
             <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-2">
               마지막 실행 출력

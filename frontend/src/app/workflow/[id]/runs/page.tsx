@@ -142,12 +142,15 @@ export default function RunsHistoryPage() {
 
   useEffect(() => {
     if (!workflowId) return;
+    setLoading(true); // 페이지 변경 시마다 로딩 상태 리셋
     Promise.all([
       apiListRuns(workflowId, page),
       apiGetStats(workflowId),
     ]).then(([r, s]) => {
       setRuns(r);
       setStats(s);
+    }).catch(() => {
+      // 에러 시 빈 상태 유지 — 스피너는 사라지게 처리
     }).finally(() => setLoading(false));
   }, [workflowId, page]);
 

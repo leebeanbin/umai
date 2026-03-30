@@ -11,7 +11,7 @@ export interface WorkflowOut {
   description: string;
   graph: { nodes: AppNode[]; edges: AppEdge[] };
   created_at: string;
-  updated_at: string;
+  updated_at: string | null; // onupdate 컬럼 — 첫 저장 전까지 null
 }
 
 export interface RunStepOut {
