@@ -68,10 +68,45 @@ def _resolve_template(text: str, context: dict) -> str:
 
 
 def _eval_condition(expr: str, context: dict) -> bool:
-    """BranchNode 조건식 안전 평가 (제한된 내장 함수만 허용)."""
+    """BranchNode 조건식 안전 평가 — AST 화이트리스트 검사 후 제한된 eval.
+
+    eval() 자체를 제거하면 비교/산술 표현식을 지원하기 어렵다. 대신
+    AST 노드를 허용 목록으로만 제한하여 샌드박스 탈출을 차단한다:
+      - Attribute 접근 차단 → __class__.__mro__ 등 우회 불가
+      - Import/Subscript/Lambda/Yield 등 금지
+      - Call은 len/str/int/float/bool 만 허용
+    """
+    import ast as _ast
+
+    _ALLOWED_NODES = (
+        _ast.Expression,
+        _ast.BoolOp, _ast.And, _ast.Or,
+        _ast.UnaryOp, _ast.Not, _ast.UAdd, _ast.USub,
+        _ast.Compare,
+        _ast.Lt, _ast.LtE, _ast.Gt, _ast.GtE, _ast.Eq, _ast.NotEq,
+        _ast.In, _ast.NotIn, _ast.Is, _ast.IsNot,
+        _ast.BinOp,
+        _ast.Add, _ast.Sub, _ast.Mult, _ast.Div, _ast.Mod, _ast.FloorDiv, _ast.Pow,
+        _ast.Constant,
+        _ast.Name,
+        _ast.Call,
+        _ast.List, _ast.Tuple,
+    )
+    _SAFE_FUNCS: dict = {"len": len, "str": str, "int": int, "float": float, "bool": bool}
+
     try:
-        safe_globals = {"__builtins__": {}, "len": len, "str": str, "int": int, "float": float}
-        return bool(eval(expr, safe_globals, dict(context)))  # noqa: S307
+        tree = _ast.parse(expr, mode="eval")
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ALLOWED_NODES):
+                logger.warning("_eval_condition: blocked AST node %s in %r", type(node).__name__, expr)
+                return False
+            if isinstance(node, _ast.Name) and node.id not in {**context, **_SAFE_FUNCS}:
+                return False
+            if isinstance(node, _ast.Call):
+                if not isinstance(node.func, _ast.Name) or node.func.id not in _SAFE_FUNCS:
+                    return False
+        safe_env = {**_SAFE_FUNCS, **{k: v for k, v in context.items()}}
+        return bool(eval(compile(tree, "<condition>", "eval"), {"__builtins__": {}}, safe_env))
     except Exception:
         return False
 
@@ -136,6 +171,17 @@ def execute_workflow(self, run_id: str) -> dict:
         ordered_nodes = _topological_sort(nodes, edges)
         context: dict = dict(run.context or {})
         context.update(run.inputs or {})
+
+        # BranchNode의 true/false 경로를 엣지 sourceHandle에서 미리 구성
+        # 프론트엔드가 true_targets/false_targets를 node_data에 저장하지 않아도 동작
+        branch_targets: dict[str, dict[str, list[str]]] = {}
+        for e in edges:
+            src, tgt = e.get("source"), e.get("target")
+            handle = e.get("sourceHandle")
+            if src and tgt and handle in ("true", "false"):
+                if src not in branch_targets:
+                    branch_targets[src] = {"true": [], "false": []}
+                branch_targets[src][handle].append(tgt)
 
         for node in ordered_nodes:
             node_id: str = node["id"]
@@ -241,9 +287,10 @@ def execute_workflow(self, run_id: str) -> dict:
                     result_bool = _eval_condition(condition, context)
                     output = {"condition": condition, "result": result_bool}
                     context[f"branch_{node_id}"] = result_bool
-                    # true_target / false_target 에 해당하지 않는 쪽 노드를 스킵
-                    true_targets = set(node_data.get("true_targets", []))
-                    false_targets = set(node_data.get("false_targets", []))
+                    # true/false 경로: node_data 우선, 없으면 엣지 sourceHandle에서 추출
+                    bt = branch_targets.get(node_id, {})
+                    true_targets = set(node_data.get("true_targets") or bt.get("true", []))
+                    false_targets = set(node_data.get("false_targets") or bt.get("false", []))
                     skip = false_targets if result_bool else true_targets
                     existing_skip = set(context.get("_branch_skip", []))
                     context["_branch_skip"] = list(existing_skip | skip)
@@ -251,7 +298,12 @@ def execute_workflow(self, run_id: str) -> dict:
                 # ── OutputNode ── 최종 결과 저장
                 elif node_type == "output":
                     output_key = node_data.get("output_key", "result")
-                    value = context.get(output_key, context)
+                    value = context.get(output_key)
+                    if value is None:
+                        logger.warning(
+                            "OutputNode %s: key '%s' not found in context (keys: %s)",
+                            node_id, output_key, list(context.keys()),
+                        )
                     output = {output_key: value}
                     run.outputs = {**(run.outputs or {}), **output}
 

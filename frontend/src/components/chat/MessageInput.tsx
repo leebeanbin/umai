@@ -95,7 +95,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
   const [docs, setDocs]             = useState<AttachedDoc[]>([]);
   const [docLoading, setDocLoading] = useState(false);
   const [maskTarget, setMaskTarget] = useState<AttachedImage | null>(null);
-  const [webSearch, setWebSearch]       = useState(false);
+  const [webSearch, setWebSearch]       = useState(() => loadSettings().webSearchEnabled);
   const [useRag, setUseRag]             = useState(false);
   const [showEval, setShowEval]         = useState(false);
   const [imageAnalysis, setImageAnalysis]   = useState("");

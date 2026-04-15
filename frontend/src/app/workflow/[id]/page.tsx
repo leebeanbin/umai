@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useParams } from "next/navigation";
 import {
   ReactFlow,
@@ -34,12 +36,12 @@ import {
   type RunOut,
   type AppNode,
   type AppEdge,
-} from "@/lib/apis/workflow";
+} from "@/lib/api/backendClient";
 // useWorkflowSocket: task:{user_id} 채널의 모든 이벤트 수신
 // (useTaskSocket은 task_done 만 필터링하므로 workflow_* 이벤트 수신 불가)
 import { useWorkflowSocket } from "@/lib/hooks/useWebSocket";
 import { useRouter } from "next/navigation";
-import { Play, Save, Loader2, CheckCircle2, XCircle, PauseCircle, History } from "lucide-react";
+import { Play, Save, Loader2, CheckCircle2, XCircle, PauseCircle, History, X } from "lucide-react";
 
 // ── 노드 타입 등록 ────────────────────────────────────────────────────────────
 
@@ -56,18 +58,19 @@ const NODE_TYPES = {
 
 let _nodeCounter = 0;
 function newNodeId(type: string) {
-  return `${type}-${++_nodeCounter}-${Date.now()}`;
+  return `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 // ── 실행 상태 배지 ────────────────────────────────────────────────────────────
 
 function RunStatusBadge({ run }: { run: RunOut | null }) {
+  const { t } = useLanguage();
   if (!run) return null;
   const map: Record<string, { icon: React.ReactNode; label: string; cls: string }> = {
-    running:   { icon: <Loader2 size={12} className="animate-spin" />, label: "실행 중",   cls: "text-accent" },
-    suspended: { icon: <PauseCircle size={12} />,                      label: "승인 대기", cls: "text-warning" },
-    done:      { icon: <CheckCircle2 size={12} />,                     label: "완료",      cls: "text-success" },
-    failed:    { icon: <XCircle size={12} />,                          label: "실패",      cls: "text-danger"  },
+    running:   { icon: <Loader2 size={12} className="animate-spin" />, label: t("workflow.status.running"),   cls: "text-accent" },
+    suspended: { icon: <PauseCircle size={12} />,                      label: t("workflow.status.suspended"), cls: "text-warning" },
+    done:      { icon: <CheckCircle2 size={12} />,                     label: t("workflow.status.done"),      cls: "text-success" },
+    failed:    { icon: <XCircle size={12} />,                          label: t("workflow.status.failed"),    cls: "text-danger"  },
   };
   const info = map[run.status] ?? { icon: null, label: run.status, cls: "text-text-muted" };
   return (
@@ -81,6 +84,7 @@ function RunStatusBadge({ run }: { run: RunOut | null }) {
 
 function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   const router = useRouter();
+  const { t } = useLanguage();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
@@ -88,6 +92,10 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   const [run, setRun] = useState<RunOut | null>(null);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  // run input modal
+  const [runModal, setRunModal] = useState<{ fields: { key: string; type: string }[] } | null>(null);
+  const [runInputs, setRunInputs] = useState<Record<string, string>>({});
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
@@ -104,14 +112,17 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   const runRef = useRef<RunOut | null>(null);
   useEffect(() => { runRef.current = run; }, [run]);
 
+  const { user, loading: authLoading } = useAuth();
+
   // ── 로드 ──────────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (authLoading || !user) return;
     apiGetWorkflow(workflowId).then((wf) => {
       setWorkflowName(wf.name);
       if (wf.graph?.nodes) setNodes(wf.graph.nodes as Node[]);
       if (wf.graph?.edges) setEdges(wf.graph.edges as Edge[]);
-    });
-  }, [workflowId, setNodes, setEdges]);
+    }).catch(() => {});
+  }, [workflowId, user, authLoading, setNodes, setEdges]);
 
   // ── 자동 저장 (debounce 1.5초) ────────────────────────────────────────────
   const debounceSave = useCallback(
@@ -251,6 +262,12 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
         );
       }
 
+      // 실패 이벤트: 에러 메시지 표시
+      if (event.type === "workflow_failed" && event.error) {
+        const nodeLabel = event.node_id ? ` (노드: ${event.node_id})` : "";
+        setRunError(`실행 실패${nodeLabel}: ${event.error as string}`);
+      }
+
       // 최신 실행 상태 fetch → 전체 동기화
       try {
         const latest = await apiGetRun(targetRunId);
@@ -265,20 +282,72 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
 
   useWorkflowSocket(handleWsEvent);
 
-  // ── 실행 ─────────────────────────────────────────────────────────────────
-  const handleRun = useCallback(async () => {
-    setRunning(true);
-    // 기존 실행 상태 초기화
-    setNodes((prev) => prev.map((n) => ({ ...n, data: { ...n.data, _status: undefined } })));
-    try {
-      const runOut = await apiRunWorkflow(workflowId, {});
-      setRun(runOut);
-    } catch (err) {
-      console.error("Run failed", err);
-    } finally {
-      setRunning(false);
+  // ── 실행 (내부) ──────────────────────────────────────────────────────────
+  const doRun = useCallback(
+    async (inputs: Record<string, unknown>) => {
+      setRunning(true);
+      setRunError(null);
+      setNodes((prev) => prev.map((n) => ({ ...n, data: { ...n.data, _status: undefined } })));
+      try {
+        const runOut = await apiRunWorkflow(workflowId, inputs);
+        setRun(runOut);
+      } catch (err) {
+        console.error("Run failed", err);
+      } finally {
+        setRunning(false);
+      }
+    },
+    [workflowId, setNodes],
+  );
+
+  // ── 실행 버튼 클릭 — InputNode 필드가 있으면 입력 모달 표시 ──────────────
+  const handleRun = useCallback(() => {
+    const inputNode = nodes.find((n) => n.type === "input");
+    const fields = (inputNode?.data?.fields as { key: string; type: string }[]) || [];
+    if (fields.length > 0) {
+      // 이전 값을 기본으로 유지하면서 모달 열기
+      setRunInputs((prev) => {
+        const defaults: Record<string, string> = {};
+        for (const f of fields) {
+          defaults[f.key] = prev[f.key] ?? "";
+        }
+        return defaults;
+      });
+      setRunModal({ fields });
+    } else {
+      doRun({});
     }
-  }, [workflowId, setNodes]);
+  }, [nodes, doRun]);
+
+  // ── 템플릿 로드 ──────────────────────────────────────────────────────────
+  const handleLoadTemplate = useCallback(
+    (templateNodes: Node[], templateEdges: Edge[]) => {
+      if (
+        nodes.length > 0 &&
+        !window.confirm(t("workflow.confirmClear"))
+      ) {
+        return;
+      }
+      // 기존 노드 ID → 새 ID 매핑 (충돌 방지)
+      const idMap: Record<string, string> = {};
+      const newNodes = templateNodes.map((n) => {
+        const newId = `${n.type ?? "node"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        idMap[n.id] = newId;
+        return { ...n, id: newId, selected: false } as Node;
+      });
+      const newEdges = templateEdges.map((e) => ({
+        ...e,
+        id: `e-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        source: idMap[e.source] ?? e.source,
+        target: idMap[e.target] ?? e.target,
+      })) as Edge[];
+      setNodes(newNodes);
+      setEdges(newEdges);
+      setSelectedNode(null);
+      debounceSave(newNodes, newEdges);
+    },
+    [nodes.length, setNodes, setEdges, debounceSave],
+  );
 
   // ── 수동 저장 버튼 ────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
@@ -293,10 +362,88 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
     }
   }, [workflowId, workflowName, nodes, edges]);
 
+  const INPUT_CLS =
+    "w-full px-3 py-2 rounded-lg border border-border bg-elevated text-sm text-text-primary " +
+    "placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors";
+
   return (
     <div className="flex h-full bg-base overflow-hidden">
+      {/* 실행 입력 모달 */}
+      {runModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-surface border border-border rounded-xl shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <span className="text-sm font-semibold text-text-primary">{t("workflow.runInputTitle")}</span>
+              <button
+                onClick={() => setRunModal(null)}
+                className="p-1 rounded hover:bg-hover text-text-muted transition-colors"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              {runModal.fields.map((f) => (
+                <div key={f.key} className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-text-muted uppercase tracking-wide">
+                    {f.key}
+                    <span className="ml-1.5 font-normal normal-case text-text-muted opacity-60">
+                      ({f.type})
+                    </span>
+                  </label>
+                  {f.type === "text" ? (
+                    <textarea
+                      className={INPUT_CLS + " resize-none"}
+                      rows={3}
+                      value={runInputs[f.key] ?? ""}
+                      onChange={(e) =>
+                        setRunInputs((prev) => ({ ...prev, [f.key]: e.target.value }))
+                      }
+                    />
+                  ) : (
+                    <input
+                      className={INPUT_CLS}
+                      type={f.type === "number" ? "number" : f.type === "boolean" ? "text" : "text"}
+                      placeholder={f.type === "boolean" ? "true / false" : ""}
+                      value={runInputs[f.key] ?? ""}
+                      onChange={(e) =>
+                        setRunInputs((prev) => ({ ...prev, [f.key]: e.target.value }))
+                      }
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-border">
+              <button
+                onClick={() => setRunModal(null)}
+                className="px-4 py-1.5 rounded-lg border border-border hover:bg-hover text-sm text-text-primary transition-colors"
+              >
+                {t("workflow.cancel")}
+              </button>
+              <button
+                onClick={() => {
+                  setRunModal(null);
+                  // 타입 변환: number/boolean 필드를 적절히 파싱
+                  const parsed: Record<string, unknown> = {};
+                  for (const f of runModal.fields) {
+                    const raw = runInputs[f.key] ?? "";
+                    if (f.type === "number") parsed[f.key] = Number(raw);
+                    else if (f.type === "boolean") parsed[f.key] = raw.toLowerCase() === "true";
+                    else parsed[f.key] = raw;
+                  }
+                  doRun(parsed);
+                }}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
+              >
+                <Play size={13} /> {t("workflow.run")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 왼쪽: 노드 팔레트 */}
-      <NodePalette />
+      <NodePalette onLoadTemplate={handleLoadTemplate} />
 
       {/* 중앙: ReactFlow 캔버스 */}
       <div className="flex flex-col flex-1 min-w-0">
@@ -332,6 +479,14 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
           </button>
         </header>
 
+        {/* 실행 에러 배너 */}
+        {runError && (
+          <div className="mx-4 mt-2 flex items-start justify-between gap-2 px-3 py-2 rounded-lg bg-danger/10 border border-danger/30 text-danger text-xs">
+            <span className="flex-1">{runError}</span>
+            <button onClick={() => setRunError(null)} className="flex-shrink-0 hover:opacity-70">✕</button>
+          </div>
+        )}
+
         {/* ReactFlow */}
         <div ref={reactFlowWrapper} className="flex-1 min-h-0">
           <ReactFlow
@@ -350,8 +505,14 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
             onDragOver={onDragOver}
             onNodeClick={(_, node) => setSelectedNode(node)}
             onPaneClick={() => setSelectedNode(null)}
+            onNodesDelete={(deleted) => {
+              // 삭제된 노드가 현재 선택 패널에 열려 있으면 닫기
+              if (deleted.some((n) => n.id === selectedNode?.id)) {
+                setSelectedNode(null);
+              }
+            }}
             fitView
-            deleteKeyCode="Delete"
+            deleteKeyCode={["Delete", "Backspace"]}
           >
             <Background gap={16} size={1} />
             <Controls />

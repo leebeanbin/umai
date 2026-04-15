@@ -13,9 +13,11 @@ AI 에이전트 태스크 (ai queue)
   3. 결과를 messages에 추가 → 다시 LLM 호출
   4. tool_calls 없거나 max_steps 도달 시 최종 응답 반환
 """
+import ast
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from typing import Any, Literal
 
@@ -138,7 +140,13 @@ def _knowledge_search(query: str, top_k: int = 5, user_id: str | None = None) ->
             chunks: list[str] = []
             vectors: list[list[float]] = []
             try:
-                emb_data = json.loads(item.embeddings_json or "{}")
+                raw_emb = item.embeddings_json
+                # JSONB column is already deserialized to dict by SQLAlchemy;
+                # legacy rows may still be a JSON string — handle both.
+                if isinstance(raw_emb, str):
+                    emb_data = json.loads(raw_emb)
+                else:
+                    emb_data = raw_emb or {}
                 chunks  = emb_data.get("chunks", [])
                 vectors = emb_data.get("vectors", [])
             except Exception:
@@ -165,7 +173,47 @@ def _knowledge_search(query: str, top_k: int = 5, user_id: str | None = None) ->
 
 
 def _web_search(query: str, max_results: int = 5) -> str:
-    """DuckDuckGo Instant Answer API (무료, 키 불필요)"""
+    """웹 검색. Tavily API 키가 있으면 Tavily, 없으면 DuckDuckGo fallback."""
+    tavily_key = settings.TAVILY_API_KEY
+    if tavily_key:
+        return _web_search_tavily(query, max_results, tavily_key)
+    return _web_search_duckduckgo(query, max_results)
+
+
+def _web_search_tavily(query: str, max_results: int, api_key: str) -> str:
+    """Tavily Search API — 실제 웹 검색 결과 반환."""
+    try:
+        with httpx.Client(timeout=15) as client:
+            r = client.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": api_key,
+                    "query": query,
+                    "max_results": max_results,
+                    "search_depth": "basic",
+                    "include_answer": True,
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+
+        results = []
+        if data.get("answer"):
+            results.append({"title": "Summary", "snippet": data["answer"], "url": ""})
+        for item in data.get("results", [])[:max_results]:
+            results.append({
+                "title": item.get("title", ""),
+                "snippet": item.get("content", ""),
+                "url": item.get("url", ""),
+                "score": item.get("score"),
+            })
+        return json.dumps(results, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _web_search_duckduckgo(query: str, max_results: int) -> str:
+    """DuckDuckGo Instant Answer API (Tavily 키 없을 때 fallback)."""
     try:
         with httpx.Client(timeout=15) as client:
             r = client.get(
@@ -191,29 +239,98 @@ def _web_search(query: str, max_results: int = 5) -> str:
 def _execute_python(code: str, timeout: int = 10) -> dict:
     """
     제한된 Python 실행 환경.
-    subprocess + 타임아웃으로 실행 시간 제한.
-    """
-    # 위험 패턴 차단 (보안: 파일 시스템/프로세스 접근 차단)
-    BLOCKED = [
-        "import os", "import sys", "import subprocess", "import socket",
-        "import importlib", "import ctypes", "import multiprocessing",
-        "open(", "file(", "__import__", "__builtins__", "__dict__", "__class__",
-        "eval(", "exec(", "compile(", "getattr(", "setattr(", "hasattr(",
-        "globals(", "locals(", "vars(", "dir(",
-        "exit(", "quit(", "input(", "breakpoint(",
-    ]
-    for pattern in BLOCKED:
-        if pattern in code:
-            return {"error": f"Blocked pattern: '{pattern}'", "stdout": "", "stderr": ""}
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(code)
-        fname = f.name
+    ⚠️  보안 경고:
+    이 구현은 신뢰된 내부 사용자(관리자) 전용입니다.
+    외부 사용자에게 노출하는 경우 반드시 Docker / gVisor / nsjail 등
+    OS 레벨 격리 컨테이너로 교체해야 합니다.
+    현재 구현은 다층 방어(AST 분석 + 리소스 제한)를 적용하지만
+    완전한 격리를 보장하지 않습니다.
+
+    방어 레이어:
+    1. AST 파싱: import 허용 모듈 화이트리스트, 위험 함수 호출 차단
+    2. 리소스 제한: CPU 시간, 메모리(256MB), 프로세스 수 제한 (Unix)
+    3. 타임아웃: subprocess timeout으로 실행 시간 강제 종료
+    4. 출력 크기 제한: stdout 4096B, stderr 1024B
+    """
+    # ── 레이어 1: AST 기반 정적 분석 ─────────────────────────────────────────
+    # 문자열 포함 여부가 아닌 실제 AST 노드 분석 → 문자열 우회 불가
+    try:
+        tree = ast.parse(code, mode="exec")
+    except SyntaxError as e:
+        return {"error": f"Syntax error: {e}", "stdout": "", "stderr": ""}
+
+    _ALLOWED_IMPORTS = {
+        "math", "json", "re", "datetime", "collections",
+        "itertools", "functools", "string", "decimal", "fractions",
+        "statistics", "random", "textwrap", "unicodedata",
+    }
+    _BLOCKED_BUILTINS = {
+        "eval", "exec", "compile", "__import__", "open", "input",
+        "breakpoint", "memoryview", "vars", "dir", "globals", "locals",
+    }
+    _BLOCKED_ATTRS = {
+        "system", "popen", "spawn", "exec_command", "call", "run",
+        "Popen", "check_output", "getoutput",
+    }
+
+    for node in ast.walk(tree):
+        # import 화이트리스트
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                if top not in _ALLOWED_IMPORTS:
+                    return {"error": f"Import not allowed: '{alias.name}'", "stdout": "", "stderr": ""}
+        elif isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            if top not in _ALLOWED_IMPORTS:
+                return {"error": f"Import not allowed: '{node.module}'", "stdout": "", "stderr": ""}
+        # 위험 내장 함수 호출 차단
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in _BLOCKED_BUILTINS:
+                return {"error": f"Built-in not allowed: '{node.func.id}'", "stdout": "", "stderr": ""}
+            if isinstance(node.func, ast.Attribute) and node.func.attr in _BLOCKED_ATTRS:
+                return {"error": f"Attribute not allowed: '{node.func.attr}'", "stdout": "", "stderr": ""}
+        # dunder attribute 접근 차단 (__class__, __subclasses__ 등)
+        elif isinstance(node, ast.Attribute):
+            if node.attr.startswith("__") and node.attr.endswith("__"):
+                return {"error": f"Dunder attribute access not allowed: '{node.attr}'", "stdout": "", "stderr": ""}
+
+    # ── 레이어 2: 임시 파일 작성 ─────────────────────────────────────────────
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(code)
+            fname = f.name
+    except OSError as e:
+        return {"error": f"Failed to create temp file: {e}", "stdout": "", "stderr": ""}
+
+    # ── 레이어 3: 리소스 제한 (Unix 전용) ────────────────────────────────────
+    def _set_resource_limits() -> None:
+        """자식 프로세스에 OS 레벨 리소스 제한 적용."""
+        try:
+            import resource as _resource
+            # CPU 시간 제한 (soft=timeout, hard=timeout+2)
+            _resource.setrlimit(_resource.RLIMIT_CPU, (timeout, timeout + 2))
+            # 가상 메모리 256MB
+            _mem = 256 * 1024 * 1024
+            _resource.setrlimit(_resource.RLIMIT_AS, (_mem, _mem))
+            # 새 프로세스 생성 금지 (fork bomb 방지)
+            _resource.setrlimit(_resource.RLIMIT_NPROC, (0, 0))
+            # 파일 생성 금지
+            _resource.setrlimit(_resource.RLIMIT_FSIZE, (0, 0))
+        except Exception:
+            pass  # Windows 또는 권한 없는 환경에서는 무시
+
+    # preexec_fn은 Unix 전용 (Windows에서는 None 전달)
+    _preexec = _set_resource_limits if sys.platform != "win32" else None
 
     try:
         result = subprocess.run(
             ["python3", fname],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            preexec_fn=_preexec,
         )
         return {
             "stdout": result.stdout[:4096],
@@ -225,7 +342,10 @@ def _execute_python(code: str, timeout: int = 10) -> dict:
     except Exception as e:
         return {"error": str(e), "stdout": "", "stderr": ""}
     finally:
-        os.unlink(fname)
+        try:
+            os.unlink(fname)
+        except OSError:
+            pass
 
 
 # ── LLM 호출 (provider별 통합) ────────────────────────────────────────────────
@@ -281,16 +401,50 @@ def _call_openai(messages: list, model: str, tools: list | None, temperature: fl
 def _call_anthropic(messages: list, model: str, tools: list | None, temperature: float) -> dict:
     if not ANTHROPIC_API_KEY:
         raise ValueError("ANTHROPIC_API_KEY not configured")
-    # Anthropic uses 'system' separately
-    system_msgs = [m for m in messages if m["role"] == "system"]
-    user_msgs   = [m for m in messages if m["role"] != "system"]
-    system_text = system_msgs[0]["content"] if system_msgs else ""
+    # Anthropic uses 'system' separately; tool role messages need conversion
+    system_text = ""
+    anthropic_msgs: list[dict] = []
+    for m in messages:
+        role = m["role"]
+        if role == "system":
+            system_text = m.get("content", "")
+            continue
+        if role == "tool":
+            # OpenAI "tool" role → Anthropic "tool_result" inside user message
+            anthropic_msgs.append({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": m.get("tool_call_id", ""),
+                    "content": m.get("content", ""),
+                }],
+            })
+            continue
+        if role == "assistant" and m.get("tool_calls"):
+            # OpenAI assistant with tool_calls → Anthropic content blocks
+            content_blocks: list[dict] = []
+            if m.get("content"):
+                content_blocks.append({"type": "text", "text": m["content"]})
+            for tc in m["tool_calls"]:
+                try:
+                    args = json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
+                except (TypeError, ValueError):
+                    args = {}
+                content_blocks.append({
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["function"]["name"],
+                    "input": args,
+                })
+            anthropic_msgs.append({"role": "assistant", "content": content_blocks})
+            continue
+        anthropic_msgs.append(m)
 
     body: dict[str, Any] = {
         "model": model,
         "max_tokens": 4096,
         "temperature": temperature,
-        "messages": user_msgs,
+        "messages": anthropic_msgs,
     }
     if system_text:
         body["system"] = system_text
@@ -388,11 +542,35 @@ def _call_google(messages: list, model: str, tools: list | None, temperature: fl
     contents = []
     system_text = ""
     for m in messages:
-        if m["role"] == "system":
+        role_orig = m["role"]
+        if role_orig == "system":
             system_text = m.get("content", "")
             continue
-        role = "user" if m["role"] == "user" else "model"
-        contents.append({"role": role, "parts": [{"text": m.get("content", "")}]})
+        if role_orig == "tool":
+            # OpenAI tool result → Gemini functionResponse
+            contents.append({
+                "role": "user",
+                "parts": [{"functionResponse": {
+                    "name": m.get("name", ""),
+                    "response": {"content": m.get("content", "")},
+                }}],
+            })
+            continue
+        if role_orig == "assistant" and m.get("tool_calls"):
+            # OpenAI assistant tool_calls → Gemini functionCall parts
+            parts = []
+            if m.get("content"):
+                parts.append({"text": m["content"]})
+            for tc in m["tool_calls"]:
+                try:
+                    args = json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
+                except (TypeError, ValueError):
+                    args = {}
+                parts.append({"functionCall": {"name": tc["function"]["name"], "args": args}})
+            contents.append({"role": "model", "parts": parts})
+            continue
+        gemini_role = "user" if role_orig == "user" else "model"
+        contents.append({"role": gemini_role, "parts": [{"text": m.get("content", "")}]})
 
     body: dict[str, Any] = {
         "contents": contents,
@@ -400,6 +578,15 @@ def _call_google(messages: list, model: str, tools: list | None, temperature: fl
     }
     if system_text:
         body["systemInstruction"] = {"parts": [{"text": system_text}]}
+    if tools:
+        body["tools"] = [{"functionDeclarations": [
+            {
+                "name": t["function"]["name"],
+                "description": t["function"].get("description", ""),
+                "parameters": t["function"].get("parameters", {}),
+            }
+            for t in tools
+        ]}]
 
     api_model = model or "gemini-2.0-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{api_model}:generateContent?key={GOOGLE_API_KEY}"
@@ -409,8 +596,32 @@ def _call_google(messages: list, model: str, tools: list | None, temperature: fl
         r.raise_for_status()
 
     data = r.json()
-    text = data["candidates"][0]["content"]["parts"][0].get("text", "")
-    return {"content": text, "tool_calls": None, "finish_reason": data["candidates"][0].get("finishReason", "STOP")}
+    candidate = data["candidates"][0]
+    parts = candidate["content"].get("parts", [])
+
+    # Extract text and function calls
+    text = next((p.get("text", "") for p in parts if "text" in p), None)
+    fn_calls = [p["functionCall"] for p in parts if "functionCall" in p]
+
+    tool_calls = None
+    if fn_calls:
+        tool_calls = []
+        for i, fc in enumerate(fn_calls):
+            try:
+                args_str = json.dumps(fc.get("args", {}))
+            except (TypeError, ValueError):
+                args_str = "{}"
+            tool_calls.append({
+                "id": f"call_google_{i}_{fc['name']}",
+                "type": "function",
+                "function": {"name": fc["name"], "arguments": args_str},
+            })
+
+    return {
+        "content": text,
+        "tool_calls": tool_calls,
+        "finish_reason": candidate.get("finishReason", "STOP"),
+    }
 
 
 def _call_xai(messages: list, model: str, tools: list | None, temperature: float) -> dict:
@@ -443,14 +654,20 @@ def _call_xai(messages: list, model: str, tools: list | None, temperature: float
 
 # ── 메인 태스크 ───────────────────────────────────────────────────────────────
 
-@shared_task(bind=True, name="app.tasks.ai.run_agent", max_retries=1)
+@shared_task(
+    bind=True,
+    name="app.tasks.ai.run_agent",
+    max_retries=1,
+    soft_time_limit=300,   # 5분 후 SoftTimeLimitExceeded
+    time_limit=360,        # 6분 후 강제 종료
+)
 def run_agent(
     self,
     messages: list[dict],
     model: str,
     provider: Literal["openai", "anthropic", "google", "xai", "ollama"] = "openai",
     enabled_tools: list[str] | None = None,
-    max_steps: int = 10,
+    max_steps: int = 5,    # 기본값 10 → 5 (timeout 안전 마진)
     temperature: float = 0.7,
     chat_id: str | None = None,
 ) -> dict:
@@ -469,6 +686,8 @@ def run_agent(
           "provider": str,
         }
     """
+    from celery.exceptions import SoftTimeLimitExceeded
+
     tools = None
     if enabled_tools:
         tools = [t for t in TOOL_DEFINITIONS if t["function"]["name"] in enabled_tools]
@@ -477,58 +696,75 @@ def run_agent(
     tool_calls_log: list[dict] = []
     steps = 0
 
-    for _ in range(max_steps):
-        response = _call_llm(history, model, provider, tools=tools, temperature=temperature)
+    try:
+        for _ in range(max_steps):
+            response = _call_llm(history, model, provider, tools=tools, temperature=temperature)
 
-        # 도구 호출 없음 → 최종 응답
-        if not response.get("tool_calls"):
-            publish_task_done(self.request.id, "run_agent")
-            return {
-                "content": response.get("content", ""),
-                "steps": steps,
-                "tool_calls_log": tool_calls_log,
-                "model": model,
-                "provider": provider,
-            }
+            # 도구 호출 없음 → 최종 응답
+            if not response.get("tool_calls"):
+                publish_task_done(self.request.id, "run_agent")
+                return {
+                    "content": response.get("content", ""),
+                    "steps": steps,
+                    "tool_calls_log": tool_calls_log,
+                    "model": model,
+                    "provider": provider,
+                }
 
-        # 어시스턴트 메시지 추가
-        history.append({
-            "role": "assistant",
-            "content": response.get("content"),
-            "tool_calls": response["tool_calls"],
-        })
-
-        # 도구 실행
-        for tc in response["tool_calls"]:
-            fn_name = tc["function"]["name"]
-            fn_args = json.loads(tc["function"]["arguments"])
-
-            logger.info("Tool call: %s(%s)", fn_name, fn_args)
-            result = _run_tool(fn_name, fn_args)
-            steps += 1
-
-            tool_calls_log.append({"tool": fn_name, "args": fn_args, "result": result})
-
-            # tool result 메시지 추가
+            # 어시스턴트 메시지 추가
             history.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": result,
+                "role": "assistant",
+                "content": response.get("content"),
+                "tool_calls": response["tool_calls"],
             })
 
-    # max_steps 도달 → 현재까지 내용으로 최종 응답 요청
-    logger.warning("run_agent reached max_steps=%d, forcing final response", max_steps)
-    history.append({"role": "user", "content": "지금까지 수집된 정보를 바탕으로 최종 답변을 해줘."})
-    final = _call_llm(history, model, provider, tools=None, temperature=temperature)
-    publish_task_done(self.request.id, "run_agent")
-    return {
-        "content": final.get("content", ""),
-        "steps": steps,
-        "tool_calls_log": tool_calls_log,
-        "model": model,
-        "provider": provider,
-        "warning": "max_steps_reached",
-    }
+            # 도구 실행
+            for tc in response["tool_calls"]:
+                fn_name = tc["function"]["name"]
+                fn_args = json.loads(tc["function"]["arguments"])
+
+                logger.info("Tool call: %s(%s)", fn_name, fn_args)
+                result = _run_tool(fn_name, fn_args)
+                steps += 1
+
+                tool_calls_log.append({"tool": fn_name, "args": fn_args, "result": result})
+
+                # tool result 메시지 추가 (name 포함 — Google functionResponse에 필요)
+                history.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "name": fn_name,
+                    "content": result,
+                })
+
+        # max_steps 도달 → 현재까지 내용으로 최종 응답 요청
+        logger.warning("run_agent reached max_steps=%d, forcing final response", max_steps)
+        history.append({"role": "user", "content": "지금까지 수집된 정보를 바탕으로 최종 답변을 해줘."})
+        final = _call_llm(history, model, provider, tools=None, temperature=temperature)
+        publish_task_done(self.request.id, "run_agent")
+        return {
+            "content": final.get("content", ""),
+            "steps": steps,
+            "tool_calls_log": tool_calls_log,
+            "model": model,
+            "provider": provider,
+            "warning": "max_steps_reached",
+        }
+    except SoftTimeLimitExceeded:
+        logger.warning("run_agent soft_time_limit exceeded after %d steps", steps)
+        publish_task_done(self.request.id, "run_agent")
+        return {
+            "content": "요청 처리 시간이 초과되었습니다. 지금까지 수집된 정보만 반환합니다.",
+            "steps": steps,
+            "tool_calls_log": tool_calls_log,
+            "model": model,
+            "provider": provider,
+            "warning": "soft_time_limit",
+        }
+    except Exception as exc:
+        logger.error("run_agent failed after %d steps: %s", steps, exc, exc_info=True)
+        publish_task_done(self.request.id, "run_agent")
+        raise  # re-raise so Celery records the failure and retries if configured
 
 
 @shared_task(bind=True, name="app.tasks.ai.web_search", max_retries=2)
