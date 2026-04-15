@@ -5,6 +5,14 @@ import { apiCreateChat, apiUpdateChat, apiDeleteChat, isAuthenticated } from "@/
 
 export type SessionType = "chat" | "editor";
 
+/** 백엔드 동기화 상태
+ * - local   : 로컬에만 존재 (아직 서버에 전송 안 됨)
+ * - pending : 서버 요청 중
+ * - synced  : 서버와 동기화 완료
+ * - failed  : 동기화 실패 (재시도 가능)
+ */
+export type SyncStatus = "local" | "pending" | "synced" | "failed";
+
 export type Session = {
   id: string;
   title: string;
@@ -12,6 +20,7 @@ export type Session = {
   folderId: string | null;
   modelId?: string;
   updatedAt: Date;
+  syncStatus?: SyncStatus;
 };
 
 export type Folder = {
@@ -66,13 +75,40 @@ export function saveSessions(sessions: Session[]) {
 export function createSession(id: string, title: string, type: SessionType = "chat") {
   if (typeof window === "undefined") return;
   const sessions = loadSessions().filter((s) => s.id !== id); // 중복 방지
-  const newSession: Session = { id, title, type, folderId: null, updatedAt: new Date() };
+  const newSession: Session = {
+    id, title, type, folderId: null, updatedAt: new Date(),
+    syncStatus: isAuthenticated() ? "pending" : "local",
+  };
   saveSessions([newSession, ...sessions]);
   window.dispatchEvent(new Event("umai:sessions-change"));
-  // Sync to backend (fire-and-forget — local state is authoritative)
+
   if (isAuthenticated()) {
-    apiCreateChat(title).catch(() => {/* ignore — offline / unauthenticated */});
+    apiCreateChat(title)
+      .then(() => _updateSyncStatus(id, "synced"))
+      .catch(() => _updateSyncStatus(id, "failed"));
   }
+}
+
+/** 내부 헬퍼: 세션의 syncStatus만 업데이트 (사이드바 이벤트 없음) */
+function _updateSyncStatus(id: string, status: SyncStatus) {
+  if (typeof window === "undefined") return;
+  const sessions = loadSessions().map((s) =>
+    s.id === id ? { ...s, syncStatus: status } : s
+  );
+  saveSessions(sessions);
+  // 실패 상태는 UI에 알릴 필요가 있으므로 이벤트 발송
+  if (status === "failed") {
+    window.dispatchEvent(new CustomEvent("umai:sync-failed", { detail: { id } }));
+  }
+}
+
+/** 동기화 실패한 세션을 재시도 */
+export function retrySyncSession(id: string, title: string) {
+  if (typeof window === "undefined" || !isAuthenticated()) return;
+  _updateSyncStatus(id, "pending");
+  apiCreateChat(title)
+    .then(() => _updateSyncStatus(id, "synced"))
+    .catch(() => _updateSyncStatus(id, "failed"));
 }
 
 /** 세션에 사용된 모델 ID 저장 (per-chat model memory) */
@@ -90,12 +126,16 @@ export function updateSessionModel(id: string, modelId: string) {
 export function updateSessionTitle(id: string, title: string, sync = true) {
   if (typeof window === "undefined") return;
   const sessions = loadSessions().map((s) =>
-    s.id === id ? { ...s, title, updatedAt: new Date() } : s
+    s.id === id
+      ? { ...s, title, updatedAt: new Date(), syncStatus: (sync && isAuthenticated() ? "pending" : s.syncStatus) as SyncStatus | undefined }
+      : s
   );
   saveSessions(sessions);
   window.dispatchEvent(new Event("umai:sessions-change"));
   if (sync && isAuthenticated()) {
-    apiUpdateChat(id, { title }).catch(() => {});
+    apiUpdateChat(id, { title })
+      .then(() => _updateSyncStatus(id, "synced"))
+      .catch(() => _updateSyncStatus(id, "failed"));
   }
 }
 

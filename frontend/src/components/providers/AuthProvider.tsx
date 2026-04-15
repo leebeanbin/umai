@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { fetchMe, apiLogout, type UserOut } from "@/lib/api/backendClient";
 import AuthModal from "@/components/auth/AuthModal";
@@ -29,11 +29,17 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const pathname = usePathname();
   const [user, setUser]       = useState<UserOut | null>(null);
   const [loading, setLoading] = useState(true);
+  // Tracks whether a user was ever authenticated this session.
+  // Used to distinguish "session expired" (was logged in → 401) from
+  // "never authenticated" (first visit with no token), so we only redirect
+  // on the former case and let AuthModal handle the latter.
+  const wasAuthenticatedRef = useRef(false);
 
   const loadUser = useCallback(async () => {
     try {
       // apiFetch가 401 시 자동으로 HttpOnly cookie refresh를 시도함
       const me = await fetchMe();
+      wasAuthenticatedRef.current = true;
       setUser(me);
     } catch {
       setUser(null);
@@ -57,10 +63,17 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     function onLogout() {
       setUser(null);
       setLoading(false);
-      // 현재 경로가 auth bypass가 아니면 루트로 리다이렉트 → AuthModal 표시
-      if (!AUTH_BYPASS.some((p) => window.location.pathname.startsWith(p))) {
+      // Only redirect to "/" if the user WAS previously authenticated (session expired).
+      // If the user was never authenticated (wasAuthenticatedRef=false), the AuthModal
+      // will appear automatically via `needsAuth` — no redirect needed.
+      if (
+        wasAuthenticatedRef.current &&
+        !AUTH_BYPASS.some((p) => window.location.pathname.startsWith(p))
+      ) {
         window.location.replace("/");
       }
+      // Reset so subsequent logout events also don't redirect if user never re-authenticated.
+      wasAuthenticatedRef.current = false;
     }
     window.addEventListener("umai:logout", onLogout);
     return () => window.removeEventListener("umai:logout", onLogout);
@@ -68,6 +81,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
   const logout = useCallback(async () => {
     await apiLogout();
+    wasAuthenticatedRef.current = false;
     setUser(null);
   }, []);
 

@@ -112,8 +112,8 @@ if not settings.DEBUG and not settings.BACKEND_URL.startswith("https://"):
 
 # SESSION_SECRET_KEY 미설정 경고 (프로덕션)
 if not settings.SESSION_SECRET_KEY and not settings.DEBUG:
-    warnings.warn(
-        "SESSION_SECRET_KEY not set; falling back to SECRET_KEY for sessions. "
-        "Set a dedicated SESSION_SECRET_KEY in production for key separation.",
-        stacklevel=1,
+    raise RuntimeError(
+        "SESSION_SECRET_KEY is not set. "
+        "Set a dedicated SESSION_SECRET_KEY in production for key separation. "
+        "Generate one: python -c \"import secrets; print(secrets.token_hex(32))\""
     )

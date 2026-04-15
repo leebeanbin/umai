@@ -2,6 +2,7 @@
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Brain } from "lucide-react";
+import { NodeHarness } from "./NodeHarness";
 
 export interface LLMNodeData {
   label?: string;
@@ -26,9 +27,10 @@ function statusBorder(status?: string) {
   }
 }
 
-export function LLMNode({ data }: NodeProps) {
+export function LLMNode({ id, data, selected }: NodeProps) {
   const d = data as LLMNodeData;
   return (
+    <NodeHarness id={id} selected={selected}>
     <div className={`bg-surface rounded-lg border-2 ${statusBorder(d._status)} min-w-[220px] shadow-sm`}>
       <Handle type="target" position={Position.Left} />
       <div
@@ -51,6 +53,12 @@ export function LLMNode({ data }: NodeProps) {
             {d.model || "gpt-4o"}
           </span>
         </div>
+        {d.max_steps !== undefined && (
+          <div className="flex justify-between">
+            <span className="text-text-muted">Max Steps</span>
+            <span className="text-text-primary font-medium">{d.max_steps}</span>
+          </div>
+        )}
         {d.tools && d.tools.length > 0 && (
           <div className="flex flex-wrap gap-1 pt-1">
             {d.tools.map((t) => (
@@ -60,8 +68,14 @@ export function LLMNode({ data }: NodeProps) {
             ))}
           </div>
         )}
+        {d.output_key && (
+          <p className="text-[10px] text-text-muted pt-0.5">
+            → <code className="font-mono">{d.output_key as string}</code>
+          </p>
+        )}
       </div>
       <Handle type="source" position={Position.Right} />
     </div>
+    </NodeHarness>
   );
 }

@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Brain, FileText, BookOpen, Wrench, Code2 } from "lucide-react";
+import { Brain, FileText, BookOpen, Wrench, Code2, Cpu } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 
 const TABS = [
-  { href: "/workspace/models",    key: "workspace.models",    Icon: Brain    },
-  { href: "/workspace/prompts",   key: "workspace.prompts",   Icon: FileText },
-  { href: "/workspace/knowledge", key: "workspace.knowledge", Icon: BookOpen },
-  { href: "/workspace/tools",     key: "workspace.tools",     Icon: Wrench   },
-  { href: "/workspace/skills",    key: "workspace.skills",    Icon: Code2    },
+  { href: "/workspace/models",     key: "workspace.models",    Icon: Brain    },
+  { href: "/workspace/prompts",    key: "workspace.prompts",   Icon: FileText },
+  { href: "/workspace/knowledge",  key: "workspace.knowledge", Icon: BookOpen },
+  { href: "/workspace/tools",      key: "workspace.tools",     Icon: Wrench   },
+  { href: "/workspace/skills",     key: "workspace.skills",    Icon: Code2    },
+  { href: "/workspace/fine-tune",  key: "workspace.finetune",  Icon: Cpu      },
 ] as const;
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {

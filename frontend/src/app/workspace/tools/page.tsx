@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Search, Plus, X, Globe, Code2, Zap, Wrench } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
+import { useAuth } from "@/components/providers/AuthProvider";
 import {
   loadWs,
   syncWorkspaceFromBackend,
@@ -62,9 +63,11 @@ export default function ToolsPage() {
   const [form, setForm]             = useState({ name: "", description: "" });
   const [saving, setSaving]         = useState(false);
 
+  const { user, loading: authLoading } = useAuth();
   useEffect(() => {
+    if (authLoading || !user) return;
     syncWorkspaceFromBackend("tool", LOCAL_KEY, toLocal, INITIAL_TOOLS).then(setTools);
-  }, []);
+  }, [user, authLoading]);
 
   const filtered = tools.filter((tool) =>
     !query || tool.name.toLowerCase().includes(query.toLowerCase())

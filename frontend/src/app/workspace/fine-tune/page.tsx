@@ -123,7 +123,7 @@ export default function FineTunePage() {
           <Cpu size={14} />
         </div>
         <div>
-          <p className="text-xs font-medium text-text-primary mb-0.5">💡 채팅에서 학습 데이터 수집</p>
+          <p className="text-xs font-medium text-text-primary mb-0.5">채팅에서 학습 데이터 수집</p>
           <p className="text-[11px] text-text-muted leading-relaxed">
             채팅 화면 상단의 <strong className="text-text-primary">파인튜닝 모드</strong> 토글을 켜면 대화가 자동으로 학습 데이터로 저장됩니다.
             어느 정도 쌓이면 여기서 학습을 시작하세요.

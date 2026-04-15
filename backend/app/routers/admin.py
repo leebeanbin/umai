@@ -547,6 +547,43 @@ class FeaturesSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class DocumentsSettings(BaseModel):
+    embedding_engine: str  | None = Field(None, pattern="^(ollama|openai)$")
+    embedding_model:  str  | None = Field(None, max_length=100)
+    chunk_size:       int  | None = Field(None, ge=100, le=8000)
+    chunk_overlap:    int  | None = Field(None, ge=0, le=1000)
+    top_k:            int  | None = Field(None, ge=1, le=50)
+    hybrid_search:    bool | None = None
+    ocr_engine:       str  | None = Field(None, pattern="^(none|tesseract)$")
+    model_config = ConfigDict(extra="forbid")
+
+
+class AudioSettings(BaseModel):
+    stt_provider:  str  | None = Field(None, pattern="^(none|openai)$")
+    stt_key:       str  | None = Field(None, max_length=256)
+    stt_language:  str  | None = Field(None, max_length=20)
+    vad_auto_send: bool | None = None
+    tts_provider:  str  | None = Field(None, pattern="^(none|openai)$")
+    tts_key:       str  | None = Field(None, max_length=256)
+    tts_voice:     str  | None = Field(None, max_length=50)
+    model_config = ConfigDict(extra="forbid")
+
+
+class ImagesSettings(BaseModel):
+    engine:      str | None = Field(None, pattern="^(none|openai|comfyui|a1111)$")
+    dalle_key:   str | None = Field(None, max_length=256)
+    dalle_model: str | None = Field(None, max_length=100)
+    comfyui_url: str | None = Field(None, max_length=512)
+    a1111_url:   str | None = Field(None, max_length=512)
+    model_config = ConfigDict(extra="forbid")
+
+
+class EvaluationsSettings(BaseModel):
+    arena_mode:     bool | None = None
+    message_rating: bool | None = None
+    model_config = ConfigDict(extra="forbid")
+
+
 class SettingsPatch(BaseModel):
     """Typed patch payload — 알려진 섹션/필드만 허용. 임의 키 저장 방지."""
     general:     GeneralSettings     | None = None
@@ -554,10 +591,10 @@ class SettingsPatch(BaseModel):
     models:      ModelsSettings      | None = None
     oauth:       OauthSettings       | None = None
     features:    FeaturesSettings    | None = None
-    documents:   dict[str, Any]      | None = None  # 구조 파악 후 추후 타입화
-    audio:       dict[str, Any]      | None = None
-    images:      dict[str, Any]      | None = None
-    evaluations: dict[str, Any]      | None = None
+    documents:   DocumentsSettings   | None = None
+    audio:       AudioSettings       | None = None
+    images:      ImagesSettings      | None = None
+    evaluations: EvaluationsSettings | None = None
 
     model_config = ConfigDict(extra="forbid")
 

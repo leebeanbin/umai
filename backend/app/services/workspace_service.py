@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
@@ -21,6 +22,26 @@ ALLOWED_CONTENT_TYPES = {
     "application/pdf":  "pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
 }
+
+# magic byte 서명 — content_type 헤더 스푸핑 방어
+_MAGIC: dict[str, bytes] = {
+    "application/pdf": b"%PDF",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": b"PK\x03\x04",
+}
+
+
+def _check_magic(raw: bytes, content_type: str) -> bool:
+    """파일 내용의 magic byte가 선언된 content_type과 일치하는지 검증."""
+    magic = _MAGIC.get(content_type)
+    return magic is None or raw[:len(magic)] == magic
+
+
+def _safe_filename(name: str) -> str:
+    """경로 탐색(path traversal) 방어 및 안전한 파일명 반환."""
+    base = os.path.basename(name).strip()
+    if not base or base.startswith("."):
+        return "Untitled"
+    return base[:255]
 
 
 class WorkspaceService:
@@ -110,6 +131,15 @@ class WorkspaceService:
                 f"허용: {', '.join(ALLOWED_CONTENT_TYPES.values())}"
             )
 
+        # magic byte 검증 — content_type 헤더 스푸핑 방어
+        if not _check_magic(raw_bytes, content_type):
+            ErrCode.UNSUPPORTED_TYPE.raise_it(
+                "파일 내용이 선언된 형식과 일치하지 않습니다"
+            )
+
+        # 파일명 sanitize — 경로 탐색 방어
+        filename = _safe_filename(filename)
+
         content: str | None = None
         if content_type in ("text/plain", "text/markdown"):
             try:
@@ -119,7 +149,7 @@ class WorkspaceService:
 
         item = KnowledgeItem(
             user_id=user_id,
-            name=filename or "Untitled",
+            name=filename,
             content_type=content_type,
             file_size=len(raw_bytes),
             content=content,

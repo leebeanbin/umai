@@ -1,233 +1,206 @@
-# Umai — Chat-based AI Platform
+# Umai — AI Platform
 
-> 채팅·이미지 편집·Knowledge Base·AI 에이전트를 통합한 오픈소스 AI 플랫폼.
-> Ollama / OpenAI / Anthropic / Google 멀티 프로바이더 지원.
+> Open-source AI platform integrating multi-provider chat, RAG knowledge base, workflow automation, and image generation.
+
+![Next.js](https://img.shields.io/badge/Next.js_15-black?logo=next.js) ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL_16-316192?logo=postgresql&logoColor=white) ![Redis](https://img.shields.io/badge/Redis_7-DC382D?logo=redis&logoColor=white) ![Celery](https://img.shields.io/badge/Celery_5-37814A?logo=celery&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
-## 기능 개요
+## Features
 
-| 영역 | 기능 |
+| Area | Capability |
 |---|---|
-| **채팅** | 스트리밍 AI 응답, 이미지 첨부, 마스크 에디터, 채팅 공유 |
-| **AI 에이전트** | Tool-use 루프 (웹 검색 · Python 실행 · Knowledge 검색), Celery 병렬 처리 |
-| **이미지 처리** | 리사이즈, OCR(vision 모델), 이미지 분석, 생성(DALL·E / ComfyUI / A1111) |
-| **Knowledge Base** | PDF·DOCX·TXT·MD 업로드 → 자동 파싱·청킹·임베딩 (Celery 백그라운드) |
-| **인증** | 이메일/비밀번호 + Google/GitHub OAuth, JWT + Refresh Token |
-| **어드민** | 사용자 관리, 통계, 시스템 설정 (Connections · Models · RAG · Audio · Images) |
-| **다국어** | 한국어 / 영어 (i18n) |
+| **Chat** | Streaming AI responses, image attachments, mask editor, chat sharing |
+| **AI Agent** | Tool-use loop (web search, Python execution, knowledge retrieval), Celery parallel execution |
+| **Knowledge Base** | PDF/DOCX/TXT/MD upload → auto parse → chunk → embed (background via Celery) |
+| **Image Generation** | DALL·E 3, ComfyUI, Automatic1111 (A1111) integration |
+| **Workflow Engine** | Visual DAG builder — LLM, Tool, Branch, HumanNode, Output nodes |
+| **Authentication** | Email/password + Google/GitHub OAuth, JWT (15min) + Refresh Token (30d) |
+| **Admin Dashboard** | User management, DAU analytics, system settings, fine-tuning |
+| **i18n** | Korean / English |
 
 ---
 
-## 아키텍처
+## Architecture
 
 ```
-브라우저
-  └─ Next.js (포트 3000)
-       └─ rewrite proxy (/api/*) ──→ FastAPI (포트 8000/8001)
-                                        ├─ PostgreSQL 16   (주 데이터)
-                                        ├─ Redis 7         (세션·캐시·Celery 브로커)
-                                        └─ Celery Worker   (image / ai / knowledge / default 큐)
+Browser
+  └─ Next.js 15  (port 3000)
+       └─ /api/* rewrite proxy ──→ FastAPI  (port 8000)
+                                      ├─ PostgreSQL 16 + pgvector  (primary data + vector search)
+                                      ├─ Redis 7                   (sessions, cache, pub/sub, Celery broker)
+                                      └─ Celery Workers            (ai / image / knowledge / default queues)
 ```
 
-**핵심 설계 원칙:**
-- 브라우저는 프론트엔드 포트만 알면 됨 — `/api/*` 상대경로 → Next.js가 백엔드로 프록시
-- Celery + Redis로 이미지·AI·임베딩 태스크 비동기 병렬 처리
-- Redis db0=세션캐시, db1=Celery 브로커, db2=Celery 결과
+**Key design decisions:**
+- The browser only ever talks to one origin — `/api/*` relative paths are silently rewritten by Next.js to the backend. No CORS complexity on the client.
+- Four independent Celery queues keep AI, image, and embedding workloads from blocking each other.
+- Redis serves triple duty: session cache (db0), Celery broker (db1), task results (db2).
 
 ---
 
-## 기술 스택
+## Technical Highlights
 
-| 영역 | 기술 |
+### Security Architecture
+A full security audit was performed, resulting in 9 hardening fixes:
+
+| Fix | Detail |
 |---|---|
-| Frontend | Next.js 16 (App Router), TypeScript, Tailwind CSS 4 |
-| Backend | FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic v2 |
-| Database | PostgreSQL 16 |
-| Cache / Session | Redis 7 (hiredis) |
-| Task Queue | Celery 5 + Redis broker |
-| AI | Ollama, OpenAI, Anthropic, Google AI |
-| Auth | JWT (access 15분 / refresh 30일), Google·GitHub OAuth |
-| Infra | Docker Compose, Nginx (프로덕션) |
+| WebSocket auth | JWT is **never** sent in the URL query string. Instead, the server accepts the connection and waits up to 5 seconds for a first-message `{"type":"auth","token":"..."}` — preventing token leakage into Nginx access logs and browser history. |
+| OAuth code flow | The authorization code stored in Redis contains only the `user_id` string. Actual tokens are generated at `token_exchange` time — a Redis breach cannot yield usable credentials. |
+| Rate limiting | Every mutating endpoint uses `slowapi` decorators. Limits are centralized in `constants.py` for easy adjustment. |
+| File upload | Magic-byte validation (e.g., `%PDF` for PDFs) is checked against the `Content-Type` header. Filenames are sanitized against path traversal before storage. |
+| Input validation | Admin `SettingsPatch` uses typed Pydantic section models with `extra="forbid"` — arbitrary keys are rejected at the schema layer. |
+| Secrets | `SESSION_SECRET_KEY` and `SECRET_KEY` are enforced as separate values. Production startup fails fast if `FRONTEND_URL` uses HTTP or `SECRET_KEY` is under 32 characters. |
+
+### Probabilistic Data Structures (Redis)
+Chosen for O(1) space-bounded operations at scale:
+
+| Structure | Use case | Implementation |
+|---|---|---|
+| **Bloom filter** | Prevent duplicate chunk embeddings in the RAG pipeline | `BITFIELD` on Redis, `k=7` hash functions, `m=2²³` bits |
+| **HyperLogLog** | Daily Active User count without storing user sets | Redis `PFADD` / `PFCOUNT` |
+| **Sorted Set** | Sliding-window distributed rate limiting for HTTP endpoints | Score = timestamp, range queries per window |
+
+### Semantic Search — pgvector HNSW
+```
+1. Query → embed (OpenAI / local model, cached in Redis)
+2. HNSW index scan (approximate nearest neighbor, sub-linear)
+3. Fallback to JSONB cosine similarity scan if HNSW unavailable
+```
+Embedding results are cached in Redis to avoid redundant API calls on repeated queries.
+
+### Idempotent Celery Tasks
+DALL·E and other paid-API tasks cache their result in Redis keyed by `task_id` with a 2-hour TTL. On retry, the worker reads the cached result instead of making a second API call — preventing double billing.
+
+### Real-time Streaming
+```
+FastAPI task  →  Redis PUBLISH  →  WebSocket handler  →  Browser
+```
+Each chat/workflow run publishes incremental events to a Redis channel. The WebSocket handler subscribes and streams chunks to the client without polling.
 
 ---
 
-## 로컬 개발
+## Tech Stack
 
-### 권장 방식: Docker 인프라 + 네이티브 Next.js
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS |
+| Backend | FastAPI, SQLAlchemy 2.0 (async), Alembic, Pydantic v2 |
+| Database | PostgreSQL 16 + pgvector extension |
+| Cache / Broker | Redis 7 (hiredis) |
+| Task Queue | Celery 5 |
+| AI Providers | OpenAI, Anthropic, Google AI, Ollama (self-hosted) |
+| Auth | JWT + HTTPOnly refresh cookie, Google/GitHub OAuth 2.0 |
+| Infra | Docker Compose, Nginx |
 
-```
-Docker:  postgres · redis · backend · (celery worker)
-Native:  npm run dev  →  http://localhost:3000
-```
+---
 
-Next.js `.env.local`의 `INTERNAL_API_URL`이 `/api/*` 요청을 Docker 백엔드로 자동 프록시합니다.
-브라우저는 포트 3000만 알면 됩니다.
+## Local Development
 
-### 1단계: 환경 변수 설정
+**Recommended: Docker infra + native Next.js (hot reload)**
 
 ```bash
-# 백엔드
+# 1. Environment variables
 cp backend/.env.example backend/.env
-# 최소 필수: SECRET_KEY, BACKEND_URL, FRONTEND_URL
+# Required: SECRET_KEY, BACKEND_URL, FRONTEND_URL
 
-# 프론트엔드 (기본값으로 즉시 동작)
 cp frontend/.env.local.example frontend/.env.local
-```
+# INTERNAL_API_URL defaults to http://localhost:8001
 
-### 2단계: Docker 인프라 실행
-
-```bash
+# 2. Start infrastructure (Postgres, Redis, backend, Celery)
 docker compose -f docker-compose.dev.yml up --build -d
+
+# 3. Frontend with hot reload
+cd frontend && npm install && npm run dev
+# → http://localhost:3000
+
+# 4. (Optional) Local Celery worker for AI/image/embedding tasks
+cd backend
+pip install -r requirements.txt
+celery -A app.core.celery_app worker -Q image,ai,knowledge,default -c 2 --loglevel=info
 ```
 
-| 컨테이너 | 접근 URL |
+| Service | URL |
 |---|---|
+| Frontend | http://localhost:3000 |
 | Backend API | http://localhost:8001 |
-| API 문서 (Swagger) | http://localhost:8001/docs |
-| Frontend (Docker 빌드) | http://localhost:3002 |
+| Swagger Docs | http://localhost:8001/docs |
 | PostgreSQL | localhost:5434 |
 | Redis | localhost:6380 |
 
-### 3단계: 프론트엔드 네이티브 실행 (핫 리로드)
+---
 
-```bash
-cd frontend
-npm install
-npm run dev
-# → http://localhost:3000
+## OAuth Setup
+
+Google and GitHub OAuth callbacks must point to the **backend URL** directly.
+
+**Google** — [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
+```
+Redirect URI: http://localhost:8001/api/v1/auth/oauth/google/callback
 ```
 
-### 4단계: Celery Worker (AI·이미지·임베딩 태스크 필요 시)
-
-```bash
-cd backend
-pip install -r requirements.txt
-celery -A app.core.celery_app worker \
-  -Q image,ai,knowledge,default \
-  -c 2 --loglevel=info
+**GitHub** — [GitHub Developer Settings](https://github.com/settings/applications/new):
+```
+Authorization callback URL: http://localhost:8001/api/v1/auth/oauth/github/callback
 ```
 
 ---
 
-## 소셜 로그인 (OAuth) 설정
+## Key Environment Variables
 
-> OAuth는 **브라우저 → Next.js → 백엔드 → Google/GitHub** 순서로 동작합니다.
-> Google/GitHub이 콜백할 URL은 **백엔드 직접 주소**여야 합니다.
-
-### Google
-
-1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → OAuth 2.0 클라이언트 생성
-2. **승인된 리디렉션 URI** 추가:
-   ```
-   http://localhost:8001/api/v1/auth/oauth/google/callback
-   ```
-3. `backend/.env`에 입력:
-   ```env
-   GOOGLE_CLIENT_ID=...
-   GOOGLE_CLIENT_SECRET=...
-   BACKEND_URL=http://localhost:8001   # Google이 콜백할 주소
-   FRONTEND_URL=http://localhost:3000  # OAuth 완료 후 리다이렉트 (npm run dev 포트)
-   ```
-
-### GitHub
-
-1. [GitHub → Settings → Developer applications](https://github.com/settings/applications/new)
-2. **Authorization callback URL**:
-   ```
-   http://localhost:8001/api/v1/auth/oauth/github/callback
-   ```
-3. `backend/.env`에 입력:
-   ```env
-   GITHUB_CLIENT_ID=...
-   GITHUB_CLIENT_SECRET=...
-   ```
-
-> **`FRONTEND_URL` 포트 주의:**
-> `npm run dev` 사용 시 → `http://localhost:3000`
-> Docker 프론트엔드 사용 시 → `http://localhost:3002`
-
----
-
-## 환경 변수 참조
-
-### `backend/.env`
-
-| 변수 | 로컬 기본값 | 설명 |
+| Variable | Default | Notes |
 |---|---|---|
-| `SECRET_KEY` | (필수 변경) | JWT 서명 키 — `openssl rand -hex 32` |
-| `DATABASE_URL` | `postgresql+asyncpg://umai:umai@localhost:5434/umai` | 비동기 DB |
-| `REDIS_URL` | `redis://localhost:6380/0` | 세션·캐시 |
-| `CELERY_BROKER_URL` | `redis://localhost:6380/1` | Celery 브로커 |
-| `CELERY_RESULT_BACKEND` | `redis://localhost:6380/2` | Celery 결과 저장 |
-| `BACKEND_URL` | `http://localhost:8001` | OAuth 콜백 URI 생성에 사용 |
-| `FRONTEND_URL` | `http://localhost:3000` | OAuth 완료 후 리다이렉트 대상 |
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama 서버 주소 |
-| `OPENAI_API_KEY` | — | GPT-4o 등 |
-| `ANTHROPIC_API_KEY` | — | Claude 등 |
-
-### `frontend/.env.local`
-
-| 변수 | 설명 |
-|---|---|
-| `INTERNAL_API_URL` | 백엔드 URL (서버사이드 전용). `next.config.ts` rewrite 대상. 기본값: `http://localhost:8001` |
+| `SECRET_KEY` | **required** | JWT signing key — `openssl rand -hex 32` |
+| `SESSION_SECRET_KEY` | — | Session middleware key (separate from `SECRET_KEY`) |
+| `DATABASE_URL` | `postgresql+asyncpg://umai:umai@localhost:5434/umai` | Async driver required |
+| `REDIS_URL` | `redis://localhost:6380/0` | |
+| `BACKEND_URL` | `http://localhost:8001` | Used to construct OAuth callback URIs |
+| `FRONTEND_URL` | `http://localhost:3000` | OAuth redirect target after login |
+| `OPENAI_API_KEY` | — | GPT-4o, DALL·E |
+| `ANTHROPIC_API_KEY` | — | Claude models |
+| `GOOGLE_AI_API_KEY` | — | Gemini models |
+| `OLLAMA_URL` | `http://localhost:11434` | Self-hosted models |
 
 ---
 
-## 자주 쓰는 명령어
-
-```bash
-# 컨테이너 상태 확인
-docker compose -f docker-compose.dev.yml ps
-
-# 백엔드 로그 실시간
-docker logs umai-backend -f
-
-# DB 마이그레이션
-docker compose -f docker-compose.dev.yml exec umai-backend alembic upgrade head
-
-# 재시작 (orphan 컨테이너 제거 포함)
-docker compose -f docker-compose.dev.yml up --remove-orphans -d
-
-# 백엔드 이미지 강제 재빌드 (requirements.txt 변경 후 필수)
-docker compose -f docker-compose.dev.yml build --no-cache umai-backend
-docker compose -f docker-compose.dev.yml up -d
-
-# 전체 종료
-docker compose -f docker-compose.dev.yml down
-
-# 볼륨 포함 완전 초기화 (DB 데이터 삭제)
-docker compose -f docker-compose.dev.yml down -v
-
-# TypeScript 타입 검사
-cd frontend && npx tsc --noEmit
-```
-
----
-
-## 프로덕션 배포
+## Production Deployment
 
 ```bash
 cp backend/.env.example backend/.env
-# SECRET_KEY, POSTGRES_PASSWORD, BACKEND_URL, FRONTEND_URL 설정
+# Set SECRET_KEY, SESSION_SECRET_KEY, POSTGRES_PASSWORD, BACKEND_URL (https://), FRONTEND_URL (https://)
 
 docker compose up --build -d
 
-# 재배포
-git pull && docker compose up --build -d
+# DB migrations
+docker compose exec umai-backend alembic upgrade head
 ```
 
-**필수 변경 항목:**
-
-| 변수 | 예시 |
-|---|---|
-| `SECRET_KEY` | `openssl rand -hex 32` |
-| `POSTGRES_PASSWORD` | 강한 패스워드 |
-| `BACKEND_URL` | `https://api.yourdomain.com` |
-| `FRONTEND_URL` | `https://yourdomain.com` |
+> In production, the server enforces HTTPS for both `BACKEND_URL` and `FRONTEND_URL` at startup. An HTTP value will cause an immediate `RuntimeError`.
 
 ---
 
-## 라이선스
+## Common Commands
+
+```bash
+# View logs
+docker logs umai-backend -f
+
+# Run DB migrations
+docker compose -f docker-compose.dev.yml exec umai-backend alembic upgrade head
+
+# Full reset (deletes DB data)
+docker compose -f docker-compose.dev.yml down -v
+
+# TypeScript check
+cd frontend && npx tsc --noEmit
+
+# Lint
+cd frontend && npx eslint src --ext .ts,.tsx
+```
+
+---
+
+## License
 
 MIT

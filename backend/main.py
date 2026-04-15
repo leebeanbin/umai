@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -21,9 +20,32 @@ from app.routers import tasks as tasks_router
 from app.routers import rag as rag_router
 from app.routers import ws as ws_router
 from app.routers import workflows as workflows_router
+from app.routers import fine_tune as fine_tune_router
 
 # ── Rate Limiter 설정 ─────────────────────────────────────────────────────────
-limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+
+def _get_real_client_ip(request: Request) -> str:
+    """실제 클라이언트 IP 추출.
+
+    Nginx는 $remote_addr(Nginx에 직접 연결한 IP)를 X-Real-IP 헤더로 설정한다.
+    이 값은 클라이언트가 조작할 수 없으므로 Rate Limit 키로 안전하다.
+
+    nginx.conf의 real_ip_header / set_real_ip_from 설정이 전제 조건이다.
+    로컬 직접 접속(개발 환경)은 REMOTE_ADDR를 fallback으로 사용한다.
+    """
+    # 1순위: Nginx가 주입한 X-Real-IP (클라이언트 조작 불가)
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip.strip()
+    # 2순위: X-Forwarded-For의 첫 번째 항목 (좌측 = 원본 클라이언트)
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    # 3순위: 직접 연결 (개발/테스트 환경)
+    return request.client.host if request.client else "unknown"
+
+
+limiter = Limiter(key_func=_get_real_client_ip, default_limits=["200/minute"])
 
 
 @asynccontextmanager
@@ -41,6 +63,7 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url=None,
+    redirect_slashes=False,
 )
 
 # Rate limiter 등록
@@ -57,8 +80,11 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
     )
 app.add_middleware(SlowAPIMiddleware)
 
-# Starlette session (OAuth state 저장용)
-app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
+# Starlette session (OAuth state 저장용) — JWT 키와 분리된 별도 시크릿 사용
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.SESSION_SECRET_KEY or settings.SECRET_KEY,
+)
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -81,6 +107,7 @@ app.include_router(tasks_router.router,   prefix="/api/v1")
 app.include_router(rag_router.router,     prefix="/api/v1")
 app.include_router(ws_router.router)  # WebSocket — prefix 없음 (/ws/...)
 app.include_router(workflows_router.router, prefix="/api/v1")
+app.include_router(fine_tune_router.router, prefix="/api/v1")
 
 
 _health_cache: dict | None = None

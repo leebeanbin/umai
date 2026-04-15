@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Search, Plus, X, Copy, Check } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
+import { useAuth } from "@/components/providers/AuthProvider";
 import {
   loadWs,
   syncWorkspaceFromBackend,
@@ -45,9 +46,11 @@ export default function PromptsPage() {
   const [form, setForm]             = useState({ command: "", title: "", content: "" });
   const [saving, setSaving]         = useState(false);
 
+  const { user, loading: authLoading } = useAuth();
   useEffect(() => {
+    if (authLoading || !user) return;
     syncWorkspaceFromBackend("prompt", LOCAL_KEY, toLocal, INITIAL_PROMPTS).then(setPrompts);
-  }, []);
+  }, [user, authLoading]);
 
   const filtered = prompts.filter((p) =>
     !query || p.title.toLowerCase().includes(query.toLowerCase()) || p.command.includes(query.toLowerCase())

@@ -92,8 +92,8 @@ export const API = {
 
   // ── Workflow ───────────────────────────────────────────────────────────────
   WORKFLOW: {
-    LIST:       `${V1}/workflow/`,
-    CREATE:     `${V1}/workflow/`,
+    LIST:       `${V1}/workflow`,
+    CREATE:     `${V1}/workflow`,
     GET:        (id: string) => `${V1}/workflow/${id}`,
     UPDATE:     (id: string) => `${V1}/workflow/${id}`,
     DELETE:     (id: string) => `${V1}/workflow/${id}`,
@@ -103,14 +103,13 @@ export const API = {
     STATS:      (id: string) => `${V1}/workflow/${id}/stats`,
     RUN_STATUS: (runId: string) => `${V1}/workflow/runs/${runId}`,
     RESUME:     (runId: string) => `${V1}/workflow/runs/${runId}/resume`,
-    CANCEL:     (runId: string) => `${V1}/workflow/runs/${runId}`,
+    CANCEL:     (runId: string) => `${V1}/workflow/runs/${runId}/cancel`,
   },
 
   // ── WebSocket ──────────────────────────────────────────────────────────────
+  // 토큰은 URL 쿼리 파라미터 대신 연결 후 첫 메시지로 전송 (로그 노출 방지)
   WS: {
-    CHAT:  (chatId: string, token: string) =>
-      `/ws/chat/${chatId}?token=${encodeURIComponent(token)}`,
-    TASKS: (token: string) =>
-      `/ws/tasks?token=${encodeURIComponent(token)}`,
+    CHAT:  (chatId: string) => `/ws/chat/${chatId}`,
+    TASKS: ()               => `/ws/tasks`,
   },
 } as const;

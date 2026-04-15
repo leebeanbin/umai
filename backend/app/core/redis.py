@@ -317,27 +317,47 @@ async def embed_query_cache_set(content_hash: str, vector: list[float]) -> None:
 # 키: http_rate:{endpoint}:{user_id}  Value: {uuid → timestamp(ms)}
 # 호출 비용: O(log n) ZADD + O(log n) ZREMRANGEBYSCORE + O(1) ZCARD
 
+_RATE_LIMIT_LUA = """
+local key          = KEYS[1]
+local window_start = tonumber(ARGV[1])
+local limit        = tonumber(ARGV[2])
+local now          = tonumber(ARGV[3])
+local ttl          = tonumber(ARGV[4])
+local member       = ARGV[5]
+
+redis.call('ZREMRANGEBYSCORE', key, 0, window_start)
+local count = tonumber(redis.call('ZCARD', key))
+if count < limit then
+    redis.call('ZADD', key, now, member)
+    redis.call('EXPIRE', key, ttl)
+    return 1
+end
+return 0
+"""
+
+
 async def check_http_rate_limit(user_id: str, endpoint: str, limit: int, window_secs: int = 60) -> bool:
     """엔드포인트·유저별 분산 슬라이딩 윈도우 rate limit. True = 허용.
 
-    limit   : 윈도우 내 최대 요청 수
-    window  : 슬라이딩 윈도우 크기 (초)
+    Lua 스크립트로 원자적 실행 — 한도 초과 시 ZADD 생략 (셋 무한 증가 방지,
+    check-then-act 레이스 컨디션 제거).
+
+    limit       : 윈도우 내 최대 요청 수
+    window_secs : 슬라이딩 윈도우 크기 (초)
     """
     r = await get_redis()
     key = key_http_rate_limit(user_id, endpoint)
     now = time.time()
     window_start = now - window_secs
 
-    pipe = r.pipeline()
-    # 오래된 항목 제거 (윈도우 밖)
-    pipe.zremrangebyscore(key, 0, window_start)
-    # 현재 윈도우 내 요청 수 확인
-    pipe.zcard(key)
-    # 새 요청 추가 (score=timestamp, member=uuid)
-    pipe.zadd(key, {str(_uuid.uuid4()): now})
-    # 키 TTL 갱신 (자동 정리)
-    pipe.expire(key, window_secs * 2)
-    results = await pipe.execute()
-
-    count_before = results[1]  # zadd 전 카운트
-    return int(count_before) < limit
+    result = await r.eval(
+        _RATE_LIMIT_LUA,
+        1,
+        key,
+        window_start,
+        limit,
+        now,
+        window_secs * 2,
+        str(_uuid.uuid4()),
+    )
+    return bool(result)

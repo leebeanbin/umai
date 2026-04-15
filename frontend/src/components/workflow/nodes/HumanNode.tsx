@@ -2,6 +2,7 @@
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { UserCheck, Check, X } from "lucide-react";
+import { NodeHarness } from "./NodeHarness";
 
 export interface HumanNodeData {
   label?: string;
@@ -22,10 +23,11 @@ function statusBorder(status?: string) {
   }
 }
 
-export function HumanNode({ data }: NodeProps) {
+export function HumanNode({ id, data, selected }: NodeProps) {
   const d = data as HumanNodeData;
   const isSuspended = d._status === "suspended";
   return (
+    <NodeHarness id={id} selected={selected}>
     <div className={`bg-surface rounded-lg border-2 ${statusBorder(d._status)} min-w-[220px] shadow-sm`}>
       <Handle type="target" position={Position.Left} />
       <div
@@ -66,5 +68,6 @@ export function HumanNode({ data }: NodeProps) {
       </div>
       <Handle type="source" position={Position.Right} />
     </div>
+    </NodeHarness>
   );
 }

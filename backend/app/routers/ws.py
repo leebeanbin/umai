@@ -2,25 +2,28 @@
 WebSocket 허브 — 채팅방 실시간 이벤트 + 태스크 완료 알림
 
 엔드포인트:
-  WS /ws/chat/{chat_id}?token=<access_token>
+  WS /ws/chat/{chat_id}
     채팅방 이벤트 수신 (messages_saved 등)
+    → 연결 후 첫 메시지로 {"type":"auth","token":"<access_token>"} 전송 필요
 
-  WS /ws/tasks?token=<access_token>
+  WS /ws/tasks
     사용자 전용 태스크 완료 알림 수신 (task_done)
+    → 연결 후 첫 메시지로 {"type":"auth","token":"<access_token>"} 전송 필요
 
 보안 레이어:
   1. UUID 형식 검증 (path traversal 방어)
-  2. Redis access:{token} 토큰 검증
-  3. ChatMember DB 멤버십 확인 (chat 채널)
-  4. 사용자당 동일 방 연결 수 제한 (MAX_CONNECTIONS_PER_USER_PER_ROOM = 5)
-  5. WS 메시지 크기 제한 (10 KB)
-  6. Redis 기반 rate limit (60 msg/min per user)
+  2. first-message 인증 (5초 타임아웃, 토큰 URL 미노출)
+  3. Redis access:{token} 토큰 검증
+  4. ChatMember DB 멤버십 확인 (chat 채널)
+  5. 사용자당 동일 방 연결 수 제한 (MAX_CONNECTIONS_PER_USER_PER_ROOM = 5)
+  6. WS 메시지 크기 제한 (10 KB)
+  7. Redis 기반 rate limit (60 msg/min per user)
 """
 import asyncio
 import json
 import uuid
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.redis_keys import key_chat_channel
 from app.core.constants import (
@@ -30,6 +33,13 @@ from app.core.constants import (
 from app.core.database import AsyncSessionLocal
 from app.core.redis import access_get, check_ws_rate_limit, get_pubsub_client
 from app.services.chat_service import ChatService
+
+_WS_AUTH_TIMEOUT = 5.0  # 초: first-message 인증 대기 타임아웃
+
+
+async def _resolve_user_id(token: str) -> str | None:
+    """토큰 → user_id 변환 (Redis access 키 검증)."""
+    return await access_get(token)
 
 router = APIRouter(tags=["websocket"])
 
@@ -85,7 +95,7 @@ async def _pubsub_forward(pubsub, websocket: WebSocket) -> None:
 async def _periodic_token_revalidate(
     websocket: WebSocket, token: str, interval_s: int = WS_TOKEN_REVALIDATE_INTERVAL
 ) -> None:
-    """M1: 5분마다 토큰 재검증 — 만료/로그아웃 후 stale 연결 종료."""
+    """1분마다 토큰 재검증 — 만료/로그아웃 후 stale 연결 종료."""
     try:
         while True:
             await asyncio.sleep(interval_s)
@@ -105,7 +115,6 @@ async def _periodic_token_revalidate(
 async def chat_ws(
     websocket: WebSocket,
     chat_id: str,
-    token: str = Query(...),
 ) -> None:
     # 1. UUID 형식 검증
     try:
@@ -114,29 +123,40 @@ async def chat_ws(
         await websocket.close(code=4003)
         return
 
-    # 2. 토큰 → user_id 검증
-    user_id = await access_get(token)
+    # 2. 연결 수락 후 first-message 인증 (토큰을 URL 쿼리 파라미터에서 제거)
+    await websocket.accept()
+    try:
+        raw_auth = await asyncio.wait_for(websocket.receive_text(), timeout=_WS_AUTH_TIMEOUT)
+        auth_msg = json.loads(raw_auth)
+        if auth_msg.get("type") != "auth":
+            await websocket.close(code=4001)
+            return
+        token = auth_msg.get("token", "")
+    except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
+        await websocket.close(code=4001)
+        return
+
+    # 3. 토큰 → user_id 검증
+    user_id = await _resolve_user_id(token)
     if not user_id:
         await websocket.close(code=4001)
         return
 
-    # 3. 채팅방 멤버십 확인 (단기 DB 세션)
+    # 4. 채팅방 멤버십 확인 (단기 DB 세션)
     async with AsyncSessionLocal() as db:
         member = await ChatService(db).get_member(room_uuid, uuid.UUID(user_id))
     if not member:
         await websocket.close(code=4003)
         return
 
-    # 4. 연결 수 제한
+    # 5. 연결 수 제한
     if manager.user_count(chat_id, user_id) >= MAX_CONNECTIONS_PER_USER_PER_ROOM:
         await websocket.close(code=4029)
         return
-
-    await websocket.accept()
     meta = _ConnMeta(websocket, user_id)
     manager.add(chat_id, meta)
 
-    # 5. pub/sub 구독 (독립 연결)
+    # 6. pub/sub 구독 (독립 연결)
     pubsub_client = await get_pubsub_client()
     pubsub = pubsub_client.pubsub()
     await pubsub.subscribe(key_chat_channel(chat_id))
@@ -169,20 +189,30 @@ async def chat_ws(
 @router.websocket("/ws/tasks")
 async def tasks_ws(
     websocket: WebSocket,
-    token: str = Query(...),
 ) -> None:
-    # 토큰 검증
-    user_id = await access_get(token)
+    # 1. 연결 수락 후 first-message 인증 (토큰을 URL 쿼리 파라미터에서 제거)
+    await websocket.accept()
+    try:
+        raw_auth = await asyncio.wait_for(websocket.receive_text(), timeout=_WS_AUTH_TIMEOUT)
+        auth_msg = json.loads(raw_auth)
+        if auth_msg.get("type") != "auth":
+            await websocket.close(code=4001)
+            return
+        token = auth_msg.get("token", "")
+    except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
+        await websocket.close(code=4001)
+        return
+
+    # 2. 토큰 → user_id 검증
+    user_id = await _resolve_user_id(token)
     if not user_id:
         await websocket.close(code=4001)
         return
 
-    # 연결 수 제한 (태스크 채널은 사용자당 최대 WS_MAX_CONN_TASK_CHANNEL)
+    # 3. 연결 수 제한 (태스크 채널은 사용자당 최대 WS_MAX_CONN_TASK_CHANNEL)
     if manager.user_count("__tasks__", user_id) >= WS_MAX_CONN_TASK_CHANNEL:
         await websocket.close(code=4029)
         return
-
-    await websocket.accept()
     meta = _ConnMeta(websocket, user_id)
     manager.add("__tasks__", meta)
 

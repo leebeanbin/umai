@@ -207,6 +207,13 @@ async function proxyOpenAI({ model, messages, apiKey, sysPrompt, temperature, ma
 // ─ Anthropic ─────────────────────────────────────────────────────────────────
 
 async function proxyAnthropic({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP }: ProxyArgs) {
+  // Collect all system messages (user setting + RAG/doc/OCR/websearch injections)
+  // Anthropic requires a single 'system' string — concatenate all
+  const systemParts: string[] = [];
+  if (sysPrompt) systemParts.push(sysPrompt);
+  messages.filter((m) => m.role === "system").forEach((m) => systemParts.push(m.content));
+  const mergedSystem = systemParts.join("\n\n") || undefined;
+
   // Convert messages with images to Anthropic vision format
   const formattedMessages = messages
     .filter((m) => m.role !== "system")
@@ -236,10 +243,10 @@ async function proxyAnthropic({ model, messages, apiKey, sysPrompt, temperature,
   const body: Record<string, unknown> = {
     model,
     stream: true,
-    max_tokens: maxTokens ?? 1024,
+    max_tokens: maxTokens ?? 4096,
     messages:   formattedMessages,
   };
-  if (sysPrompt)           body.system      = sysPrompt;
+  if (mergedSystem)        body.system      = mergedSystem;
   if (temperature != null) body.temperature = temperature;
   if (topP        != null) body.top_p       = topP;
 
@@ -381,6 +388,12 @@ async function proxyXAI({ model, messages, apiKey, sysPrompt, temperature, maxTo
 // ─ Google ─────────────────────────────────────────────────────────────────────
 
 async function proxyGoogle({ model, messages, apiKey, sysPrompt, temperature, maxTokens, topP }: ProxyArgs) {
+  // Collect all system messages — Google requires a single systemInstruction
+  const googleSystemParts: string[] = [];
+  if (sysPrompt) googleSystemParts.push(sysPrompt);
+  messages.filter((m) => m.role === "system").forEach((m) => googleSystemParts.push(m.content));
+  const googleSystem = googleSystemParts.join("\n\n") || undefined;
+
   // Google Gemini vision format
   const contents = messages
     .filter((m) => m.role !== "system")
@@ -408,7 +421,7 @@ async function proxyGoogle({ model, messages, apiKey, sysPrompt, temperature, ma
 
   const body: Record<string, unknown> = { contents };
   if (Object.keys(generationConfig).length) body.generationConfig   = generationConfig;
-  if (sysPrompt)                            body.systemInstruction  = { parts: [{ text: sysPrompt }] };
+  if (googleSystem)                         body.systemInstruction  = { parts: [{ text: googleSystem }] };
 
   const modelId  = model.startsWith("models/") ? model : `models/${model}`;
   const upstream = await fetch(

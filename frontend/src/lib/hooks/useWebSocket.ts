@@ -7,8 +7,8 @@
  * useTaskSocket()          — 태스크 완료 알림 수신 (task_done 만 필터링)
  * useWorkflowSocket()      — 워크플로우 이벤트 수신 (task:{user_id} 채널 전체 이벤트)
  *
- * 연결 URL: NEXT_PUBLIC_WS_URL env (없으면 ws://localhost:8000)
- * 인증:     ?token=<access_token> (HTTPS 환경에서만 안전)
+ * 연결 URL: NEXT_PUBLIC_WS_URL env (없으면 현재 호스트)
+ * 인증:     연결 후 첫 메시지로 {"type":"auth","token":"..."} 전송 (URL 노출 방지)
  */
 
 import { useEffect, useRef, useCallback } from "react";
@@ -22,7 +22,7 @@ import {
 const WS_BASE =
   process.env.NEXT_PUBLIC_WS_URL ??
   (typeof window !== "undefined"
-    ? `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:8000`
+    ? `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`
     : "ws://localhost:8000");
 
 type WsEvent = Record<string, unknown> & { type: string };
@@ -60,11 +60,15 @@ export function useChatSocket(
     function connect() {
       if (destroyedRef.current) return;
 
-      // M9: 재연결 시 신선한 토큰 사용
-      const token = getStoredToken() ?? "";
-      const url   = `${WS_BASE}${API.WS.CHAT(chatId!, token)}`;
-      const ws    = new WebSocket(url);
+      const url = `${WS_BASE}${API.WS.CHAT(chatId!)}`;
+      const ws  = new WebSocket(url);
       wsRef.current = ws;
+
+      ws.onopen = () => {
+        // M9: 재연결 시 신선한 토큰으로 first-message 인증
+        const token = getStoredToken();
+        ws.send(JSON.stringify({ type: "auth", token }));
+      };
 
       ws.onmessage = (e) => {
         try {
@@ -118,11 +122,16 @@ export function useTaskSocket(
   const connect = useCallback(() => {
     if (!isAuthenticated() || destroyedRef.current) return;
 
-    // M9: 재연결 시 신선한 토큰 사용
-    const token = getStoredToken() ?? "";
-    const url   = `${WS_BASE}${API.WS.TASKS(token)}`;
-    const ws    = new WebSocket(url);
+    const url = `${WS_BASE}${API.WS.TASKS()}`;
+    const ws  = new WebSocket(url);
     wsRef.current = ws;
+
+    ws.onopen = () => {
+      // M9: 재연결 시 신선한 토큰으로 first-message 인증
+      const token = getStoredToken();
+      ws.send(JSON.stringify({ type: "auth", token }));
+      attemptRef.current = 0;
+    };
 
     ws.onmessage = (e) => {
       try {
@@ -146,11 +155,6 @@ export function useTaskSocket(
       // M8: 지수 백오프 재연결
       const delay = backoffMs(attemptRef.current++);
       setTimeout(() => connectRef.current?.(), delay);
-    };
-
-    ws.onopen = () => {
-      // 연결 성공 시 재시도 카운터 초기화
-      attemptRef.current = 0;
     };
   }, []);
 
@@ -187,10 +191,16 @@ export function useWorkflowSocket(onEvent: (event: WsEvent) => void) {
   const connect = useCallback(() => {
     if (!isAuthenticated() || destroyedRef.current) return;
 
-    const token = getStoredToken() ?? "";
-    const url   = `${WS_BASE}${API.WS.TASKS(token)}`;
-    const ws    = new WebSocket(url);
+    const url = `${WS_BASE}${API.WS.TASKS()}`;
+    const ws  = new WebSocket(url);
     wsRef.current = ws;
+
+    ws.onopen = () => {
+      // M9: 재연결 시 신선한 토큰으로 first-message 인증
+      const token = getStoredToken();
+      ws.send(JSON.stringify({ type: "auth", token }));
+      attemptRef.current = 0;
+    };
 
     ws.onmessage = (e) => {
       try {
@@ -211,8 +221,6 @@ export function useWorkflowSocket(onEvent: (event: WsEvent) => void) {
       const delay = backoffMs(attemptRef.current++);
       setTimeout(() => connectRef.current?.(), delay);
     };
-
-    ws.onopen = () => { attemptRef.current = 0; };
   }, []);
 
   useEffect(() => { connectRef.current = connect; }, [connect]);

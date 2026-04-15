@@ -55,7 +55,7 @@ const nextConfig: NextConfig = {
               "font-src 'self' https://fonts.gstatic.com",
               // API + WebSocket: same-origin + OAuth providers + ws/wss
               isDev
-                ? "connect-src 'self' ws: wss: https://accounts.google.com https://github.com"
+                ? "connect-src 'self' ws: wss: http://localhost:8000 http://localhost:8001 https://accounts.google.com https://github.com"
                 : "connect-src 'self' wss: https://accounts.google.com https://github.com",
               // iframe 완전 차단
               "frame-ancestors 'none'",

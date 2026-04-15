@@ -272,7 +272,7 @@ export default function ChatSession() {
       setFtCount(0);
       setFtModeOn(false);
     } catch (e: unknown) {
-      alert(`저장 실패: ${(e as Error).message}`);
+      alert(`저장 실패: ${e instanceof Error ? e.message : "알 수 없는 오류"}`);
     }
   }, []);
 

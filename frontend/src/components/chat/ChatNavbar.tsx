@@ -5,12 +5,23 @@ import { useLanguage } from "@/components/providers/LanguageProvider";
 import { loadSettings, saveSettings, loadModels, type DynamicModel } from "@/lib/appStore";
 import { loadSessions, updateSessionModel } from "@/lib/store";
 import ModelSelect from "@/components/common/ModelSelect";
+import { Cpu } from "lucide-react";
 
 type Props = {
   chatId?: string;
+  fineTuneModeOn?: boolean;
+  fineTuneExampleCount?: number;
+  onToggleFineTuneMode?: () => void;
+  onSaveFineTuneExamples?: () => void;
 };
 
-export default function ChatNavbar({ chatId }: Props) {
+export default function ChatNavbar({
+  chatId,
+  fineTuneModeOn = false,
+  fineTuneExampleCount = 0,
+  onToggleFineTuneMode,
+  onSaveFineTuneExamples,
+}: Props) {
   const { t } = useLanguage();
 
   // null = not yet hydrated (SSR/client 불일치 방지 — localStorage는 클라이언트 전용)
@@ -96,6 +107,31 @@ export default function ChatNavbar({ chatId }: Props) {
             OUT→{navState.outputBadge}
           </span>
         )}
+      </div>
+
+      {/* 파인튜닝 모드 토글 */}
+      <div className="flex items-center gap-2">
+        {fineTuneModeOn && fineTuneExampleCount > 0 && (
+          <button
+            onClick={onSaveFineTuneExamples}
+            className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-colors font-medium"
+          >
+            {fineTuneExampleCount}개 저장
+          </button>
+        )}
+        <button
+          onClick={onToggleFineTuneMode}
+          title={fineTuneModeOn ? "파인튜닝 모드 끄기" : "파인튜닝 모드 켜기 — 대화를 학습 데이터로 수집"}
+          className={
+            "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors " +
+            (fineTuneModeOn
+              ? "bg-accent/15 border-accent/40 text-accent"
+              : "bg-elevated border-border text-text-muted hover:text-text-primary hover:border-border-hover")
+          }
+        >
+          <Cpu size={11} />
+          {fineTuneModeOn ? "FT 수집 중" : "FT 모드"}
+        </button>
       </div>
 
     </nav>

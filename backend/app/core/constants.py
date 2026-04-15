@@ -51,6 +51,8 @@ RATE_RAG_SEARCH        = "30/minute"
 RATE_TASK_KNOWLEDGE        = "10/hour"
 RATE_TASK_EXTRACT          = "20/minute"
 RATE_WORKFLOW_RESUME       = "30/minute"
+RATE_FINE_TUNE_DATASET     = "20/minute"
+RATE_FINE_TUNE_JOB         = "10/minute"
 
 # ── 페이지네이션 ──────────────────────────────────────────────────────────────
 CHAT_LIST_DEFAULT_LIMIT   = 30

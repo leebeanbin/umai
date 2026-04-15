@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Search, Plus, X, Code2, Check, ToggleLeft, ToggleRight, Copy } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
+import { useAuth } from "@/components/providers/AuthProvider";
 import { type TranslationKey } from "@/lib/i18n";
 import {
   loadWs,
@@ -107,9 +108,11 @@ export default function SkillsPage() {
   });
   const [saving, setSaving]         = useState(false);
 
+  const { user, loading: authLoading } = useAuth();
   useEffect(() => {
+    if (authLoading || !user) return;
     syncWorkspaceFromBackend("skill", LOCAL_KEY, toLocal, INITIAL_SKILLS).then(setSkills);
-  }, []);
+  }, [user, authLoading]);
 
   const filtered = skills.filter((s) =>
     !query || s.name.toLowerCase().includes(query.toLowerCase()) || s.description.toLowerCase().includes(query.toLowerCase())
@@ -217,7 +220,7 @@ export default function SkillsPage() {
           {custom.length > 0 && (
             <div className="mb-2">
               <p className="text-[10px] font-semibold text-text-muted uppercase tracking-widest px-1 mb-2">
-                Custom
+                {t("workspace.custom")}
               </p>
               <div className="flex flex-col gap-1">
                 {custom.map((skill) => (

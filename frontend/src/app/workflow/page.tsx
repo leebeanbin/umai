@@ -8,19 +8,24 @@ import {
   apiCreateWorkflow,
   apiDeleteWorkflow,
   type WorkflowOut,
-} from "@/lib/apis/workflow";
+} from "@/lib/api/backendClient";
+import { useAuth } from "@/components/providers/AuthProvider";
 
 export default function WorkflowListPage() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const [workflows, setWorkflows] = useState<WorkflowOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
+    if (authLoading) return;
+    if (!user) { setLoading(false); return; }
     apiListWorkflows()
       .then(setWorkflows)
+      .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [user, authLoading]);
 
   async function handleCreate() {
     setCreating(true);

@@ -117,6 +117,38 @@ These patterns are implemented in `backend/app/core/redis.py`. Extend them rathe
 
 ---
 
+## README Standards (Portfolio)
+
+Every README must be written as a portfolio artifact — assume the reader is a hiring manager or senior engineer who has 60 seconds.
+
+### Required sections (in order)
+1. **Title + one-liner** — project name, one sentence of what it does
+2. **Badges** — tech stack badges (shields.io), license
+3. **Features table** — `| Area | Capability |` format
+4. **Architecture diagram** — ASCII art showing data flow and component relationships
+5. **Technical Highlights** — 3–6 non-obvious engineering decisions with *why* explanations (not just what)
+6. **Tech Stack table** — `| Layer | Technology |`
+7. **Quick Start** — runnable in < 5 minutes, copy-paste commands
+8. **Environment Variables** — complete reference table
+9. **License**
+
+### Rules
+- **English first.** Korean-only READMEs are invisible to international audiences.
+- The Technical Highlights section must explain *tradeoffs* — "we chose X over Y because Z". This is what distinguishes a portfolio from documentation.
+- Architecture diagrams must show the request path from browser to data layer.
+- Badges use `shields.io` format: `![Name](https://img.shields.io/badge/...)`.
+- No vague descriptions like "powerful" or "robust". Be specific: "200-message default cap with 500 max to prevent OOM on large chats."
+- Quick Start must actually work — test the commands before merging.
+- `next.config.ts`, `docker-compose.yml`, and `backend/.env.example` are the source of truth for setup instructions. Keep them in sync.
+
+### What NOT to include
+- Lengthy API reference (link to Swagger at `/docs` instead)
+- Changelogs or version history
+- Contribution guidelines (unless it's actually open for contributions)
+- Redundant information repeated from architecture in tech stack section
+
+---
+
 ## What NOT to Flag in Code Review
 
 - Warnings from `@next/next/no-img-element` in `MaskCanvas.tsx` (canvas overlay — intentional `<img>`).

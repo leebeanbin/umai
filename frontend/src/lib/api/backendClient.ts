@@ -69,12 +69,12 @@ let _accessToken = "";
 
 /** 현재 메모리에 유효한 access token이 있는지 확인 (인증 여부 판단용) */
 export function isAuthenticated(): boolean {
-  return !!_accessToken || IS_DEV;
+  return !!_accessToken;
 }
 
 /** 다른 모듈에서 Bearer token이 필요할 때 사용 (직접 fetch 할 때) */
 export function getStoredToken(): string {
-  return _accessToken || (IS_DEV ? "dev" : "");
+  return _accessToken;
 }
 
 function saveTokens(tokens: AccessTokenResponse) {
@@ -261,15 +261,6 @@ export async function apiUpdateFolder(
 
 export async function apiDeleteFolder(folderId: string): Promise<void> {
   return apiFetch<void>(API.FOLDERS.GET(folderId), { method: "DELETE" });
-}
-
-// ── Auth extras ───────────────────────────────────────────────────────────────
-
-export async function apiChangePassword(currentPassword: string, newPassword: string): Promise<void> {
-  return apiFetch<void>(API.AUTH.ME + "/change-password", {
-    method: "POST",
-    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
-  });
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
@@ -734,4 +725,140 @@ export async function apiGetPublicSettings(): Promise<PublicSettings> {
     return { google_oauth_enabled: true, github_oauth_enabled: true, allow_signup: true };
   }
   return res.json() as Promise<PublicSettings>;
+}
+
+// ── Workflow ───────────────────────────────────────────────────────────────────
+
+export interface WorkflowOut {
+  id: string;
+  name: string;
+  description: string;
+  graph: { nodes: AppNode[]; edges: AppEdge[] };
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface RunStepOut {
+  node_id: string;
+  node_type: string;
+  status: string;
+  input_data: Record<string, unknown>;
+  output_data: Record<string, unknown>;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface RunOut {
+  run_id: string;
+  workflow_id: string;
+  status: string;
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+  context: Record<string, unknown>;
+  started_at: string;
+  finished_at: string | null;
+  steps: RunStepOut[];
+}
+
+export interface RunListItem {
+  run_id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  duration_s: number | null;
+  step_count: number;
+}
+
+export interface WorkflowStats {
+  total_runs: number;
+  done: number;
+  failed: number;
+  suspended: number;
+  running: number;
+  avg_duration_s: number | null;
+}
+
+export interface AppNode {
+  id: string;
+  type: string;
+  position: { x: number; y: number };
+  data: Record<string, unknown>;
+}
+
+export interface AppEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+}
+
+export async function apiCreateWorkflow(name: string, description = ""): Promise<WorkflowOut> {
+  return apiFetch<WorkflowOut>(API.WORKFLOW.CREATE, {
+    method: "POST",
+    body: JSON.stringify({ name, description, graph: { nodes: [], edges: [] } }),
+  });
+}
+
+export async function apiListWorkflows(): Promise<WorkflowOut[]> {
+  return apiFetch<WorkflowOut[]>(API.WORKFLOW.LIST);
+}
+
+export async function apiGetWorkflow(id: string): Promise<WorkflowOut> {
+  return apiFetch<WorkflowOut>(API.WORKFLOW.GET(id));
+}
+
+export async function apiUpdateWorkflow(
+  id: string,
+  patch: { name?: string; description?: string; graph?: { nodes: AppNode[]; edges: AppEdge[] } },
+): Promise<WorkflowOut> {
+  return apiFetch<WorkflowOut>(API.WORKFLOW.UPDATE(id), {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function apiDeleteWorkflow(id: string): Promise<void> {
+  await apiFetch<void>(API.WORKFLOW.DELETE(id), { method: "DELETE" });
+}
+
+export async function apiRunWorkflow(
+  id: string,
+  inputs: Record<string, unknown> = {},
+): Promise<RunOut> {
+  return apiFetch<RunOut>(API.WORKFLOW.RUN(id), {
+    method: "POST",
+    body: JSON.stringify({ inputs }),
+  });
+}
+
+export async function apiGetRun(runId: string): Promise<RunOut> {
+  return apiFetch<RunOut>(API.WORKFLOW.RUN_STATUS(runId));
+}
+
+export async function apiResumeRun(
+  runId: string,
+  approved: boolean,
+  note = "",
+): Promise<RunOut> {
+  return apiFetch<RunOut>(API.WORKFLOW.RESUME(runId), {
+    method: "POST",
+    body: JSON.stringify({ approved, note }),
+  });
+}
+
+export async function apiListRuns(
+  workflowId: string,
+  page = 1,
+  limit = 20,
+): Promise<RunListItem[]> {
+  return apiFetch<RunListItem[]>(API.WORKFLOW.RUNS_LIST(workflowId, page, limit));
+}
+
+export async function apiCancelRun(runId: string): Promise<void> {
+  await apiFetch<void>(API.WORKFLOW.CANCEL(runId), { method: "POST" });
+}
+
+export async function apiGetStats(workflowId: string): Promise<WorkflowStats> {
+  return apiFetch<WorkflowStats>(API.WORKFLOW.STATS(workflowId));
 }

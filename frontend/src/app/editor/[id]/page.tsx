@@ -154,7 +154,7 @@ export default function EditorSession() {
       addLog(`✅ ${preset.label} 배경 적용 완료`);
     } catch (err) {
       setPhase("failed");
-      addLog(`❌ 배경 교체 실패: ${(err as Error).message}`);
+      addLog(`❌ 배경 교체 실패: ${err instanceof Error ? err.message : "알 수 없는 오류"}`);
     }
   }
 
@@ -212,7 +212,7 @@ export default function EditorSession() {
       addLog(t("editor.log.done").replace("{n}", "1"));
     } catch (err) {
       setPhase("failed");
-      addLog(`❌ ${(err as Error).message}`);
+      addLog(`❌ ${err instanceof Error ? err.message : "알 수 없는 오류"}`);
     }
   }
 

@@ -9,9 +9,11 @@
 - GET  /auth/token/exchange        OAuth 코드 → 토큰 교환 (one-time)
 - GET  /auth/me                    현재 유저 정보
 """
-import json
+import logging
 import secrets
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field, field_validator
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -40,7 +42,7 @@ from app.core.redis import (
 from app.models.user import User
 from fastapi.responses import JSONResponse
 from app.schemas.auth import (
-    TokenResponse, AccessTokenResponse, UserOut, OnboardRequest,
+    AccessTokenResponse, UserOut, OnboardRequest,
 )
 from app.routers.deps import get_current_user
 from app.services.auth_service import get_or_create_oauth_user, make_tokens
@@ -48,7 +50,6 @@ from app.services.auth_service import get_or_create_oauth_user, make_tokens
 router = APIRouter(prefix="/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
 bearer = HTTPBearer(auto_error=False)
-_DEV_TOKEN = "dev"
 
 # ── Refresh-token 쿠키 설정 ───────────────────────────────────────────────────
 REFRESH_COOKIE = "umai_refresh"
@@ -133,14 +134,11 @@ def _extract_frontend_origin(request: Request) -> str:
     return settings.FRONTEND_URL
 
 
-async def _redirect_with_code(tokens: TokenResponse, frontend_origin: str) -> RedirectResponse:
-    """토큰을 URL에 직접 노출하지 않고 5분 one-time 코드로 교환"""
+async def _redirect_with_code(user_id: str, frontend_origin: str) -> RedirectResponse:
+    """user_id만 Redis에 저장하는 5분 one-time 코드 발급.
+    토큰은 token_exchange 시점에 생성 — Redis에 토큰 평문 저장 방지."""
     code = secrets.token_urlsafe(32)
-    payload = json.dumps({
-        "access_token": tokens.access_token,
-        "refresh_token": tokens.refresh_token,
-    })
-    await oauth_code_set(code, payload)
+    await oauth_code_set(code, user_id)
     return RedirectResponse(f"{frontend_origin}/auth/callback?code={code}")
 
 
@@ -185,7 +183,7 @@ async def logout(
     token = request.cookies.get(REFRESH_COOKIE)
     if token:
         await session_del(token)
-    if creds and creds.credentials not in (_DEV_TOKEN, ""):
+    if creds and creds.credentials:
         await access_del(creds.credentials)
 
     res = JSONResponse({"detail": "Logged out"})
@@ -265,14 +263,15 @@ async def token_exchange(request: Request, code: str):
     OAuth 콜백 후 프론트엔드가 code를 제출하면 access_token만 응답 body로 반환.
     refresh_token은 HttpOnly 쿠키에 설정 — JS에서 접근 불가.
     5분 내 1회만 사용 가능 (one-time use).
+    Redis에는 user_id만 저장 — 토큰 평문 노출 방지.
     """
-    payload = await oauth_code_pop(code)
-    if not payload:
+    user_id = await oauth_code_pop(code)
+    if not user_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code")
-    data = json.loads(payload)
 
-    res = JSONResponse({"access_token": data["access_token"], "token_type": "bearer"})
-    _set_refresh_cookie(res, data["refresh_token"])
+    tokens = await make_tokens(user_id)
+    res = JSONResponse({"access_token": tokens.access_token, "token_type": "bearer"})
+    _set_refresh_cookie(res, tokens.refresh_token)
     return res
 
 
@@ -288,11 +287,11 @@ async def _oauth_start(provider: str, oauth_client, request: Request, db: AsyncS
 
 
 async def _oauth_finish(state: str, user_kwargs: dict, db: AsyncSession):
-    """OAuth 콜백 공통 처리 — 유저 조회/생성 후 one-time code로 리다이렉트."""
+    """OAuth 콜백 공통 처리 — 유저 조회/생성 후 one-time code로 리다이렉트.
+    토큰 생성은 token_exchange 시점으로 지연."""
     frontend_origin = (await oauth_origin_pop(state)) or settings.FRONTEND_URL
     user = await get_or_create_oauth_user(db, **user_kwargs)
-    tokens = await make_tokens(str(user.id))
-    return await _redirect_with_code(tokens, frontend_origin)
+    return await _redirect_with_code(str(user.id), frontend_origin)
 
 
 # ── Google OAuth ──────────────────────────────────────────────────────────────
@@ -309,7 +308,7 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         token = await oauth.google.authorize_access_token(request)
     except OAuthError as e:
-        import logging; logging.getLogger(__name__).warning("Google OAuth error: %s", e)
+        logger.warning("Google OAuth error: %s", e)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Authentication failed")
 
     state = request.query_params.get("state")
@@ -344,7 +343,7 @@ async def github_callback(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         token = await oauth.github.authorize_access_token(request)
     except OAuthError as e:
-        import logging; logging.getLogger(__name__).warning("GitHub OAuth error: %s", e)
+        logger.warning("GitHub OAuth error: %s", e)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Authentication failed")
 
     state = request.query_params.get("state")

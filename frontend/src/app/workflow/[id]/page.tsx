@@ -482,7 +482,7 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
         {runError && (
           <div className="mx-4 mt-2 flex items-start justify-between gap-2 px-3 py-2 rounded-lg bg-danger/10 border border-danger/30 text-danger text-xs">
             <span className="flex-1">{runError}</span>
-            <button onClick={() => setRunError(null)} className="flex-shrink-0 hover:opacity-70">✕</button>
+            <button onClick={() => setRunError(null)} className="flex-shrink-0 hover:opacity-70"><X size={13} /></button>
           </div>
         )}
 

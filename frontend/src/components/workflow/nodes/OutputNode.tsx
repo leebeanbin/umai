@@ -2,6 +2,7 @@
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { LogOut } from "lucide-react";
+import { NodeHarness } from "./NodeHarness";
 
 export interface OutputNodeData {
   label?: string;
@@ -18,9 +19,10 @@ function statusBorder(status?: string) {
   }
 }
 
-export function OutputNode({ data }: NodeProps) {
+export function OutputNode({ id, data, selected }: NodeProps) {
   const d = data as OutputNodeData;
   return (
+    <NodeHarness id={id} selected={selected}>
     <div className={`bg-surface rounded-lg border-2 ${statusBorder(d._status)} min-w-[180px] shadow-sm`}>
       <Handle type="target" position={Position.Left} />
       <div
@@ -36,5 +38,6 @@ export function OutputNode({ data }: NodeProps) {
         Key: <code className="font-mono text-text-primary">{d.output_key || "result"}</code>
       </div>
     </div>
+    </NodeHarness>
   );
 }

@@ -2,6 +2,7 @@
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { LogIn } from "lucide-react";
+import { NodeHarness } from "./NodeHarness";
 
 export interface InputNodeData {
   label?: string;
@@ -19,9 +20,10 @@ function statusBorder(status?: string) {
   }
 }
 
-export function InputNode({ data }: NodeProps) {
+export function InputNode({ id, data, selected }: NodeProps) {
   const d = data as InputNodeData;
   return (
+    <NodeHarness id={id} selected={selected}>
     <div className={`bg-surface rounded-lg border-2 ${statusBorder(d._status)} min-w-[180px] shadow-sm`}>
       <div
         className="flex items-center gap-2 px-3 py-2 border-b border-border rounded-t-lg"
@@ -38,15 +40,18 @@ export function InputNode({ data }: NodeProps) {
       <div className="px-3 py-2 space-y-1">
         {(d.fields || []).map((f, i) => (
           <div key={i} className="flex items-center justify-between gap-2">
-            <span className="text-xs text-text-primary font-mono">{f.key}</span>
-            <span className="text-xs text-text-muted px-1 rounded bg-elevated">{f.type}</span>
+            <span className="text-xs text-text-primary font-mono">{f.key || <em className="text-text-muted">unnamed</em>}</span>
+            <span className="text-[10px] text-text-muted px-1.5 py-0.5 rounded bg-elevated">{f.type}</span>
           </div>
         ))}
         {(!d.fields || d.fields.length === 0) && (
-          <span className="text-xs text-text-muted italic">입력 필드 없음</span>
+          <p className="text-[10px] text-text-muted italic leading-tight">
+            클릭하여 입력 필드를 추가하세요
+          </p>
         )}
       </div>
       <Handle type="source" position={Position.Right} />
     </div>
+    </NodeHarness>
   );
 }
