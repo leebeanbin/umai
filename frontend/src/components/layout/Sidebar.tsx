@@ -95,15 +95,26 @@ export default function Sidebar() {
   const saveFolder = useCallback((data: Omit<FolderType, "id" | "open">) => {
     setFolderModal((prev) => {
       if (prev.editing) {
-        setFolders((flds) => flds.map((f) => f.id === prev.editing!.id ? { ...f, ...data } : f));
+        const editingId = prev.editing.id;
+        setFolders((flds) => flds.map((f) => f.id === editingId ? { ...f, ...data } : f));
         if (isAuthenticated()) {
-          apiUpdateFolder(prev.editing.id, { name: data.name, description: data.description, system_prompt: data.systemPrompt }).catch(() => {});
+          // API 실패 시 로컬 상태를 롤백 (낙관적 업데이트 보정)
+          apiUpdateFolder(editingId, { name: data.name, description: data.description, system_prompt: data.systemPrompt })
+            .catch(() => {
+              setFolders((flds) => flds.map((f) =>
+                f.id === editingId ? { ...f, name: prev.editing!.name } : f
+              ));
+            });
         }
       } else {
         const newId = crypto.randomUUID();
         setFolders((flds) => [...flds, { id: newId, open: true, ...data }]);
         if (isAuthenticated()) {
-          apiCreateFolder(data.name, data.description, data.systemPrompt).catch(() => {});
+          // API 실패 시 생성된 항목 롤백
+          apiCreateFolder(data.name, data.description, data.systemPrompt)
+            .catch(() => {
+              setFolders((flds) => flds.filter((f) => f.id !== newId));
+            });
         }
       }
       return { open: false, editing: null };

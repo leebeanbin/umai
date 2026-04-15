@@ -12,6 +12,7 @@ import { useChatSocket, useTaskSocket } from "@/lib/hooks/useWebSocket";
 import { createSession, updateSessionTitle } from "@/lib/store";
 import { loadSettings } from "@/lib/appStore";
 import { apiGenerateChatTitle, apiGetTask, getStoredToken } from "@/lib/api/backendClient";
+import { apiCreateDataset } from "@/lib/api/fineTuneClient";
 
 // ── Intent 분석 — 도구가 필요한 질문인지 판단 ────────────────────────────────
 function analyzeIntent(content: string): { useAgent: boolean; tools: string[] } {
@@ -90,25 +91,44 @@ export default function ChatSession() {
       ), true);
       const userMsg = msgRef.current.find((m) => m.id === pending.userId);
       const asstMsg = msgRef.current.find((m) => m.id === pending.thinkingId);
-      if (userMsg && asstMsg) saveToDb(id, userMsg, asstMsg);
+      if (userMsg && asstMsg) {
+        saveToDb(id, userMsg, asstMsg);
+        if (ftModeOnRef.current && userMsg.content && asstMsg.content) {
+          ftExamples.current.push({ user: userMsg.content, assistant: asstMsg.content });
+          setFtCount(ftExamples.current.length);
+        }
+      }
     } catch {
       push((prev) => prev.map((m) =>
         m.id === pending.thinkingId
-          ? { ...m, content: "", streaming: false, error: "에이전트 실행 실패" }
+          ? { ...m, content: "", streaming: false, error: t("error.agentFailed") }
           : m
       ), false);
     }
     setGenerating(false);
   });
 
+  // ── 파인튜닝 모드 ──────────────────────────────────────────────────────────
+  const [ftModeOn, setFtModeOn] = useState(false);
+  // ftModeOnRef: useTaskSocket 콜백이 최신 ftModeOn을 참조하기 위한 ref
+  // (콜백은 callbackRef.current = fn 으로 매 렌더 갱신되므로 ref 없어도 동작하나,
+  //  선언 순서상 ftModeOn이 useTaskSocket 이후에 위치하여 명시적 ref로 안정화)
+  const ftModeOnRef = useRef(false);
+  useEffect(() => { ftModeOnRef.current = ftModeOn; }, [ftModeOn]);
+  // 수집된 예제: [{user: string, assistant: string}]
+  const ftExamples = useRef<{ user: string; assistant: string }[]>([]);
+  const [ftCount, setFtCount] = useState(0);
+
   const [isTemp,    setIsTemp]    = useState(false);
   const [tempSaved, setTempSaved] = useState(false);
   const started         = useRef(false);
   const titleGenerated  = useRef(false);
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef      = useRef(true); // unmount 후 타이머 콜백 실행 방지
 
   // Mount: 세션 사이드바 등록 + pending prompt 자동 전송
   useEffect(() => {
+    mountedRef.current = true;
     if (started.current) return;
     started.current = true;
 
@@ -117,7 +137,9 @@ export default function ChatSession() {
     const pending = sessionStorage.getItem("umai_pending_prompt");
     if (pending) {
       sessionStorage.removeItem("umai_pending_prompt");
-      pendingTimerRef.current = setTimeout(() => send(pending, []), 200);
+      pendingTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) send(pending, []);
+      }, 200);
     }
 
     if (sessionStorage.getItem("umai_temp_chat") === "1") {
@@ -125,9 +147,35 @@ export default function ChatSession() {
       setIsTemp(true);
     }
 
-    return () => { if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current); };
+    return () => {
+      mountedRef.current = false;
+      if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── 파인튜닝 모드: 스트리밍 완료 시 예제 수집 ─────────────────────────────
+  const lastFtMsgCount = useRef(0);
+  useEffect(() => {
+    if (generating || !ftModeOn) return;
+    // 스트리밍 직후만 실행 (메시지 수가 늘었을 때)
+    if (messages.length <= lastFtMsgCount.current) return;
+    lastFtMsgCount.current = messages.length;
+    // 가장 최근 user+assistant 쌍
+    const asstMsg = [...messages].reverse().find((m) => m.role === "assistant" && !m.streaming && !m.error && m.content.length > 0);
+    const userMsg = asstMsg
+      ? [...messages].reverse().find((m) => m.role === "user" && !m.error)
+      : null;
+    if (userMsg && asstMsg) {
+      const alreadyExists = ftExamples.current.some(
+        (ex) => ex.user === userMsg.content && ex.assistant === asstMsg.content,
+      );
+      if (!alreadyExists) {
+        ftExamples.current.push({ user: userMsg.content, assistant: asstMsg.content });
+        setFtCount(ftExamples.current.length);
+      }
+    }
+  }, [generating, ftModeOn, messages]);
 
   // 첫 번째 응답 완료 후 → Ollama 경량 모델로 제목 생성 (백엔드 위임)
   useEffect(() => {
@@ -198,9 +246,52 @@ export default function ChatSession() {
     tempSavedTimerRef.current = setTimeout(() => setTempSaved(false), 2000);
   }, []);
 
+  // ── FT 예제를 데이터셋으로 저장 ──────────────────────────────────────────
+  const handleSaveFtExamples = useCallback(async () => {
+    const examples = ftExamples.current;
+    if (examples.length === 0) return;
+    const name = prompt(
+      `${examples.length}개의 대화 쌍을 데이터셋으로 저장합니다.\n데이터셋 이름을 입력하세요:`,
+      `채팅 수집 ${new Date().toLocaleDateString("ko-KR")}`,
+    );
+    if (!name) return;
+    const rawData = examples
+      .map((ex) =>
+        JSON.stringify({
+          messages: [
+            { role: "user",      content: ex.user },
+            { role: "assistant", content: ex.assistant },
+          ],
+        }),
+      )
+      .join("\n");
+    try {
+      await apiCreateDataset({ name, format: "chat", raw_data: rawData });
+      alert(`✅ "${name}" 데이터셋이 저장되었습니다.\nWorkspace › Fine-tune에서 학습을 시작하세요.`);
+      ftExamples.current = [];
+      setFtCount(0);
+      setFtModeOn(false);
+    } catch (e: unknown) {
+      alert(`저장 실패: ${(e as Error).message}`);
+    }
+  }, []);
+
   return (
     <div className="flex flex-col h-full bg-base">
-      <ChatNavbar chatId={id} />
+      <ChatNavbar
+        chatId={id}
+        fineTuneModeOn={ftModeOn}
+        fineTuneExampleCount={ftCount}
+        onToggleFineTuneMode={() => {
+          if (ftModeOn && ftCount > 0) {
+            if (!confirm(`파인튜닝 모드를 끄면 수집된 ${ftCount}개 예제가 사라집니다. 계속하시겠습니까?`)) return;
+            ftExamples.current = [];
+            setFtCount(0);
+          }
+          setFtModeOn((v) => !v);
+        }}
+        onSaveFineTuneExamples={handleSaveFtExamples}
+      />
 
       {/* Temporary chat indicator */}
       {isTemp && (
@@ -217,6 +308,27 @@ export default function ChatSession() {
             <BookmarkPlus size={11} />
             {tempSaved ? t("chat.temp.saved") : t("chat.temp.save")}
           </button>
+        </div>
+      )}
+
+      {/* 파인튜닝 모드 배너 */}
+      {ftModeOn && (
+        <div className="flex items-center justify-between px-4 py-2 bg-accent/6 border-b border-accent/15">
+          <div className="flex items-center gap-2 text-xs text-accent">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+            <span>파인튜닝 모드 — 대화가 학습 데이터로 수집됩니다</span>
+            {ftCount > 0 && (
+              <span className="text-accent/70">({ftCount}개 수집됨)</span>
+            )}
+          </div>
+          {ftCount > 0 && (
+            <button
+              onClick={handleSaveFtExamples}
+              className="text-[11px] px-2.5 py-1 rounded-full bg-accent/15 border border-accent/30 text-accent hover:bg-accent/25 transition-colors font-medium"
+            >
+              데이터셋 저장
+            </button>
+          )}
         </div>
       )}
 
