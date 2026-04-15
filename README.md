@@ -53,14 +53,26 @@ A full security audit was performed, resulting in 9 hardening fixes:
 | Input validation | Admin `SettingsPatch` uses typed Pydantic section models with `extra="forbid"` — arbitrary keys are rejected at the schema layer. |
 | Secrets | `SESSION_SECRET_KEY` and `SECRET_KEY` are enforced as separate values. Production startup fails fast if `FRONTEND_URL` uses HTTP or `SECRET_KEY` is under 32 characters. |
 
-### Probabilistic Data Structures (Redis)
-Chosen for O(1) space-bounded operations at scale:
+### Workflow Engine
+A visual DAG builder where each node is a typed step executed by Celery workers:
 
-| Structure | Use case | Implementation |
+```
+InputNode → LLMNode → BranchNode ──(condition=true)──→ ToolNode → OutputNode
+                              └──(condition=false)──→ HumanNode (waits for approval)
+```
+
+- **HumanNode** suspends the run, stores state in Redis, and resumes when a human approves/rejects via API — enabling human-in-the-loop AI pipelines.
+- Branch edges use `sourceHandle` IDs to route to different downstream nodes, not simple boolean splits.
+- Run state is persisted in PostgreSQL (`WorkflowRun` + `WorkflowRunStep`) so execution history survives worker restarts.
+
+### Probabilistic Data Structures (Redis)
+Chosen for O(1) space-bounded operations at scale — a simple `SET` or counter would grow unbounded with users:
+
+| Structure | Use case | Why not a simpler approach |
 |---|---|---|
-| **Bloom filter** | Prevent duplicate chunk embeddings in the RAG pipeline | `BITFIELD` on Redis, `k=7` hash functions, `m=2²³` bits |
-| **HyperLogLog** | Daily Active User count without storing user sets | Redis `PFADD` / `PFCOUNT` |
-| **Sorted Set** | Sliding-window distributed rate limiting for HTTP endpoints | Score = timestamp, range queries per window |
+| **Bloom filter** | Prevent duplicate chunk embeddings in the RAG pipeline | A `SET` of all chunk hashes would grow indefinitely; Bloom filter uses fixed 2²³ bits with k=7 hash functions |
+| **HyperLogLog** | Daily Active User count | A `SET` of user IDs per day would be O(n) space; HLL gives ±0.8% accuracy in 12 KB |
+| **Sorted Set + Lua** | Sliding-window distributed rate limiting | A simple counter resets at fixed intervals; Sorted Set enables a true sliding window. Lua script makes the check-and-increment atomic, preventing race conditions under concurrent requests |
 
 ### Semantic Search — pgvector HNSW
 ```
