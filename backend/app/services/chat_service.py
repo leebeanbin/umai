@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.constants import CHAT_MSG_DEFAULT_LIMIT, CHAT_MSG_MAX_LIMIT
 from app.core.errors import ErrCode
 from app.models.chat import Chat, ChatMember, Message
 from app.models.user import User
@@ -119,16 +120,35 @@ class ChatService:
             ErrCode.CHAT_NOT_FOUND.raise_it()
         return chat
 
-    async def get_chat_with_messages(self, chat_id: uuid.UUID) -> Chat | None:
+    async def get_chat_with_messages(
+        self,
+        chat_id: uuid.UUID,
+        msg_limit: int = CHAT_MSG_DEFAULT_LIMIT,
+    ) -> Chat | None:
+        # 채팅 메타데이터 로드
         result = await self.db.execute(
-            select(Chat)
-            .options(selectinload(Chat.messages))
-            .where(Chat.id == chat_id)
+            select(Chat).where(Chat.id == chat_id)
         )
-        return result.scalar_one_or_none()
+        chat = result.scalar_one_or_none()
+        if chat is None:
+            return None
+        # 최신 msg_limit 개의 메시지만 로드 (대용량 채팅 OOM 방지)
+        capped = min(msg_limit, CHAT_MSG_MAX_LIMIT)
+        msgs_result = await self.db.execute(
+            select(Message)
+            .where(Message.chat_id == chat_id)
+            .order_by(Message.created_at.asc())
+            .limit(capped)
+        )
+        chat.messages = list(msgs_result.scalars().all())
+        return chat
 
-    async def get_chat_with_messages_or_404(self, chat_id: uuid.UUID) -> Chat:
-        chat = await self.get_chat_with_messages(chat_id)
+    async def get_chat_with_messages_or_404(
+        self,
+        chat_id: uuid.UUID,
+        msg_limit: int = CHAT_MSG_DEFAULT_LIMIT,
+    ) -> Chat:
+        chat = await self.get_chat_with_messages(chat_id, msg_limit=msg_limit)
         if not chat:
             ErrCode.CHAT_NOT_FOUND.raise_it()
         return chat

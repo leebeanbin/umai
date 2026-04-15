@@ -37,7 +37,7 @@ WS_MAX_CONN_PER_USER_PER_ROOM = 5       # 채팅방 채널 연결 수 제한
 WS_MAX_CONN_TASK_CHANNEL      = 3       # 태스크 알림 채널 연결 수 제한
 WS_MAX_MESSAGE_BYTES          = 10_240  # 10 KB: 메시지 크기 제한
 WS_RATE_LIMIT_PER_MINUTE      = 60      # 분당 최대 메시지 수
-WS_TOKEN_REVALIDATE_INTERVAL  = 300     # 5분: 토큰 재검증 주기
+WS_TOKEN_REVALIDATE_INTERVAL  = 60      # 1분: 토큰 재검증 주기 (로그아웃/정지 반영 속도)
 
 # ── Rate Limit 문자열 (slowapi) ───────────────────────────────────────────────
 RATE_AUTH_REFRESH      = "30/minute"
@@ -48,12 +48,15 @@ RATE_AUTH_TOKEN_EXCH   = "10/minute"
 RATE_CHAT_CREATE       = "60/minute"
 RATE_CHAT_MESSAGE      = "120/minute"
 RATE_RAG_SEARCH        = "30/minute"
-RATE_TASK_KNOWLEDGE    = "10/hour"
-RATE_TASK_EXTRACT      = "20/minute"
+RATE_TASK_KNOWLEDGE        = "10/hour"
+RATE_TASK_EXTRACT          = "20/minute"
+RATE_WORKFLOW_RESUME       = "30/minute"
 
 # ── 페이지네이션 ──────────────────────────────────────────────────────────────
-CHAT_LIST_DEFAULT_LIMIT = 30
-CHAT_LIST_MAX_LIMIT     = 100
+CHAT_LIST_DEFAULT_LIMIT   = 30
+CHAT_LIST_MAX_LIMIT       = 100
+CHAT_MSG_DEFAULT_LIMIT    = 200   # GET /chats/{id} 기본 메시지 로드 수
+CHAT_MSG_MAX_LIMIT        = 500   # 클라이언트 요청 최대값
 
 # ── 파일 & 컨텐츠 제한 ────────────────────────────────────────────────────────
 MAX_FILE_SIZE_BYTES   = 10 * 1024 * 1024  # 10 MB
