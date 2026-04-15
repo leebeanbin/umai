@@ -5,6 +5,7 @@ Knowledge Base 처리 태스크 (knowledge queue)
 - embed_chunks       : 청크 임베딩 생성 + PostgreSQL 저장
 - process_and_embed  : 파이프라인: 파싱 → 청킹 → 임베딩 → 저장 (단일 태스크)
 """
+import hashlib
 import io
 from typing import Literal
 
@@ -121,7 +122,29 @@ def embed_chunks(
     Returns: {"knowledge_id": str, "embedded_count": int}
     """
     try:
-        vectors = embed_texts_sync(chunks, embedding_provider, embedding_model)
+        # ── 청크 콘텐츠 해시 중복 제거 ──────────────────────────────────────
+        # 동일 텍스트 청크가 여러 번 등장하는 문서(반복 섹션, 면책 조항 등)에서
+        # 임베딩 API 호출을 절감하고 중복 벡터 저장을 방지한다.
+        # 전략: MD5(chunk) → 인덱스 매핑으로 unique 청크만 임베딩 후 원래 순서 복원.
+        seen_hashes: dict[str, int] = {}   # hash → first occurrence index in unique list
+        unique_chunks: list[str] = []
+        chunk_to_unique_idx: list[int] = []
+
+        for chunk in chunks:
+            h = hashlib.md5(chunk.encode()).hexdigest()
+            if h not in seen_hashes:
+                seen_hashes[h] = len(unique_chunks)
+                unique_chunks.append(chunk)
+            chunk_to_unique_idx.append(seen_hashes[h])
+
+        dedup_count = len(chunks) - len(unique_chunks)
+        if dedup_count:
+            logger.info("embed_chunks: deduplicated %d/%d chunks for id=%s",
+                        dedup_count, len(chunks), knowledge_id)
+
+        unique_vectors = embed_texts_sync(unique_chunks, embedding_provider, embedding_model)
+        # 원래 순서로 복원 (중복 청크는 같은 벡터 재사용)
+        vectors = [unique_vectors[idx] for idx in chunk_to_unique_idx]
 
         # 임베딩 결과를 JSON으로 저장 (pgvector 없이도 동작)
         from app.core.database import sync_session
@@ -138,7 +161,7 @@ def embed_chunks(
                 }
                 db.commit()
 
-        logger.info("embed_chunks OK: id=%s count=%d", knowledge_id, len(vectors))
+        logger.info("embed_chunks OK: id=%s count=%d (unique=%d)", knowledge_id, len(vectors), len(unique_chunks))
         result = {"knowledge_id": knowledge_id, "embedded_count": len(vectors)}
         publish_task_done(self.request.id, "embed_chunks")
         return result
@@ -174,7 +197,19 @@ def process_and_embed(
         text = _extract_text(raw, content_type, filename)
         chunks = _chunk_text(text, chunk_size, overlap)
 
-        vectors = embed_texts_sync(chunks, embedding_provider, embedding_model)
+        # 청크 해시 중복 제거 (embed_chunks 태스크와 동일 로직)
+        seen_hashes: dict[str, int] = {}
+        unique_chunks: list[str] = []
+        chunk_to_unique_idx: list[int] = []
+        for chunk in chunks:
+            h = hashlib.md5(chunk.encode()).hexdigest()
+            if h not in seen_hashes:
+                seen_hashes[h] = len(unique_chunks)
+                unique_chunks.append(chunk)
+            chunk_to_unique_idx.append(seen_hashes[h])
+
+        unique_vectors = embed_texts_sync(unique_chunks, embedding_provider, embedding_model)
+        vectors = [unique_vectors[idx] for idx in chunk_to_unique_idx]
 
         with sync_session() as db:
             item = db.get(KnowledgeItem, knowledge_id)

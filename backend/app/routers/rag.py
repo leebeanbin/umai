@@ -11,10 +11,14 @@ GET /rag/search?q=query&top_k=5
   - 없으면 Ollama nomic-embed-text
 """
 
+import hashlib
+import logging
 import math
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+logger = logging.getLogger(__name__)
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
@@ -26,6 +30,7 @@ from app.core.constants import (
     RATE_RAG_SEARCH,
 )
 from app.core.database import get_db
+from app.core.redis import embed_query_cache_get, embed_query_cache_set
 from app.models.user import User
 from app.models.workspace import KnowledgeItem
 from app.routers.deps import get_current_user
@@ -118,8 +123,17 @@ async def rag_search(
             "note": "임베딩이 없어 키워드 매칭을 사용했습니다. 지식 항목을 재처리하면 의미 검색이 활성화됩니다.",
         }
 
-    # 쿼리 임베딩 생성
-    query_vector = await embed_query_async(q)
+    # 쿼리 임베딩 생성 — Redis 캐시 우선 조회 (동일 쿼리 재호출 시 API 절감)
+    # 캐시 키: MD5(query + embed_model) — 모델이 바뀌면 자동으로 다른 키
+    from app.core.config import settings as _s
+    _cache_seed = f"{q}\x00{_s.OPENAI_EMBED_MODEL}\x00{_s.OLLAMA_EMBED_MODEL}"
+    _query_hash = hashlib.md5(_cache_seed.encode()).hexdigest()
+
+    query_vector = await embed_query_cache_get(_query_hash)
+    if query_vector is None:
+        query_vector = await embed_query_async(q)
+        if query_vector is not None:
+            await embed_query_cache_set(_query_hash, query_vector)
 
     if query_vector is None:
         # 임베딩 생성 실패 → 키워드 fallback
@@ -128,6 +142,8 @@ async def rag_search(
 
     # 코사인 유사도 계산
     scored: list[dict] = []
+    skipped_dim_mismatch: list[str] = []
+
     for item in items_with_embeddings:
         emb_data: dict = item.embeddings_json or {}
         if not emb_data:
@@ -135,14 +151,14 @@ async def rag_search(
         chunks: list[str]          = emb_data.get("chunks", [])
         vectors: list[list[float]] = emb_data.get("vectors", [])
 
-        # C8: 임베딩 차원 불일치 — 무음 스킵 대신 경고 로깅
+        # C8: 임베딩 차원 불일치 — 경고 로깅 후 스킵 (사용자에게도 note로 알림)
         if vectors and len(vectors[0]) != len(query_vector):
-            import logging as _log
-            _log.getLogger(__name__).warning(
+            logger.warning(
                 "RAG: skipping item '%s' — vector dim mismatch (%d vs query %d). "
                 "Re-embed with current provider to fix.",
                 item.name, len(vectors[0]), len(query_vector),
             )
+            skipped_dim_mismatch.append(item.name)
             continue
 
         for chunk, vec in zip(chunks, vectors):
@@ -151,9 +167,17 @@ async def rag_search(
 
     scored.sort(key=lambda x: x["score"], reverse=True)
 
-    return {
+    response: dict = {
         "results": scored[:top_k],
         "query": q,
         "method": "cosine_similarity",
         "total_searched": len(scored),
     }
+    if skipped_dim_mismatch:
+        response["note"] = (
+            f"일부 항목이 임베딩 차원 불일치로 검색에서 제외되었습니다: "
+            f"{', '.join(skipped_dim_mismatch)}. "
+            "Workspace → Knowledge에서 해당 항목을 재처리하세요."
+        )
+        response["skipped_items"] = skipped_dim_mismatch
+    return response

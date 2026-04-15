@@ -233,6 +233,8 @@ async def add_messages_batch(
     chat = await svc.get_chat_or_404(chat_id)
     await svc.require_member(chat, user, min_role="editor")
 
+    from datetime import datetime, timezone
+    _now = datetime.now(timezone.utc)
     rows = [
         {
             "id": uuid.UUID(m.id) if m.id else uuid.uuid4(),
@@ -240,6 +242,7 @@ async def add_messages_batch(
             "role": m.role,
             "content": m.content,
             "images": m.images,
+            "created_at": _now,  # 명시적 타임스탬프 — DB server_default 의존 제거
         }
         for m in body.messages
     ]

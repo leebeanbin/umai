@@ -2,13 +2,13 @@
 import asyncio
 import json
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.database import get_db
 from app.core.errors import ErrCode
 from app.core.security import get_subject
@@ -16,9 +16,6 @@ from app.core.redis import user_cache_get, user_cache_set, access_get
 from app.models.user import User
 
 bearer = HTTPBearer(auto_error=False)
-
-# Dev bypass — only active when DEBUG=True
-_DEV_TOKEN = "dev"
 
 
 async def get_current_user(
@@ -28,15 +25,11 @@ async def get_current_user(
     if not creds:
         ErrCode.NOT_AUTHENTICATED.raise_it()
 
-    # Dev bypass — Bearer dev → first admin in DB (DEBUG mode only)
-    if settings.DEBUG and creds.credentials == _DEV_TOKEN:
-        result = await db.execute(
-            select(User).where(User.role == "admin", User.is_active == True).limit(1)
-        )
-        dev_user = result.scalar_one_or_none()
-        if dev_user:
-            return dev_user
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "No admin user in DB")
+    # ── Step 0: JWT 형식 조기 거부 (암호화 연산 전, ~1µs) ─────────────────────
+    # JWT 는 정확히 header.payload.signature 의 3-파트 구조.
+    # 형식이 틀리면 서명 검증 자체가 불가능 → 즉시 거부해 CPU 낭비 방지.
+    if creds.credentials.count(".") != 2:
+        ErrCode.INVALID_TOKEN.raise_it()
 
     # ── Step 1: JWT 서명 검증 (변조 여부) ────────────────────────────────────
     user_id = get_subject(creds.credentials)
@@ -66,6 +59,9 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if not user or not user.is_active:
         ErrCode.USER_SUSPENDED.raise_it()
+
+    # last_seen_at 갱신 — 캐시 TTL(5분) 주기로 자연스럽게 업데이트됨
+    user.last_seen_at = datetime.now(timezone.utc)
 
     await user_cache_set(user_id, json.dumps({
         "id": str(user.id),
