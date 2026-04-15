@@ -16,11 +16,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import RATE_WORKFLOW_RESUME
 from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.redis_keys import key_workflow_suspend
@@ -28,7 +31,8 @@ from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.routers.deps import get_current_user
 from app.models.user import User
 
-router = APIRouter(prefix="/workflow", tags=["workflow"])
+router = APIRouter(prefix="/workflow", tags=["workflow"], redirect_slashes=False)
+limiter = Limiter(key_func=get_remote_address)
 
 
 # ── Pydantic 스키마 ───────────────────────────────────────────────────────────
@@ -148,7 +152,7 @@ def _assert_owner(resource_owner_id: uuid.UUID, user: User, resource: str = "res
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
-@router.post("/", response_model=WorkflowOut, status_code=201)
+@router.post("", response_model=WorkflowOut, status_code=201)
 async def create_workflow(
     body: WorkflowCreate,
     db: AsyncSession = Depends(get_db),
@@ -166,7 +170,7 @@ async def create_workflow(
     return WorkflowOut.from_orm(wf)
 
 
-@router.get("/", response_model=list[WorkflowOut])
+@router.get("", response_model=list[WorkflowOut])
 async def list_workflows(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -211,7 +215,7 @@ async def get_workflow(
     return WorkflowOut.from_orm(wf)
 
 
-@router.put("/{workflow_id}", response_model=WorkflowOut)
+@router.patch("/{workflow_id}", response_model=WorkflowOut)
 async def update_workflow(
     workflow_id: str,
     body: WorkflowUpdate,
@@ -282,7 +286,9 @@ async def run_workflow(
 
 
 @router.post("/runs/{run_id}/resume", response_model=RunOut)
+@limiter.limit(RATE_WORKFLOW_RESUME)
 async def resume_run(
+    request: Request,
     run_id: str,
     body: ResumeRequest,
     db: AsyncSession = Depends(get_db),
@@ -363,7 +369,7 @@ async def resume_run(
 @router.get("/{workflow_id}/runs", response_model=list[RunListItem])
 async def list_runs(
     workflow_id: str,
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=1000),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -412,12 +418,8 @@ async def list_runs(
 
 # ── 실행 취소 ─────────────────────────────────────────────────────────────────
 
-@router.delete("/runs/{run_id}", status_code=204)
-async def cancel_run(
-    run_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> None:
+async def _do_cancel_run(run_id: str, db: AsyncSession, current_user: User) -> None:
+    """공통 취소 로직 — POST /cancel 과 DELETE 양쪽에서 재사용."""
     run = await db.get(WorkflowRun, uuid.UUID(run_id))
     if not run:
         raise HTTPException(404, "Run not found")
@@ -441,6 +443,26 @@ async def cancel_run(
     })
 
 
+@router.post("/runs/{run_id}/cancel", status_code=204)
+async def cancel_run_post(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """워크플로우 실행 취소 (권장 방식: POST /runs/{run_id}/cancel)."""
+    await _do_cancel_run(run_id, db, current_user)
+
+
+@router.delete("/runs/{run_id}", status_code=204)
+async def cancel_run(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """워크플로우 실행 취소 (하위 호환 유지 — POST /runs/{run_id}/cancel 사용 권장)."""
+    await _do_cancel_run(run_id, db, current_user)
+
+
 # ── 워크플로우 통계 ────────────────────────────────────────────────────────────
 
 @router.get("/{workflow_id}/stats", response_model=WorkflowStats)
@@ -454,29 +476,37 @@ async def get_workflow_stats(
         raise HTTPException(404, "Workflow not found")
     _assert_owner(wf.owner_id, current_user, "Workflow")
 
-    result = await db.execute(
-        select(WorkflowRun).where(WorkflowRun.workflow_id == wf.id)
+    # status별 카운트 — DB GROUP BY로 처리 (전체 rows 메모리 로딩 제거)
+    counts_result = await db.execute(
+        select(WorkflowRun.status, func.count().label("cnt"))
+        .where(WorkflowRun.workflow_id == wf.id)
+        .group_by(WorkflowRun.status)
     )
-    runs = list(result.scalars().all())
+    counts: dict[str, int] = {row.status: row.cnt for row in counts_result}
 
-    total = len(runs)
-    done = sum(1 for r in runs if r.status == "done")
-    failed = sum(1 for r in runs if r.status == "failed")
-    suspended = sum(1 for r in runs if r.status == "suspended")
-    running = sum(1 for r in runs if r.status == "running")
+    # done 실행의 평균 소요 시간 — DB에서 직접 집계
+    avg_result = await db.execute(
+        select(
+            func.avg(
+                func.extract("epoch", WorkflowRun.finished_at)
+                - func.extract("epoch", WorkflowRun.started_at)
+            )
+        )
+        .where(
+            WorkflowRun.workflow_id == wf.id,
+            WorkflowRun.status == "done",
+            WorkflowRun.finished_at.isnot(None),
+            WorkflowRun.started_at.isnot(None),
+        )
+    )
+    avg_duration = avg_result.scalar()
 
-    durations = [
-        (r.finished_at - r.started_at).total_seconds()
-        for r in runs
-        if r.finished_at and r.started_at and r.status == "done"
-    ]
-    avg_duration = sum(durations) / len(durations) if durations else None
-
+    total = sum(counts.values())
     return WorkflowStats(
         total_runs=total,
-        done=done,
-        failed=failed,
-        suspended=suspended,
-        running=running,
-        avg_duration_s=avg_duration,
+        done=counts.get("done", 0),
+        failed=counts.get("failed", 0),
+        suspended=counts.get("suspended", 0),
+        running=counts.get("running", 0),
+        avg_duration_s=float(avg_duration) if avg_duration is not None else None,
     )

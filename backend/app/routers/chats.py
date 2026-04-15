@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
     CHAT_LIST_DEFAULT_LIMIT, CHAT_LIST_MAX_LIMIT,
+    CHAT_MSG_DEFAULT_LIMIT, CHAT_MSG_MAX_LIMIT,
     MSG_SAVE_MAX_RETRIES,
     RATE_CHAT_CREATE, RATE_CHAT_MESSAGE,
 )
@@ -126,10 +127,11 @@ async def create_chat(
 @router.get("/{chat_id}", response_model=ChatDetailOut)
 async def get_chat(
     chat_id: uuid.UUID,
+    msg_limit: int = Query(CHAT_MSG_DEFAULT_LIMIT, ge=1, le=CHAT_MSG_MAX_LIMIT),
     svc: ChatService = Depends(get_chat_service),
     user: User = Depends(get_current_user),
 ):
-    chat = await svc.get_chat_with_messages_or_404(chat_id)
+    chat = await svc.get_chat_with_messages_or_404(chat_id, msg_limit=msg_limit)
     member = await svc.require_member(chat, user, min_role="viewer")
     out = _chat_out(chat, member.role)
     return out.model_copy(update={
@@ -275,7 +277,7 @@ async def export_chat(
     svc: ChatService = Depends(get_chat_service),
     user: User = Depends(get_current_user),
 ):
-    chat = await svc.get_chat_with_messages_or_404(chat_id)
+    chat = await svc.get_chat_with_messages_or_404(chat_id, msg_limit=CHAT_MSG_MAX_LIMIT)
     await svc.require_member(chat, user, min_role="viewer")
 
     lines = [f"# {chat.title}\n"]

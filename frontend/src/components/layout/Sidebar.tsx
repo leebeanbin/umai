@@ -45,8 +45,8 @@ export default function Sidebar() {
   // hasMounted가 false인 동안 session 그룹을 숨겨 서버·클라이언트 초기 렌더를 일치시킴
   useEffect(() => {
     setHasMounted(true); // eslint-disable-line react-hooks/set-state-in-effect
-    setFolders(loadFolders()); // eslint-disable-line react-hooks/set-state-in-effect
-    setSessions(loadSessions()); // eslint-disable-line react-hooks/set-state-in-effect
+    setFolders(loadFolders());
+    setSessions(loadSessions());
   }, []);
   const [showSettings, setShowSettings] = useState(false);
   const [contextMenu, setContextMenu]   = useState<ContextTarget | null>(null);
