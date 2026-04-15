@@ -75,3 +75,17 @@ def key_chat_channel(chat_id: str) -> str:
 def key_workflow_suspend(run_id: str) -> str:
     """워크플로우 HumanNode 일시정지 상태 (TTL: 24h)."""
     return f"wf_suspend:{run_id}"
+
+
+# ── 임베딩 캐시 ───────────────────────────────────────────────────────────────
+
+def key_embed_query(content_hash: str) -> str:
+    """쿼리 임베딩 캐시 — content MD5 → 벡터 JSON (TTL: 24h)."""
+    return f"emb_q:{content_hash}"
+
+
+# ── HTTP Rate Limit (분산) ────────────────────────────────────────────────────
+
+def key_http_rate_limit(user_id: str, endpoint: str) -> str:
+    """HTTP 엔드포인트별 사용자 rate limit Sorted Set."""
+    return f"http_rate:{endpoint}:{user_id}"
