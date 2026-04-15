@@ -27,7 +27,7 @@ export default function AdminEvaluationsPage() {
 
   useEffect(() => {
     if (evalTab !== "ratings") return;
-    setLoading(true);
+    setLoading(true); // eslint-disable-line react-hooks/set-state-in-effect
     apiAdminRatings(ratingFilter === "all" ? undefined : ratingFilter, 0, 100)
       .then(setRatings)
       .catch(() => {})

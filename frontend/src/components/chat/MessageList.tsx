@@ -98,7 +98,7 @@ export default function MessageList({ messages, chatId, onEdit, onRegenerate }: 
 function ClientTime({ date, lang }: { date: Date; lang: string }) {
   const [time, setTime] = useState("");
   useEffect(() => {
-    setTime(date.toLocaleTimeString(lang === "ko" ? "ko-KR" : "en-US", {
+    setTime(date.toLocaleTimeString(lang === "ko" ? "ko-KR" : "en-US", { // eslint-disable-line react-hooks/set-state-in-effect
       hour: "2-digit", minute: "2-digit",
     }));
   }, [date, lang]);

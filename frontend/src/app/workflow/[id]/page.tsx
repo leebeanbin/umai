@@ -56,7 +56,6 @@ const NODE_TYPES = {
 
 // ── ID 생성 ───────────────────────────────────────────────────────────────────
 
-let _nodeCounter = 0;
 function newNodeId(type: string) {
   return `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }

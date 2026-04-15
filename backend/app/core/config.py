@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     # ── Security ─────────────────────────────────────────────────────────────
     SECRET_KEY: str = _INSECURE_DEFAULT
+    SESSION_SECRET_KEY: str = ""                      # 별도 세션 시크릿 (미설정 시 SECRET_KEY fallback)
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15             # 15분 (보안 표준)
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30               # 30일 (리프레시)
@@ -65,7 +66,10 @@ class Settings(BaseSettings):
     # ── CORS ─────────────────────────────────────────────────────────────────
     @property
     def CORS_ORIGINS(self) -> List[str]:
-        return [self.FRONTEND_URL, "http://localhost:3000"]
+        origins = [self.FRONTEND_URL]
+        if self.DEBUG:
+            origins.append("http://localhost:3000")
+        return origins
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
@@ -86,3 +90,30 @@ if settings.SECRET_KEY == _INSECURE_DEFAULT:
             "SECRET_KEY must be set to a secure random value in production. "
             "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
         )
+
+# SECRET_KEY 최소 길이 검증 (프로덕션)
+if not settings.DEBUG and len(settings.SECRET_KEY) < 32:
+    raise RuntimeError(
+        "SECRET_KEY must be at least 32 characters in production. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
+
+# FRONTEND_URL HTTPS 강제 (프로덕션)
+if not settings.DEBUG and not settings.FRONTEND_URL.startswith("https://"):
+    raise RuntimeError(
+        f"FRONTEND_URL must use HTTPS in production. Current: {settings.FRONTEND_URL}"
+    )
+
+# BACKEND_URL HTTPS 강제 (프로덕션) — OAuth 콜백 URI가 HTTP이면 토큰이 평문 전송됨
+if not settings.DEBUG and not settings.BACKEND_URL.startswith("https://"):
+    raise RuntimeError(
+        f"BACKEND_URL must use HTTPS in production. Current: {settings.BACKEND_URL}"
+    )
+
+# SESSION_SECRET_KEY 미설정 경고 (프로덕션)
+if not settings.SESSION_SECRET_KEY and not settings.DEBUG:
+    warnings.warn(
+        "SESSION_SECRET_KEY not set; falling back to SECRET_KEY for sessions. "
+        "Set a dedicated SESSION_SECRET_KEY in production for key separation.",
+        stacklevel=1,
+    )

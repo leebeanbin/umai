@@ -181,9 +181,9 @@ async def user_cache_del(user_id: str):
 OAUTH_CODE_TTL = _OAUTH_CODE_TTL
 
 
-async def oauth_code_set(code: str, payload_json: str):
+async def oauth_code_set(code: str, user_id: str):
     r = await get_redis()
-    await r.setex(key_oauth_code(code), OAUTH_CODE_TTL, payload_json)
+    await r.setex(key_oauth_code(code), OAUTH_CODE_TTL, user_id)
 
 
 async def oauth_code_pop(code: str) -> str | None:

@@ -83,15 +83,20 @@ function DonutChart({ segments, size = 80 }: { segments: Segment[]; size?: numbe
   const cy = size / 2;
   const circumference = 2 * Math.PI * r;
 
-  let offset = 0;
-  const arcs = segments.map((s) => {
-    const pct = s.value / total;
-    const dash = pct * circumference;
-    const gap  = circumference - dash;
-    const rotate = offset * 360 - 90;
-    offset += pct;
-    return { ...s, dash, gap, rotate };
-  });
+  const { result: arcs } = segments.reduce<{
+    offset: number;
+    result: Array<(typeof segments)[0] & { dash: number; gap: number; rotate: number }>;
+  }>(
+    ({ offset, result }, s) => {
+      const pct = s.value / total;
+      const dash = pct * circumference;
+      return {
+        offset: offset + pct,
+        result: [...result, { ...s, dash, gap: circumference - dash, rotate: offset * 360 - 90 }],
+      };
+    },
+    { offset: 0, result: [] },
+  );
 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>

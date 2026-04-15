@@ -111,21 +111,21 @@ def _poll_comfyui_result(base: str, prompt_id: str, timeout_s: int = 300) -> str
     """
     ComfyUI /history/{prompt_id} 폴링 → 완료 시 첫 번째 이미지 base64 반환.
     timeout_s 내 완료 안 되면 TimeoutError.
+    단일 httpx.Client 재사용 — 매 반복 TCP 연결 생성 방지.
     """
     interval = 5
     attempts = max(1, timeout_s // interval)
-    for _ in range(attempts):
-        time.sleep(interval)
-        with httpx.Client(timeout=30) as client:
+    with httpx.Client(timeout=60) as client:
+        for _ in range(attempts):
+            time.sleep(interval)
             hist = client.get(f"{base}/history/{prompt_id}")
-        if hist.status_code != 200:
-            continue
-        hist_data = hist.json()
-        if prompt_id not in hist_data:
-            continue
-        for node_out in hist_data[prompt_id].get("outputs", {}).values():
-            for img_info in node_out.get("images", []):
-                with httpx.Client(timeout=60) as client:
+            if hist.status_code != 200:
+                continue
+            hist_data = hist.json()
+            if prompt_id not in hist_data:
+                continue
+            for node_out in hist_data[prompt_id].get("outputs", {}).values():
+                for img_info in node_out.get("images", []):
                     img_r = client.get(
                         f"{base}/view",
                         params={
@@ -133,8 +133,8 @@ def _poll_comfyui_result(base: str, prompt_id: str, timeout_s: int = 300) -> str
                             "type": img_info.get("type", "output"),
                         },
                     )
-                if img_r.status_code == 200:
-                    return base64.b64encode(img_r.content).decode()
+                    if img_r.status_code == 200:
+                        return base64.b64encode(img_r.content).decode()
     raise TimeoutError(f"ComfyUI prompt {prompt_id!r} did not complete within {timeout_s}s")
 
 
@@ -514,6 +514,23 @@ def edit_image(
                 raise ValueError("OPENAI_API_KEY not configured")
             img_bytes  = _load_image_bytes(source)
             mask_bytes = _load_image_bytes(mask)
+            # gpt-image-1 요구사항: PNG, RGBA(투명도 포함), 정사각형, 4MB 미만
+            def _to_rgba_png_square(raw: bytes, label: str) -> bytes:
+                img = Image.open(io.BytesIO(raw)).convert("RGBA")
+                # 정사각형으로 크롭 (짧은 쪽 기준)
+                side = min(img.width, img.height)
+                if img.width != img.height:
+                    x = (img.width  - side) // 2
+                    y = (img.height - side) // 2
+                    img = img.crop((x, y, x + side, y + side))
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                data = buf.getvalue()
+                if len(data) > 4 * 1024 * 1024:
+                    raise ValueError(f"{label} exceeds 4 MB after conversion")
+                return data
+            img_bytes  = _to_rgba_png_square(img_bytes,  "image")
+            mask_bytes = _to_rgba_png_square(mask_bytes, "mask")
             with httpx.Client(timeout=120) as client:
                 resp = _openai_post(
                     client,
@@ -604,21 +621,27 @@ def generate_image(
         if provider == "openai":
             if not OPENAI_API_KEY:
                 raise ValueError("OPENAI_API_KEY not configured")
-            with httpx.Client(timeout=120) as client:
-                resp = _openai_post(
-                    client,
-                    "https://api.openai.com/v1/images/generations",
-                    headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                    json={
-                        "model": model,
-                        "prompt": prompt,
-                        "n": 1,
-                        "size": size,
-                        "quality": quality,
-                        "response_format": "b64_json",
-                    },
-                )
-            b64 = resp.json()["data"][0]["b64_json"]
+            # Retry 시 이중 과금 방지: DALL-E 결과를 Redis에 캐시 (2시간)
+            _r = _get_task_redis()
+            _cache_key = key_task_dalle_cache(self.request.id)
+            b64 = _r.get(_cache_key)
+            if b64 is None:
+                with httpx.Client(timeout=120) as client:
+                    resp = _openai_post(
+                        client,
+                        "https://api.openai.com/v1/images/generations",
+                        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                        json={
+                            "model": model,
+                            "prompt": prompt,
+                            "n": 1,
+                            "size": size,
+                            "quality": quality,
+                            "response_format": "b64_json",
+                        },
+                    )
+                b64 = resp.json()["data"][0]["b64_json"]
+                _r.setex(_cache_key, 7200, b64)
             result = {"b64": b64, "url": None, "provider": "openai"}
             publish_task_done(self.request.id, "generate_image")
             return result
@@ -626,19 +649,24 @@ def generate_image(
         elif provider == "comfyui":
             base = comfyui_url or settings.COMFYUI_URL
             _validate_external_url(base)  # SSRF: comfyui_url 파라미터 검증
+            # Minimal but complete SD/SDXL txt2img workflow
+            img_w, img_h = (int(v) for v in (size.split("x") + ["1024", "1024"])[:2]) if size else (1024, 1024)
+            workflow = {
+                "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "v1-5-pruned-emaonly.ckpt"}},
+                "2": {"class_type": "EmptyLatentImage",       "inputs": {"width": img_w, "height": img_h, "batch_size": 1}},
+                "3": {"class_type": "CLIPTextEncode",         "inputs": {"text": prompt,          "clip": ["1", 1]}},
+                "4": {"class_type": "CLIPTextEncode",         "inputs": {"text": negative_prompt, "clip": ["1", 1]}},
+                "5": {"class_type": "KSampler", "inputs": {
+                    "model": ["1", 0], "positive": ["3", 0], "negative": ["4", 0],
+                    "latent_image": ["2", 0],
+                    "seed": 42, "steps": 20, "cfg": 7.0,
+                    "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
+                }},
+                "6": {"class_type": "VAEDecode",            "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
+                "7": {"class_type": "SaveImageWebsocket",   "inputs": {"images": ["6", 0]}},
+            }
             with httpx.Client(timeout=30) as client:
-                r = client.post(f"{base}/prompt", json={
-                    "prompt": {
-                        "3": {"class_type": "KSampler", "inputs": {
-                            "seed": 42, "steps": 20, "cfg": 7,
-                            "sampler_name": "euler", "scheduler": "normal",
-                            "positive": {"node_id": "6", "output": 0},
-                            "negative": {"node_id": "7", "output": 0},
-                        }},
-                        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt}},
-                        "7": {"class_type": "CLIPTextEncode", "inputs": {"text": negative_prompt}},
-                    }
-                })
+                r = client.post(f"{base}/prompt", json={"prompt": workflow})
                 r.raise_for_status()
             prompt_id = r.json()["prompt_id"]
             b64 = _poll_comfyui_result(base, prompt_id, timeout_s=300)
