@@ -3,15 +3,18 @@ RAG (Retrieval-Augmented Generation) 검색 API
 
 GET /rag/search?q=query&top_k=5
   - 현재 유저의 Knowledge Base에서 관련 청크를 검색
-  - 임베딩 벡터 있으면 코사인 유사도 검색
-  - 없으면 키워드 매칭 fallback
+  - knowledge_chunks 테이블 + pgvector HNSW 인덱스 우선 사용 (O(log n))
+  - knowledge_chunks 없으면 embeddings_json JSONB 코사인 유사도 fallback
+  - 임베딩 자체 불가 시 키워드 매칭 fallback
 
 임베딩 생성:
   - OPENAI_API_KEY 있으면 text-embedding-3-small
   - 없으면 Ollama nomic-embed-text
+  - 쿼리 임베딩은 Redis 캐시 (24h) — 동일 쿼리 반복 시 API 호출 생략
 """
 
 import hashlib
+import json
 import logging
 import math
 from typing import Any
@@ -21,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 logger = logging.getLogger(__name__)
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
@@ -38,6 +41,51 @@ from app.services.embedding_service import embed_query_async
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 limiter = Limiter(key_func=get_remote_address)
+
+
+# ── pgvector HNSW 검색 ────────────────────────────────────────────────────────
+
+async def _pgvector_search(
+    db: AsyncSession,
+    user_id: str,
+    query_vector: list[float],
+    top_k: int,
+) -> list[dict] | None:
+    """knowledge_chunks 테이블에서 pgvector HNSW 코사인 검색.
+
+    knowledge_chunks 행이 없으면 None 반환 → 호출자가 JSONB fallback으로 전환.
+    embedding 컬럼이 vector 타입이므로 raw SQL text() 사용 (SQLAlchemy ORM은 Text placeholder).
+    """
+    # 벡터를 pgvector 리터럴 '[x1,x2,...]' 형식으로 변환
+    vec_literal = "[" + ",".join(f"{v:.8f}" for v in query_vector) + "]"
+
+    sql = text("""
+        SELECT
+            kc.content,
+            ki.name   AS source,
+            1 - (kc.embedding <=> CAST(:vec AS vector)) AS score
+        FROM knowledge_chunks kc
+        JOIN knowledge_items ki ON ki.id = kc.knowledge_item_id
+        WHERE ki.user_id = CAST(:uid AS uuid)
+          AND kc.embedding IS NOT NULL
+        ORDER BY kc.embedding <=> CAST(:vec AS vector)
+        LIMIT :top_k
+    """)
+
+    try:
+        result = await db.execute(sql, {"vec": vec_literal, "uid": user_id, "top_k": top_k})
+        rows = result.fetchall()
+    except Exception as exc:
+        logger.warning("pgvector search failed, will fallback to JSONB: %s", exc)
+        return None
+
+    if not rows:
+        return None  # 청크 없음 → fallback
+
+    return [
+        {"chunk": r.content, "source": r.source, "score": round(float(r.score), 4)}
+        for r in rows
+    ]
 
 # ── Embedding helpers ─────────────────────────────────────────────────────────
 
@@ -140,7 +188,18 @@ async def rag_search(
         results = _keyword_search(q, items_with_embeddings, top_k)
         return {"results": results, "query": q, "method": "keyword_fallback"}
 
-    # 코사인 유사도 계산
+    # ── pgvector HNSW 검색 우선 시도 (O(log n), HNSW 인덱스 활용) ────────────
+    pgvector_results = await _pgvector_search(db, str(current_user.id), query_vector, top_k)
+    if pgvector_results is not None:
+        return {
+            "results": pgvector_results,
+            "query": q,
+            "method": "pgvector_hnsw",
+            "total_searched": len(pgvector_results),
+        }
+
+    # ── JSONB fallback: embeddings_json 컬럼 코사인 유사도 (O(n)) ────────────
+    # knowledge_chunks 테이블이 비어있을 때 (아직 마이그레이션 전 데이터)
     scored: list[dict] = []
     skipped_dim_mismatch: list[str] = []
 
@@ -151,7 +210,7 @@ async def rag_search(
         chunks: list[str]          = emb_data.get("chunks", [])
         vectors: list[list[float]] = emb_data.get("vectors", [])
 
-        # C8: 임베딩 차원 불일치 — 경고 로깅 후 스킵 (사용자에게도 note로 알림)
+        # 임베딩 차원 불일치 — 경고 로깅 후 스킵
         if vectors and len(vectors[0]) != len(query_vector):
             logger.warning(
                 "RAG: skipping item '%s' — vector dim mismatch (%d vs query %d). "
@@ -170,7 +229,7 @@ async def rag_search(
     response: dict = {
         "results": scored[:top_k],
         "query": q,
-        "method": "cosine_similarity",
+        "method": "cosine_similarity_jsonb",
         "total_searched": len(scored),
     }
     if skipped_dim_mismatch:

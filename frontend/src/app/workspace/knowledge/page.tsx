@@ -45,7 +45,7 @@ export default function KnowledgePage() {
   useEffect(() => {
     apiListKnowledge()
       .then(setFiles)
-      .catch(() => setError("지식 베이스를 불러오지 못했습니다."))
+      .catch(() => setError(t("workspace.loadError")))
       .finally(() => setLoading(false));
   }, []);
 
@@ -54,6 +54,7 @@ export default function KnowledgePage() {
   );
 
   function addFiles(fileList: FileList | File[]) {
+    if (uploading) return; // 업로드 중 재진입 방지
     const valid = Array.from(fileList).filter((f) =>
       ACCEPTED.some((ext) => f.name.toLowerCase().endsWith(ext))
     );
@@ -72,14 +73,16 @@ export default function KnowledgePage() {
         // Trigger Celery embedding task (best-effort, non-blocking)
         apiEnqueueKnowledgeProcess(item.id, file)
           .then((task) => {
-            setTaskStatus((prev) => ({ ...prev, [item.id]: "started" }));
+            setTaskStatus((prev) => ({ ...prev, [item.id]: "running" }));
             pollTask(task.task_id, { maxPolls: 120 }) // up to 4 min
               .then(() => setTaskStatus((prev) => ({ ...prev, [item.id]: "success" })))
               .catch(() => setTaskStatus((prev) => ({ ...prev, [item.id]: "failed" })));
           })
-          .catch(() => {/* embedding failure is non-fatal */});
+          .catch(() => {
+            setTaskStatus((prev) => ({ ...prev, [item.id]: "failed" }));
+          });
       } catch {
-        setError(`"${file.name}" 업로드 실패`);
+        setError(`"${file.name}" ${t("workspace.uploadError")}`);
       }
     }
     if (results.length > 0) {
@@ -89,6 +92,8 @@ export default function KnowledgePage() {
   }
 
   async function handleDelete(id: string) {
+    // 삭제 전에 taskStatus를 정리해 stale polling 업데이트를 무시하게 함
+    setTaskStatus((prev) => { const n = { ...prev }; delete n[id]; return n; });
     setFiles((prev) => prev.filter((f) => f.id !== id));
     try {
       await apiDeleteKnowledge(id);
@@ -205,11 +210,11 @@ export default function KnowledgePage() {
                     <span>·</span>
                     <span>{formatBytes(f.file_size)}</span>
                     {taskStatus[f.id] === "queued" || taskStatus[f.id] === "running" ? (
-                      <span className="flex items-center gap-1 text-amber-400"><Loader2 size={10} className="animate-spin" />임베딩 중</span>
+                      <span className="flex items-center gap-1 text-amber-400"><Loader2 size={10} className="animate-spin" />{t("workspace.embedding.processing")}</span>
                     ) : taskStatus[f.id] === "success" ? (
-                      <span className="text-green-400">임베딩 완료</span>
+                      <span className="text-green-400">{t("workspace.embedding.success")}</span>
                     ) : taskStatus[f.id] === "failed" ? (
-                      <span className="text-red-400">임베딩 실패</span>
+                      <span className="text-red-400">{t("workspace.embedding.failed")}</span>
                     ) : null}
                   </div>
                 </div>

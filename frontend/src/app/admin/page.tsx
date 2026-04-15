@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Shield, Users, Settings, Search, MoreHorizontal, Crown, User, Ban, Loader2, ChevronRight, BarChart3 } from "lucide-react";
+import { Shield, Users, Settings, Search, MoreHorizontal, Crown, User, Ban, Loader2, ChevronRight, BarChart3, X } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
@@ -23,9 +23,17 @@ const ROLE_STYLES: Record<string, string> = {
 
 export default function AdminPage() {
   const { t } = useLanguage();
-  const { user: me } = useAuth();
+  const { user: me, loading: authLoading } = useAuth();
 
-  if (me && me.role !== "admin") {
+  if (authLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 size={20} className="animate-spin text-text-muted" />
+      </div>
+    );
+  }
+
+  if (!me || me.role !== "admin") {
     return (
       <div className="flex h-full items-center justify-center text-sm text-text-muted">
         관리자 권한이 필요합니다.
@@ -49,6 +57,7 @@ function UsersPanel({ t }: { t: TFn }) {
   const [query, setQuery]   = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState("");
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([apiAdminListUsers(), apiAdminStats()])
@@ -64,25 +73,37 @@ function UsersPanel({ t }: { t: TFn }) {
   );
 
   async function updateRole(id: string, role: "admin" | "user" | "pending") {
+    setMutationError(null);
     try {
       const updated = await apiAdminUpdateUser(id, { role });
       setUsers((prev) => prev.map((u) => u.id === id ? { ...u, ...updated } : u));
-    } catch { /* ignore */ }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "역할 변경에 실패했습니다.";
+      setMutationError(msg);
+    }
   }
 
   async function toggleActive(id: string, is_active: boolean) {
+    setMutationError(null);
     try {
       const updated = await apiAdminUpdateUser(id, { is_active });
       setUsers((prev) => prev.map((u) => u.id === id ? { ...u, ...updated } : u));
-    } catch { /* ignore */ }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "상태 변경에 실패했습니다.";
+      setMutationError(msg);
+    }
   }
 
   async function deleteUser(id: string) {
     if (!confirm("이 유저를 삭제하시겠습니까? 되돌릴 수 없습니다.")) return;
+    setMutationError(null);
     try {
       await apiAdminDeleteUser(id);
       setUsers((prev) => prev.filter((u) => u.id !== id));
-    } catch { /* ignore */ }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "삭제에 실패했습니다.";
+      setMutationError(msg);
+    }
   }
 
   if (loading) {
@@ -100,6 +121,14 @@ function UsersPanel({ t }: { t: TFn }) {
 
   return (
     <div className="flex flex-col gap-4 mt-2 max-w-3xl">
+      {mutationError && (
+        <div className="flex items-center justify-between gap-2 px-4 py-2 rounded-lg bg-danger/10 border border-danger/20 text-sm text-danger">
+          <span>{mutationError}</span>
+          <button onClick={() => setMutationError(null)} className="shrink-0 hover:opacity-70 transition-opacity">
+            <X size={14} />
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-text-primary">{t("admin.tab.users")}</h2>

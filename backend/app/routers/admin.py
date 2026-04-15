@@ -69,6 +69,7 @@ class StatsOut(BaseModel):
     new_this_week: int
     daily_chats: list[int]    # 오늘 포함 최근 7일 채팅 생성 수 (오래된 날 → 최근 날)
     daily_signups: list[int]  # 오늘 포함 최근 7일 가입자 수
+    daily_active_users: list[int]  # 최근 7일 DAU (HyperLogLog 추정, ±0.81% 오차)
 
 
 # ── 통계 ──────────────────────────────────────────────────────────────────────
@@ -115,8 +116,13 @@ async def get_stats(
     signup_by_day: dict[str, int] = {str(r.day.date()): r.cnt for r in signup_rows}
 
     # 오래된 날 → 최근 날 순서로 7개 슬롯 채우기
-    daily_chats   = [chat_by_day.get(str((now - timedelta(days=6 - i)).date()), 0) for i in range(7)]
-    daily_signups = [signup_by_day.get(str((now - timedelta(days=6 - i)).date()), 0) for i in range(7)]
+    date_strs      = [str((now - timedelta(days=6 - i)).date()) for i in range(7)]
+    daily_chats    = [chat_by_day.get(d, 0) for d in date_strs]
+    daily_signups  = [signup_by_day.get(d, 0) for d in date_strs]
+
+    # DAU — HyperLogLog 추정 (파이프라인 1회 호출)
+    from app.core.redis import dau_count_range
+    daily_active_users = await dau_count_range(date_strs)
 
     return StatsOut(
         total_users=row.total_users,
@@ -125,6 +131,7 @@ async def get_stats(
         new_this_week=row.new_this_week,
         daily_chats=daily_chats,
         daily_signups=daily_signups,
+        daily_active_users=daily_active_users,
     )
 
 

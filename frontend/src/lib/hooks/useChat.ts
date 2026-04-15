@@ -5,6 +5,16 @@ import { streamChat, type ChatMessage } from "@/lib/apis/chat";
 import { loadSettings } from "@/lib/appStore";
 import { getModelCapabilities } from "@/lib/modelCapabilities";
 import { getStoredToken, isAuthenticated, apiEnqueueAgentTask } from "@/lib/api/backendClient";
+import { loadWs } from "@/lib/workspaceStore";
+
+/** Custom model의 systemPrompt를 가져온다. 없으면 undefined. */
+function getCustomModelSystemPrompt(modelId: string): string | undefined {
+  try {
+    const items = loadWs<{ id: string; baseModel: string; systemPrompt: string }>("custom-models", []);
+    const match = items.find((m) => m.id === modelId || m.baseModel === modelId);
+    return match?.systemPrompt || undefined;
+  } catch { return undefined; }
+}
 
 export type SearchSource = { title: string; snippet: string; url: string };
 
@@ -163,7 +173,10 @@ export function useChat(chatId?: string) {
       const lang = effectiveLang(settings.outputLang, settings.language);
 
       const apiMsgs: ChatMessage[] = [];
-      if (settings.systemPrompt) apiMsgs.push({ role: "system", content: settings.systemPrompt });
+      // Custom model의 systemPrompt가 있으면 글로벌 설정보다 우선 적용
+      const customSysPrompt = getCustomModelSystemPrompt(modelId);
+      const effectiveSysPrompt = customSysPrompt ?? settings.systemPrompt;
+      if (effectiveSysPrompt) apiMsgs.push({ role: "system", content: effectiveSysPrompt });
 
       // History — include images only for vision-capable models
       msgRef.current
@@ -195,9 +208,10 @@ export function useChat(chatId?: string) {
             }
           );
           if (r.ok) {
-            const { results } = await r.json() as {
-              results: { chunk: string; source: string; score: number }[];
+            const body = await r.json() as {
+              results?: { chunk: string; source: string; score: number }[];
             };
+            const results = Array.isArray(body.results) ? body.results : [];
             if (results.length > 0) {
               const context = results
                 .map((item, i) => `[KB${i + 1}] (${item.source})\n${item.chunk}`)
@@ -248,7 +262,8 @@ export function useChat(chatId?: string) {
             signal: AbortSignal.timeout(8000),
           });
           if (r.ok) {
-            const { results } = await r.json() as { results: SearchSource[] };
+            const wsBody = await r.json() as { results?: SearchSource[] };
+            const results = Array.isArray(wsBody.results) ? wsBody.results : [];
             if (results.length > 0) {
               searchSources = results;
               const searchContext = results
@@ -341,8 +356,16 @@ export function useChat(chatId?: string) {
   }, [push]);
 
   const editMessage = useCallback((id: string, content: string) => {
-    push((prev) => prev.map((m) => m.id === id ? { ...m, content } : m), true);
-  }, [push]);
+    // Abort any in-flight generation
+    abortRef.current?.abort();
+    const snap = msgRef.current;
+    const idx = snap.findIndex((m) => m.id === id);
+    if (idx < 0) return;
+    // Truncate messages at the edited user message (drop it and everything after)
+    push((prev) => prev.slice(0, idx), false);
+    // Re-send from the edited content
+    send(content, []);
+  }, [push, send, abortRef]);
 
   const regenerate = useCallback((messageId: string) => {
     // abort any in-flight generation before starting a new one

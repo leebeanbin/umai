@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.errors import ErrCode
 from app.core.security import get_subject
-from app.core.redis import user_cache_get, user_cache_set, access_get
+from app.core.redis import user_cache_get, user_cache_set, access_get, dau_add
 from app.models.user import User
 
 bearer = HTTPBearer(auto_error=False)
@@ -52,6 +52,9 @@ async def get_current_user(
         if not data.get("is_active", True):
             ErrCode.USER_SUSPENDED.raise_it()
         data["id"] = uuid.UUID(data["id"])
+        # DAU HyperLogLog 기록 (캐시 히트 경로 — fire-and-forget)
+        _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        asyncio.ensure_future(dau_add(user_id, _today))
         return SimpleNamespace(**data)  # type: ignore[return-value]
 
     # ── Step 4: DB 조회 (캐시 miss) ──────────────────────────────────────────
@@ -62,6 +65,10 @@ async def get_current_user(
 
     # last_seen_at 갱신 — 캐시 TTL(5분) 주기로 자연스럽게 업데이트됨
     user.last_seen_at = datetime.now(timezone.utc)
+
+    # DAU HyperLogLog 기록 (DB 조회 경로 — fire-and-forget)
+    _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    asyncio.ensure_future(dau_add(user_id, _today))
 
     await user_cache_set(user_id, json.dumps({
         "id": str(user.id),

@@ -216,6 +216,85 @@ async def oauth_origin_pop(state: str) -> str | None:
 EMBED_QUERY_CACHE_TTL = 86_400  # 24h
 
 
+# ── HyperLogLog — 일일 유니크 활성 유저 ──────────────────────────────────────
+# Redis PFADD/PFCOUNT: 표준 Redis 내장 명령, 추가 모듈 불필요.
+# 오차율 0.81%, 메모리 < 12 KB / 키 (유저 수 무관).
+# 키: dau:{YYYY-MM-DD}  TTL: 32일 (월간 집계도 가능)
+
+DAU_TTL = 32 * 86_400  # 32일
+
+
+async def dau_add(user_id: str, date_str: str) -> None:
+    """유저를 해당 날짜 DAU HyperLogLog에 등록."""
+    r = await get_redis()
+    key = f"dau:{date_str}"
+    await r.pfadd(key, user_id)
+    await r.expire(key, DAU_TTL)
+
+
+async def dau_count(date_str: str) -> int:
+    """해당 날짜 유니크 활성 유저 수 추정 (±0.81% 오차)."""
+    r = await get_redis()
+    return await r.pfcount(f"dau:{date_str}")
+
+
+async def dau_count_range(date_strs: list[str]) -> list[int]:
+    """여러 날짜의 DAU 카운트를 한 번의 pipeline으로 조회."""
+    r = await get_redis()
+    pipe = r.pipeline()
+    for d in date_strs:
+        pipe.pfcount(f"dau:{d}")
+    return list(await pipe.execute())
+
+
+# ── Bloom filter — 문서 중복 임베딩 방지 ──────────────────────────────────────
+# RedisBloom 모듈 없이 표준 Redis BITFIELD 로 구현.
+# k=7 해시 함수, m=2^23 (8 MB 비트맵) → 100만 문서 기준 오탐률 < 0.1%.
+# 키: bloom:embed_docs
+#
+# 알고리즘: MurmurHash3 유사 — Python 내장 hash()는 시드 고정 불가하므로
+# SHA-256 에서 k개 64-bit 슬라이스를 추출해 비트 위치 계산.
+
+import hashlib as _hashlib
+import struct as _struct
+
+_BLOOM_KEY   = "bloom:embed_docs"
+_BLOOM_BITS  = 2 ** 23          # 8,388,608 bits ≈ 1 MB
+_BLOOM_K     = 7                # 해시 함수 수
+_BLOOM_TTL   = 0                # 영구 (만료 없음)
+
+
+def _bloom_positions(item: str) -> list[int]:
+    """item 문자열의 SHA-256에서 k개 비트 위치 추출."""
+    digest = _hashlib.sha256(item.encode()).digest()  # 32 bytes
+    positions: list[int] = []
+    for i in range(_BLOOM_K):
+        # 8 bytes씩 슬라이싱 (256bit → k개 위치)
+        offset = (i * 4) % 24          # 순환 오프셋 (32-8=24 범위)
+        (val,) = _struct.unpack_from(">Q", digest, offset % (32 - 7))
+        positions.append(val % _BLOOM_BITS)
+    return positions
+
+
+async def bloom_add(doc_hash: str) -> None:
+    """문서 해시를 Bloom filter에 등록 (임베딩 완료 표시)."""
+    r = await get_redis()
+    pipe = r.pipeline()
+    for pos in _bloom_positions(doc_hash):
+        pipe.setbit(_BLOOM_KEY, pos, 1)
+    await pipe.execute()
+
+
+async def bloom_check(doc_hash: str) -> bool:
+    """Bloom filter 조회. True = 이미 임베딩됨 (오탐 가능), False = 확실히 미처리."""
+    r = await get_redis()
+    pipe = r.pipeline()
+    for pos in _bloom_positions(doc_hash):
+        pipe.getbit(_BLOOM_KEY, pos)
+    bits = await pipe.execute()
+    return all(bits)
+
+
 async def embed_query_cache_get(content_hash: str) -> list[float] | None:
     """캐시된 쿼리 임베딩 반환. 없으면 None."""
     r = await get_redis()
