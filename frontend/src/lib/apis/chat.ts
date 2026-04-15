@@ -227,10 +227,10 @@ export async function streamChat({
     batcher.flushNow();
     onDone();
   } catch (err) {
-    if ((err as Error).name === "AbortError") {
+    if (err instanceof Error && err.name === "AbortError") {
       onDone();
     } else {
-      onError((err as Error).message ?? "Unknown error");
+      onError(err instanceof Error ? err.message : "Unknown error");
     }
   }
 }

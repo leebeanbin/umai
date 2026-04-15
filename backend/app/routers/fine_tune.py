@@ -20,17 +20,21 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import RATE_FINE_TUNE_DATASET, RATE_FINE_TUNE_JOB
 from app.core.database import get_db
 from app.models.fine_tune import FineTuneJob, TrainingDataset
 from app.models.user import User
 from app.routers.deps import get_current_user
 
 router = APIRouter(prefix="/fine-tune", tags=["fine-tune"], redirect_slashes=False)
+limiter = Limiter(key_func=get_remote_address)
 
 # ── 지원 오픈 모델 목록 ────────────────────────────────────────────────────────
 
@@ -152,7 +156,9 @@ class JobOut(BaseModel):
 # ── 데이터셋 엔드포인트 ───────────────────────────────────────────────────────
 
 @router.post("/datasets", response_model=DatasetOut, status_code=201)
+@limiter.limit(RATE_FINE_TUNE_DATASET)
 async def create_dataset(
+    request: Request,
     body: DatasetCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -202,7 +208,9 @@ async def list_datasets(
 
 
 @router.delete("/datasets/{dataset_id}", status_code=204)
+@limiter.limit(RATE_FINE_TUNE_DATASET)
 async def delete_dataset(
+    request: Request,
     dataset_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -336,7 +344,9 @@ async def _simulate_training(job_id: uuid.UUID) -> None:
 
 
 @router.post("/jobs", response_model=JobOut, status_code=201)
+@limiter.limit(RATE_FINE_TUNE_JOB)
 async def create_job(
+    request: Request,
     body: JobCreate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
@@ -437,7 +447,9 @@ async def get_job(
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobOut)
+@limiter.limit(RATE_FINE_TUNE_JOB)
 async def cancel_job(
+    request: Request,
     job_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
