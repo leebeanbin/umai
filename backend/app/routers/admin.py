@@ -10,9 +10,12 @@
 - GET  /admin/settings/public    OAuth 활성화 여부 (인증 불필요)
 """
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -173,6 +176,10 @@ async def update_user(
     if str(user.id) == str(admin.id) and body.role and body.role != "admin":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot demote yourself")
 
+    # 자신을 비활성화할 수 없음
+    if str(user.id) == str(admin.id) and body.is_active is False:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot deactivate yourself")
+
     if body.role is not None:
         if body.role not in ("admin", "user", "pending"):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid role")
@@ -203,6 +210,14 @@ async def delete_user(
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if not user:
         ErrCode.USER_NOT_FOUND.raise_it()
+
+    # 마지막 admin 삭제 방지
+    if user.role == "admin":
+        admin_count = await db.scalar(
+            select(func.count(User.id)).where(User.role == "admin")
+        )
+        if (admin_count or 0) <= 1:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot delete the last admin")
 
     await db.delete(user)
     # M12: 삭제된 유저 캐시도 즉시 제거
@@ -306,7 +321,6 @@ async def pull_ollama_model(
     body: {"name": "llama3.2"}
     Streams: {"status": "pulling manifest"} ... {"status": "success"}
     """
-    import logging
     model_name = body.name.strip()
 
     ollama_url = settings.OLLAMA_URL
@@ -460,29 +474,83 @@ async def get_public_settings(db: AsyncSession = Depends(get_db)):
 
 # ── GET /admin/settings (admin only) ────────────────────────────────────────────
 
+_API_KEY_FIELDS = {"openai_key", "anthropic_key", "google_key", "xai_key", "tavily_key", "custom_key"}
+
+
+def _mask_api_keys(data: dict) -> dict:
+    """connections 섹션의 API 키를 마스킹하여 반환 — 값 존재 여부만 노출."""
+    result = {k: dict(v) if isinstance(v, dict) else v for k, v in data.items()}
+    connections = result.get("connections")
+    if isinstance(connections, dict):
+        masked: dict = {}
+        for k, v in connections.items():
+            if k in _API_KEY_FIELDS:
+                masked[k] = "**set**" if v else ""
+            else:
+                masked[k] = v
+        result["connections"] = masked
+    return result
+
+
 @router.get("/settings")
 async def get_settings(
     _admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
-    """전체 시스템 설정 반환."""
+    """전체 시스템 설정 반환 (API 키는 마스킹)."""
     row = await _get_settings_row(db)
-    return _parse_settings(row)
+    return _mask_api_keys(_parse_settings(row))
 
 
 # ── PATCH /admin/settings (admin only) ──────────────────────────────────────────
 
+class GeneralSettings(BaseModel):
+    allow_signup:    bool | None = None
+    default_locale:  str  | None = Field(None, max_length=10)
+    instance_name:   str  | None = Field(None, max_length=100)
+    model_config = ConfigDict(extra="forbid")
+
+
+class ConnectionsSettings(BaseModel):
+    ollama_url:   str | None = Field(None, max_length=512)
+    comfyui_url:  str | None = Field(None, max_length=512)
+    a1111_url:    str | None = Field(None, max_length=512)
+    model_config = ConfigDict(extra="forbid")
+
+
+class ModelsSettings(BaseModel):
+    openai_enabled:    list[str] | None = None
+    anthropic_enabled: list[str] | None = None
+    google_enabled:    list[str] | None = None
+    xai_enabled:       list[str] | None = None
+    ollama_enabled:    list[str] | None = None
+    model_config = ConfigDict(extra="forbid")
+
+
+class OauthSettings(BaseModel):
+    google_enabled: bool | None = None
+    github_enabled: bool | None = None
+    model_config = ConfigDict(extra="forbid")
+
+
+class FeaturesSettings(BaseModel):
+    enable_web_search: bool | None = None
+    enable_image_gen:  bool | None = None
+    enable_rag:        bool | None = None
+    model_config = ConfigDict(extra="forbid")
+
+
 class SettingsPatch(BaseModel):
-    """Typed patch payload for system settings. Only known top-level sections are accepted."""
-    general:     dict[str, Any] | None = None
-    connections: dict[str, Any] | None = None
-    models:      dict[str, Any] | None = None
-    oauth:       dict[str, Any] | None = None
-    features:    dict[str, Any] | None = None
-    documents:   dict[str, Any] | None = None
-    audio:       dict[str, Any] | None = None
-    images:      dict[str, Any] | None = None
-    evaluations: dict[str, Any] | None = None
+    """Typed patch payload — 알려진 섹션/필드만 허용. 임의 키 저장 방지."""
+    general:     GeneralSettings     | None = None
+    connections: ConnectionsSettings | None = None
+    models:      ModelsSettings      | None = None
+    oauth:       OauthSettings       | None = None
+    features:    FeaturesSettings    | None = None
+    documents:   dict[str, Any]      | None = None  # 구조 파악 후 추후 타입화
+    audio:       dict[str, Any]      | None = None
+    images:      dict[str, Any]      | None = None
+    evaluations: dict[str, Any]      | None = None
 
     model_config = ConfigDict(extra="forbid")
 
