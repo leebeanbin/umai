@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useAuth } from "@/components/providers/AuthProvider";
 import {
   ArrowLeft, CheckCircle2, XCircle, PauseCircle,
   Loader2, Clock, Layers, StopCircle,
@@ -14,7 +15,7 @@ import {
   type RunListItem,
   type RunOut,
   type WorkflowStats,
-} from "@/lib/apis/workflow";
+} from "@/lib/api/backendClient";
 
 // ── 상태 배지 ─────────────────────────────────────────────────────────────────
 
@@ -133,6 +134,7 @@ export default function RunsHistoryPage() {
   const router = useRouter();
   const workflowId = params?.id as string;
 
+  const { user, loading: authLoading } = useAuth();
   const [runs, setRuns] = useState<RunListItem[]>([]);
   const [stats, setStats] = useState<WorkflowStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -141,18 +143,17 @@ export default function RunsHistoryPage() {
   const [page, setPage] = useState(1);
 
   useEffect(() => {
-    if (!workflowId) return;
-    setLoading(true); // 페이지 변경 시마다 로딩 상태 리셋
+    if (!workflowId || authLoading) return;
+    if (!user) { setLoading(false); return; }
+    setLoading(true);
     Promise.all([
       apiListRuns(workflowId, page),
       apiGetStats(workflowId),
     ]).then(([r, s]) => {
       setRuns(r);
       setStats(s);
-    }).catch(() => {
-      // 에러 시 빈 상태 유지 — 스피너는 사라지게 처리
-    }).finally(() => setLoading(false));
-  }, [workflowId, page]);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [workflowId, page, user, authLoading]);
 
   async function handleCancel(e: React.MouseEvent, runId: string) {
     e.stopPropagation();
@@ -161,7 +162,7 @@ export default function RunsHistoryPage() {
     try {
       await apiCancelRun(runId);
       setRuns((prev) =>
-        prev.map((r) => r.run_id === runId ? { ...r, status: "failed" } : r)
+        prev.map((r) => r.run_id === runId ? { ...r, status: "cancelled" } : r)
       );
     } finally {
       setCancelling(null);
@@ -253,8 +254,8 @@ export default function RunsHistoryPage() {
           </div>
         )}
 
-        {/* 페이지네이션 */}
-        {runs.length === 20 && (
+        {/* 페이지네이션: 이전 버튼은 page>1이면 항상 표시, 다음 버튼은 꽉 찬 페이지일 때만 표시 */}
+        {(page > 1 || runs.length === 20) && (
           <div className="flex justify-center gap-2">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
@@ -264,12 +265,14 @@ export default function RunsHistoryPage() {
               이전
             </button>
             <span className="px-3 py-1.5 text-xs text-text-muted">{page}</span>
-            <button
-              onClick={() => setPage((p) => p + 1)}
-              className="px-3 py-1.5 rounded-lg border border-border text-xs text-text-primary hover:bg-hover transition-colors"
-            >
-              다음
-            </button>
+            {runs.length === 20 && (
+              <button
+                onClick={() => setPage((p) => p + 1)}
+                className="px-3 py-1.5 rounded-lg border border-border text-xs text-text-primary hover:bg-hover transition-colors"
+              >
+                다음
+              </button>
+            )}
           </div>
         )}
       </div>

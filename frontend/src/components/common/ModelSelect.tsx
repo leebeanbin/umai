@@ -40,15 +40,15 @@ export default function ModelSelect({ value, onChange, showTuning = true }: Prop
 
   // 마운트 후: localStorage 초기값 로드 → API에서 최신 목록으로 갱신 (stale-while-revalidate)
   useEffect(() => {
-    setModels(loadModels());
+    setModels(loadModels()); // eslint-disable-line react-hooks/set-state-in-effect
     fetchModels().then((fresh) => {
-      if (fresh.length > 0) setModels(fresh);
+      if (fresh.length > 0) setModels(fresh); // eslint-disable-line react-hooks/set-state-in-effect
     }).catch(() => {});
   }, []);
 
   useEffect(() => {
     if (open) setTimeout(() => searchRef.current?.focus(), 30);
-    else { setQuery(""); setShowParams(false); }
+    else { setQuery(""); setShowParams(false); } // eslint-disable-line react-hooks/set-state-in-effect
   }, [open]);
 
   useEffect(() => {

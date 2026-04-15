@@ -13,6 +13,7 @@ import {
   type WorkspaceItem,
 } from "@/lib/api/backendClient";
 import { useLanguage } from "@/components/providers/LanguageProvider";
+import { useAuth } from "@/components/providers/AuthProvider";
 
 type CustomModel = {
   id: string;
@@ -41,6 +42,7 @@ const LOCAL_KEY = "custom-models";
 
 export default function ModelsPage() {
   const { t } = useLanguage();
+  const { user, loading: authLoading } = useAuth();
   const [query, setQuery]           = useState("");
   // [] on SSR — localStorage는 클라이언트 전용 (lazy init 대신 useEffect)
   const [customModels, setCustom]   = useState<CustomModel[]>([]);
@@ -49,12 +51,16 @@ export default function ModelsPage() {
   const [builtinModels, setBuiltinModels] = useState<ReturnType<typeof loadModels>>([]);
   const [saving, setSaving]         = useState(false);
 
-  // 마운트 후 localStorage 로드 → 백엔드 동기화
+  // 마운트 후 localStorage 로드 → 인증 후 백엔드 동기화
   useEffect(() => {
-    setBuiltinModels(loadModels());
-    setCustom(loadWs<CustomModel>(LOCAL_KEY, INITIAL_CUSTOM));
-    syncWorkspaceFromBackend("model", LOCAL_KEY, toLocal, INITIAL_CUSTOM).then(setCustom);
+    setBuiltinModels(loadModels()); // eslint-disable-line react-hooks/set-state-in-effect
+    setCustom(loadWs<CustomModel>(LOCAL_KEY, INITIAL_CUSTOM)); // eslint-disable-line react-hooks/set-state-in-effect
   }, []);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    syncWorkspaceFromBackend("model", LOCAL_KEY, toLocal, INITIAL_CUSTOM).then(setCustom);
+  }, [user, authLoading]);
 
   const filteredBase = builtinModels.filter(
     (m) => !query || m.name.toLowerCase().includes(query.toLowerCase()) || m.provider.toLowerCase().includes(query.toLowerCase())

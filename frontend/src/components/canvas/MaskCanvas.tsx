@@ -32,6 +32,20 @@ export const MaskCanvas = forwardRef<MaskCanvasHandle, Props>(function MaskCanva
   const isDrawing = useRef(false);
   const rectStart = useRef<{ x: number; y: number } | null>(null);
 
+  // Declared before useImperativeHandle so the React Compiler can verify references
+  function clear() {
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, width, height);
+    setMasked(false);
+    onMaskChange?.(false);
+  }
+
+  function setMask(val: boolean) {
+    setMasked(val);
+    onMaskChange?.(val);
+  }
+
   useImperativeHandle(ref, () => ({
     exportMaskDataUrl: () => {
       if (!canvasRef.current || !masked) return null;
@@ -52,20 +66,7 @@ export const MaskCanvas = forwardRef<MaskCanvasHandle, Props>(function MaskCanva
     },
   }));
 
-  useEffect(() => { clear(); }, [imageSrc]);
-
-  function clear() {
-    const ctx = canvasRef.current?.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, width, height);
-    setMasked(false);
-    onMaskChange?.(false);
-  }
-
-  function setMask(val: boolean) {
-    setMasked(val);
-    onMaskChange?.(val);
-  }
+  useEffect(() => { clear(); }, [imageSrc]); // eslint-disable-line react-hooks/set-state-in-effect
 
   function toLocal(e: React.MouseEvent<HTMLCanvasElement>) {
     const rect = e.currentTarget.getBoundingClientRect();

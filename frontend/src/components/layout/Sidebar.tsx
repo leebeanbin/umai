@@ -44,9 +44,9 @@ export default function Sidebar() {
   // SSR/CSR hydration 불일치 방지: 클라이언트에서만 localStorage 로드
   // hasMounted가 false인 동안 session 그룹을 숨겨 서버·클라이언트 초기 렌더를 일치시킴
   useEffect(() => {
-    setHasMounted(true);
-    setFolders(loadFolders());
-    setSessions(loadSessions());
+    setHasMounted(true); // eslint-disable-line react-hooks/set-state-in-effect
+    setFolders(loadFolders()); // eslint-disable-line react-hooks/set-state-in-effect
+    setSessions(loadSessions()); // eslint-disable-line react-hooks/set-state-in-effect
   }, []);
   const [showSettings, setShowSettings] = useState(false);
   const [contextMenu, setContextMenu]   = useState<ContextTarget | null>(null);
