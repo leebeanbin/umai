@@ -316,16 +316,23 @@ export function useChat(chatId?: string) {
 
         // 완료: localStorage 1회 저장 + DB 배치 저장
         onDone: () => {
-          push(
-            (prev) => prev.map((m) => m.id === asstId ? { ...m, streaming: false } : m),
-            true  // ← 완료 시 localStorage 1회 저장
-          );
+          // push의 updater 내부에서 최신 prev를 이용해 메시지를 가져옴.
+          // setMessages updater는 항상 최신 state를 받으므로
+          // push() 직후 msgRef.current 접근 시 streaming=false 반영 전 race 방지.
+          let _userMsg: Message | undefined;
+          let _asstMsg: Message | undefined;
+          push((prev) => {
+            const next = prev.map((m) =>
+              m.id === asstId ? { ...m, streaming: false } : m
+            );
+            _userMsg = next.find((m) => m.id === userId);
+            _asstMsg = next.find((m) => m.id === asstId);
+            return next;
+          }, true);
           setGenerating(false);
           abortRef.current = null;
-          if (chatId) {
-            const userMsg = msgRef.current.find((m) => m.id === userId);
-            const asstMsg = msgRef.current.find((m) => m.id === asstId);
-            if (userMsg && asstMsg) saveToDb(chatId, userMsg, asstMsg);
+          if (chatId && _userMsg && _asstMsg) {
+            saveToDb(chatId, _userMsg, _asstMsg);
           }
         },
 
