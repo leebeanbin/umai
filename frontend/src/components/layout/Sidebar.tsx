@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   MessageSquare, ImageIcon, Plus, Search, Settings,
   ChevronRight, Folder, FolderOpen, MoreHorizontal,
@@ -33,14 +33,18 @@ export default function Sidebar() {
   const { collapsed, toggle } = useSidebar();
   const { user, logout } = useAuth();
   const [search, setSearch]   = useState("");
+  const deferredSearch = useDeferredValue(search); // 타이핑 중 렌더 지연 — 100+ 세션 UI 랙 방지
   const [showSearch, setShowSearch] = useState(false);
   // SSR/클라이언트 hydration 불일치 방지:
   // lazy initializer는 클라이언트에서만 실행되므로 SSR-safe.
   const [folders, setFolders]   = useState<FolderType[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [hasMounted, setHasMounted] = useState(false);
 
   // SSR/CSR hydration 불일치 방지: 클라이언트에서만 localStorage 로드
+  // hasMounted가 false인 동안 session 그룹을 숨겨 서버·클라이언트 초기 렌더를 일치시킴
   useEffect(() => {
+    setHasMounted(true);
     setFolders(loadFolders());
     setSessions(loadSessions());
   }, []);
@@ -55,8 +59,8 @@ export default function Sidebar() {
 
   // ── Memoized computed values ──────────────────────────────────────────────
   const filteredSessions = useMemo(() =>
-    sessions.filter((s) => !search || s.title.toLowerCase().includes(search.toLowerCase())),
-    [sessions, search]
+    sessions.filter((s) => !deferredSearch || s.title.toLowerCase().includes(deferredSearch.toLowerCase())),
+    [sessions, deferredSearch]
   );
 
   const folderSessions = useCallback((folderId: string) =>
@@ -207,7 +211,10 @@ export default function Sidebar() {
           <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
           <div
             className="fixed z-50 w-52 bg-elevated border border-border rounded-xl shadow-xl overflow-hidden py-1"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
+            style={{
+              left: Math.min(contextMenu.x, (typeof window !== "undefined" ? window.innerWidth : 800) - 216),
+              top:  Math.min(contextMenu.y, (typeof window !== "undefined" ? window.innerHeight : 600) - 200),
+            }}
           >
             {contextMenu.type === "session" ? (
               <>
@@ -494,7 +501,7 @@ export default function Sidebar() {
 
             <div className="mx-1 my-2 border-t border-border-subtle" />
 
-            {today.length > 0 && (
+            {hasMounted && today.length > 0 && (
               <SessionGroup
                 label={t("sidebar.today")} sessions={today}
                 sessionHref={sessionHref}
@@ -505,7 +512,7 @@ export default function Sidebar() {
                 pathname={pathname}
               />
             )}
-            {yesterday.length > 0 && (
+            {hasMounted && yesterday.length > 0 && (
               <SessionGroup
                 label={t("sidebar.yesterday")} sessions={yesterday}
                 sessionHref={sessionHref}
@@ -516,7 +523,7 @@ export default function Sidebar() {
                 pathname={pathname}
               />
             )}
-            {older.length > 0 && (
+            {hasMounted && older.length > 0 && (
               <SessionGroup
                 label={t("sidebar.older")} sessions={older}
                 sessionHref={sessionHref}
@@ -528,7 +535,7 @@ export default function Sidebar() {
               />
             )}
 
-            {filteredSessions.length === 0 && (
+            {hasMounted && filteredSessions.length === 0 && (
               <p className="text-xs text-text-muted text-center py-6">
                 {search ? `"${search}" — ${t("sidebar.noSessions")}` : t("sidebar.noSessions")}
               </p>

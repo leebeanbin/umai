@@ -194,6 +194,38 @@ def process_and_embed(
 
     try:
         raw = base64.b64decode(file_bytes_b64)
+
+        # ── Bloom filter: 동일 파일 재임베딩 방지 ───────────────────────────
+        # 파일 원본 바이트의 SHA-256을 문서 지문으로 사용.
+        # Bloom filter에 이미 있으면 → 이전에 임베딩됐을 가능성이 높음.
+        # 오탐(false positive) 시에는 중복 처리될 수 있으나,
+        # 미탐(false negative)은 없음 — 안전한 방향의 오류.
+        import hashlib as _hlib
+        from app.core.redis import bloom_check, bloom_add as _bloom_add
+        _doc_fingerprint = _hlib.sha256(raw).hexdigest()
+        # Bloom filter 조회는 동기 컨텍스트에서 실행 불가 → asyncio 없이 직접 Redis 사용
+        import asyncio as _asyncio
+        try:
+            _loop = _asyncio.new_event_loop()
+            _already_embedded = _loop.run_until_complete(bloom_check(_doc_fingerprint))
+            _loop.close()
+        except Exception:
+            _already_embedded = False  # Redis 오류 시 항상 재처리
+
+        if _already_embedded:
+            logger.info(
+                "process_and_embed: Bloom filter hit — skipping re-embed for id=%s (fingerprint=%s…)",
+                knowledge_id, _doc_fingerprint[:12],
+            )
+            publish_task_done(self.request.id, "process_and_embed")
+            return {
+                "knowledge_id": knowledge_id,
+                "text_length": 0,
+                "chunk_count": 0,
+                "embedded": False,
+                "status": "skipped_duplicate",
+            }
+
         text = _extract_text(raw, content_type, filename)
         chunks = _chunk_text(text, chunk_size, overlap)
 
@@ -222,6 +254,14 @@ def process_and_embed(
                     "provider": embedding_provider,
                 }
                 db.commit()
+
+        # 임베딩 완료 → Bloom filter에 문서 지문 등록
+        try:
+            _loop2 = _asyncio.new_event_loop()
+            _loop2.run_until_complete(_bloom_add(_doc_fingerprint))
+            _loop2.close()
+        except Exception:
+            pass  # Bloom filter 등록 실패는 치명적이지 않음
 
         publish_task_done(self.request.id, "process_and_embed")
         return {
