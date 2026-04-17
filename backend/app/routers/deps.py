@@ -1,4 +1,34 @@
-"""FastAPI 공통 의존성"""
+"""
+FastAPI 공통 의존성 — 인증 미들웨어 및 권한 검사.
+
+## 인증 파이프라인 (get_current_user)
+
+요청당 최대 4단계를 거쳐 현재 유저를 결정한다:
+
+```
+Step 0: JWT 형식 검사 (3-part, header.payload.sig)   ~1µs
+Step 1: JWT 서명 검증 (HMAC-SHA256)                  ~100µs
+Step 2: Redis 토큰 유효성 확인 (만료/로그아웃 여부)   ~1ms
+Step 3: Redis 유저 캐시 조회 (DB N+1 방지)            ~1ms   ← Step 2와 병렬
+Step 4: PostgreSQL 조회 (캐시 miss 시만)              ~5ms
+```
+
+Step 2+3은 `asyncio.gather`로 병렬 실행 → 왕복 2번 대신 1번.
+캐시 히트율이 95%+ 이면 대부분 요청이 DB 없이 처리된다.
+
+## 토큰 폐기 방식
+
+JWT는 서명 검증만으로는 발급 후 무효화가 불가능하다 (상태가 없으므로).
+모든 액세스 토큰을 Redis에 등록하고 인증 미들웨어에서 Redis를 확인한다:
+  - 로그아웃 시 `access_del(token)` → 즉시 폐기, 15분 대기 불필요
+  - refresh 시 새 토큰 등록, 기존은 15분 후 자동 만료
+
+## DEBUG 전용: 'Bearer dev' 토큰
+
+DEBUG=True 환경에서 `Authorization: Bearer dev` 헤더를 보내면 첫 번째
+admin 유저로 자동 인증된다. 로컬 개발 및 통합 테스트에서 로그인 절차를
+생략할 수 있게 해 준다. 프로덕션(DEBUG=False)에서는 이 경로가 비활성화된다.
+"""
 import asyncio
 import json
 import uuid

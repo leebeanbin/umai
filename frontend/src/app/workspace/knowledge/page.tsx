@@ -47,7 +47,7 @@ export default function KnowledgePage() {
       .then(setFiles)
       .catch(() => setError(t("workspace.loadError")))
       .finally(() => setLoading(false));
-  }, []);
+  }, [t]);
 
   const filtered = files.filter((f) =>
     !query || f.name.toLowerCase().includes(query.toLowerCase())

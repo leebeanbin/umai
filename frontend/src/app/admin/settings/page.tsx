@@ -425,7 +425,6 @@ export default function AdminSettingsPage() {
       .catch(() => { /* 로드 실패 시 초기값 유지 */ })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── 현재 탭 데이터 수집 ──────────────────────────────────────────────────────

@@ -27,6 +27,8 @@ from app.core.constants import (
     CHAT_MSG_DEFAULT_LIMIT, CHAT_MSG_MAX_LIMIT,
     MSG_SAVE_MAX_RETRIES,
     RATE_CHAT_CREATE, RATE_CHAT_MESSAGE,
+    RATE_CHAT_UPDATE, RATE_CHAT_DELETE, RATE_CHAT_TITLE, RATE_CHAT_MEMBER,
+    RATE_CHAT_MSG_BATCH, RATE_CHAT_MSG_RATING,
 )
 from app.core.database import get_db, AsyncSessionLocal
 from app.models.chat import Message
@@ -91,7 +93,7 @@ def _member_out(member, user) -> ChatMemberOut:
 
 @router.get("", response_model=list[ChatOut])
 async def list_chats(
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=1000),
     limit: int = Query(CHAT_LIST_DEFAULT_LIMIT, ge=1, le=CHAT_LIST_MAX_LIMIT),
     archived: bool = False,
     svc: ChatService = Depends(get_chat_service),
@@ -142,7 +144,9 @@ async def get_chat(
 # ── 수정 (owner only) ─────────────────────────────────────────────────────────
 
 @router.patch("/{chat_id}", response_model=ChatOut)
+@limiter.limit(RATE_CHAT_UPDATE)
 async def update_chat(
+    request: Request,
     chat_id: uuid.UUID,
     body: UpdateChatRequest,
     svc: ChatService = Depends(get_chat_service),
@@ -165,7 +169,9 @@ async def update_chat(
 # ── 삭제 (owner only) ─────────────────────────────────────────────────────────
 
 @router.delete("/{chat_id}", status_code=204)
+@limiter.limit(RATE_CHAT_DELETE)
 async def delete_chat(
+    request: Request,
     chat_id: uuid.UUID,
     svc: ChatService = Depends(get_chat_service),
     user: User = Depends(get_current_user),
@@ -221,7 +227,9 @@ async def _save_messages_bg(chat_id: uuid.UUID, rows: list[dict]) -> None:
 
 
 @router.post("/{chat_id}/messages/batch", status_code=202)
+@limiter.limit(RATE_CHAT_MSG_BATCH)
 async def add_messages_batch(
+    request: Request,
     chat_id: uuid.UUID,
     body: MessageBatchCreate,
     background_tasks: BackgroundTasks,
@@ -255,7 +263,9 @@ async def add_messages_batch(
 # ── 메시지 평가 (viewer 이상 — 본인 채팅) ────────────────────────────────────
 
 @router.patch("/{chat_id}/messages/{message_id}/rating", response_model=RateMessageResponse)
+@limiter.limit(RATE_CHAT_MSG_RATING)
 async def rate_message(
+    request: Request,
     chat_id: uuid.UUID,
     message_id: uuid.UUID,
     body: RateMessageRequest,
@@ -304,7 +314,9 @@ async def list_members(
 # ── 멤버 초대 (owner only) ────────────────────────────────────────────────────
 
 @router.post("/{chat_id}/members", response_model=ChatMemberOut, status_code=201)
+@limiter.limit(RATE_CHAT_MEMBER)
 async def invite_member(
+    request: Request,
     chat_id: uuid.UUID,
     body: InviteMemberRequest,
     svc: ChatService = Depends(get_chat_service),
@@ -319,7 +331,9 @@ async def invite_member(
 # ── 멤버 역할 변경 (owner only) ───────────────────────────────────────────────
 
 @router.patch("/{chat_id}/members/{target_user_id}", response_model=ChatMemberOut)
+@limiter.limit(RATE_CHAT_MEMBER)
 async def update_member_role(
+    request: Request,
     chat_id: uuid.UUID,
     target_user_id: uuid.UUID,
     body: UpdateMemberRoleRequest,
@@ -335,7 +349,9 @@ async def update_member_role(
 # ── 멤버 추방 (owner only) ────────────────────────────────────────────────────
 
 @router.delete("/{chat_id}/members/{target_user_id}", status_code=204)
+@limiter.limit(RATE_CHAT_MEMBER)
 async def remove_member(
+    request: Request,
     chat_id: uuid.UUID,
     target_user_id: uuid.UUID,
     svc: ChatService = Depends(get_chat_service),
@@ -359,7 +375,9 @@ async def remove_member(
 #   4. 그 외 Ollama HTTP 오류   → 503 TITLE_GENERATION_FAILED
 
 @router.post("/{chat_id}/title", response_model=GenerateTitleResponse)
+@limiter.limit(RATE_CHAT_TITLE)
 async def generate_chat_title(
+    request: Request,
     chat_id: uuid.UUID,
     body: GenerateTitleRequest,
     chat_svc: ChatService    = Depends(get_chat_service),

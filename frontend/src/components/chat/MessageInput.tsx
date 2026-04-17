@@ -334,7 +334,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
               <div className="mx-2 mt-2.5 pb-1.5 flex items-center flex-wrap gap-2">
                 {images.map((img) => (
                   <div key={img.id} className="relative group/file">
-                    <img src={img.dataUrl} alt={img.name} className="size-14 rounded-xl object-cover border border-border" />
+                    <img src={img.dataUrl} alt={img.name} className="size-14 rounded-xl object-cover border border-border" /> {/* eslint-disable-line @next/next/no-img-element */}
                     <button
                       type="button"
                       onClick={() => setImages((prev) => prev.filter((i) => i.id !== img.id))}

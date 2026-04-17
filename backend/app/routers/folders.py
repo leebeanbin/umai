@@ -9,11 +9,16 @@
 - DELETE /folders/{id}         폴더 삭제
 """
 import uuid
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import RATE_FOLDER_WRITE
 from app.core.database import get_db
 from app.models.user import User
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
 from app.routers.deps import get_current_user
 from app.services.folder_service import FolderService
 from app.schemas.chat import ChatOut, CreateFolderRequest, FolderDetailOut, FolderOut, UpdateFolderRequest
@@ -38,7 +43,9 @@ async def list_folders(
 # ── 생성 ─────────────────────────────────────────────────────────────────────
 
 @router.post("", response_model=FolderOut, status_code=201)
+@limiter.limit(RATE_FOLDER_WRITE)
 async def create_folder(
+    request: Request,
     body: CreateFolderRequest,
     svc: FolderService = Depends(get_folder_service),
     user: User = Depends(get_current_user),
@@ -69,7 +76,9 @@ async def get_folder(
 # ── 수정 ─────────────────────────────────────────────────────────────────────
 
 @router.patch("/{folder_id}", response_model=FolderOut)
+@limiter.limit(RATE_FOLDER_WRITE)
 async def update_folder(
+    request: Request,
     folder_id: uuid.UUID,
     body: UpdateFolderRequest,
     svc: FolderService = Depends(get_folder_service),
@@ -88,7 +97,9 @@ async def update_folder(
 # ── 삭제 ─────────────────────────────────────────────────────────────────────
 
 @router.delete("/{folder_id}", status_code=204)
+@limiter.limit(RATE_FOLDER_WRITE)
 async def delete_folder(
+    request: Request,
     folder_id: uuid.UUID,
     svc: FolderService = Depends(get_folder_service),
     user: User = Depends(get_current_user),

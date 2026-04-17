@@ -138,7 +138,12 @@ export default function Sidebar() {
     setSessions((prev) => prev.filter((s) => s.id !== id));
     localStorage.removeItem(`umai_msgs_${id}`);
     if (isAuthenticated()) {
-      apiDeleteChat(id).catch(() => {});
+      apiDeleteChat(id).catch((e) => {
+        console.error("Failed to delete chat:", e);
+        // Reload from server to restore accurate state
+        const stored = localStorage.getItem("umai_sessions");
+        if (stored) setSessions(JSON.parse(stored));
+      });
     }
   }, []);
 
@@ -156,7 +161,9 @@ export default function Sidebar() {
     setSessions((prev) => prev.map((s) => s.folderId === id ? { ...s, folderId: null } : s));
     setFolders((prev) => prev.filter((f) => f.id !== id));
     if (isAuthenticated()) {
-      apiDeleteFolder(id).catch(() => {});
+      apiDeleteFolder(id).catch((e) => {
+        console.error("Failed to delete folder:", e);
+      });
     }
   }, []);
 
@@ -382,6 +389,7 @@ export default function Sidebar() {
                 const pastel = user ? getPastelColor(user.id) : { bg: "hsl(220,55%,82%)", text: "hsl(220,45%,32%)" };
                 const initials = user ? getInitials(user.name) : "U";
                 return user?.avatar_url
+                  // eslint-disable-next-line @next/next/no-img-element
                   ? <img src={user.avatar_url} alt={user.name} className="size-6 rounded-full object-cover" />
                   : <div className="size-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: pastel.bg, color: pastel.text }}>{initials}</div>;
               })()}
@@ -596,6 +604,7 @@ export default function Sidebar() {
               className="flex items-center gap-2.5 w-full px-2 py-1.5 rounded-xl text-sm text-text-secondary hover:bg-hover transition-colors group"
             >
               {user?.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img src={user.avatar_url} alt={user.name} className="size-6 rounded-full object-cover shrink-0" />
               ) : (() => {
                 const pastel = user ? getPastelColor(user.id) : { bg: "hsl(220,55%,82%)", text: "hsl(220,45%,32%)" };

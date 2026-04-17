@@ -11,7 +11,7 @@ import { useChat, saveToDb, type Message } from "@/lib/hooks/useChat";
 import { useChatSocket, useTaskSocket } from "@/lib/hooks/useWebSocket";
 import { createSession, updateSessionTitle } from "@/lib/store";
 import { loadSettings } from "@/lib/appStore";
-import { apiGenerateChatTitle, apiGetTask, getStoredToken } from "@/lib/api/backendClient";
+import { apiFetch, apiGenerateChatTitle, apiGetTask } from "@/lib/api/backendClient";
 import { apiCreateDataset } from "@/lib/api/fineTuneClient";
 
 // ── Intent 분석 — 도구가 필요한 질문인지 판단 ────────────────────────────────
@@ -39,18 +39,10 @@ export default function ChatSession() {
   // DB에서 채팅 히스토리 로드 (페이지 마운트 시 1회)
   useEffect(() => {
     if (!id) return;
-    const token = getStoredToken();
-    if (!token) return;
-    fetch(`/api/v1/chats/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => (r.ok ? r.json() : null))
+    apiFetch<{ messages: { id: string; role: "user" | "assistant"; content: string; images?: string[] | null; created_at: string }[] }>(`/api/v1/chats/${id}`)
       .then((data) => {
         if (!data?.messages?.length) return;
-        const dbMsgs: Message[] = data.messages.map((m: {
-          id: string; role: "user" | "assistant"; content: string;
-          images?: string[] | null; created_at: string;
-        }) => ({
+        const dbMsgs: Message[] = data.messages.map((m) => ({
           id: m.id,
           role: m.role,
           content: m.content,

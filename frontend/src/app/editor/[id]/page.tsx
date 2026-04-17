@@ -17,7 +17,7 @@ import {
 import type { BackgroundPreset } from "@/components/editor/AssistPanel";
 import { pollTask } from "@/lib/utils/pollTask";
 import {
-  EDITOR_CANVAS_SIZE, EDITOR_MIN_INSTRUCTION_LEN,
+  EDITOR_CANVAS_SIZE,
   POLL_MAX_POLLS_SLOW, POLL_MAX_POLLS_FAST,
 } from "@/lib/constants";
 
@@ -299,30 +299,6 @@ export default function EditorSession() {
       reader.onerror = rej;
       reader.readAsDataURL(blob);
     });
-  }
-
-  /** 투명 픽셀을 흰색(편집 영역), 불투명 픽셀을 투명(유지 영역)으로 변환 — DALL-E 형식 마스크 */
-  async function generateTransparencyMask(dataUrl: string, size: number): Promise<string> {
-    const img = await loadImage(dataUrl);
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = size;
-    const ctx = canvas.getContext("2d")!;
-    ctx.drawImage(img, 0, 0, size, size);
-    const { data: px } = ctx.getImageData(0, 0, size, size);
-    const id = ctx.createImageData(size, size);
-    for (let i = 0; i < px.length; i += 4) {
-      if (px[i + 3] < 10) {
-        // 투명 픽셀 → 흰색 불투명 (DALL-E: 편집 영역)
-        id.data[i] = id.data[i + 1] = id.data[i + 2] = 255;
-        id.data[i + 3] = 255;
-      } else {
-        // 불투명 픽셀 → 투명 (DALL-E: 유지 영역)
-        id.data[i] = id.data[i + 1] = id.data[i + 2] = 0;
-        id.data[i + 3] = 0;
-      }
-    }
-    ctx.putImageData(id, 0, 0);
-    return canvas.toDataURL("image/png");
   }
 
   const displayImage = variants.find((v) => v.id === selectedVariant)?.url ?? sourceImage?.dataUrl ?? null;

@@ -17,7 +17,6 @@ import { verifyToken } from "@/lib/api/verifyAuth";
 
 const OLLAMA_URL     = process.env.OLLAMA_URL      ?? "http://localhost:11434";
 const OPENAI_BASE    = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
-const INTERNAL_API   = process.env.INTERNAL_API_URL ?? "http://localhost:8000";
 
 // ── Key resolution ────────────────────────────────────────────────────────────
 

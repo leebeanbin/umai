@@ -1,3 +1,40 @@
+"""
+Redis 유틸리티 레이어 — Umai 플랫폼의 모든 Redis 작업 집중 관리.
+
+## 사용 목적별 구성
+
+| 구분              | 설명                                                                 |
+|-------------------|----------------------------------------------------------------------|
+| 인증 캐시          | access_set / access_get / access_del — JWT 블랙리스트 없이 즉시 폐기 |
+| 세션 관리          | session_set / session_get / session_del — refresh token rotation     |
+| 유저 캐시          | user_cache_* — DB N+1 방지 (15분 TTL)                               |
+| OAuth             | oauth_code_pop / oauth_origin_pop — getdel 원자적 일회성 소비        |
+| WebSocket RateLimit | check_ws_rate_limit — INCR+EXPIRE Lua 스크립트                    |
+| HTTP RateLimit    | check_http_rate_limit — Sorted Set 슬라이딩 윈도우 Lua 스크립트      |
+| 쿼리 임베딩 캐시   | embed_query_cache_* — 동일 쿼리 재임베딩 방지 (24h TTL)              |
+| DAU HyperLogLog   | dau_add / dau_count — ±0.81% 오차, 12 KB 고정 메모리                |
+| Bloom filter      | bloom_add / bloom_check — 중복 임베딩 방지, 8 MB 고정 비트맵         |
+| Pub/Sub           | publish_event / get_pubsub_client — 실시간 스트리밍 채널             |
+
+## 설계 원칙
+
+1. **단일 연결 풀**: `get_redis()` 는 프로세스당 하나의 Redis 연결을 재사용.
+   pub/sub 용은 별도 `get_pubsub_client()` 풀로 분리 (pub/sub 연결은 block
+   하므로 일반 명령 풀과 혼용 금지).
+
+2. **원자성 보장**: 복합 연산(INCR+EXPIRE, ZADD+EXPIRE, GETDEL)은 모두 Lua
+   스크립트 또는 단일 명령으로 처리. 두 번의 왕복으로 쪼개면 장애 시 상태
+   불일치가 발생한다.
+
+3. **공간 효율**: O(n) 자료구조(SET, LIST)를 무한 성장 가능한 곳에 쓰지 않음.
+   - DAU: HLL (12 KB 고정) vs SET (유저 수 × 20 B)
+   - Bloom: 비트맵 (8 MB 고정) vs SET (문서 수 × 100+ B)
+   - Rate limit: Sorted Set 슬라이딩 윈도우는 window 밖 엔트리를 자동 삭제하여
+     한도 초과 시 셋이 무한 증가하지 않도록 Lua 스크립트로 보호.
+
+4. **환경 격리**: dev/test/prod 모두 같은 코드베이스. REDIS_URL 환경 변수로
+   db 번호만 바꾸면 됨 (default db0, Celery broker db1, result backend db2).
+"""
 import json
 import time
 import uuid as _uuid

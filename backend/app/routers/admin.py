@@ -18,13 +18,16 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from app.core.config import settings
+from app.core.constants import RATE_ADMIN_USER_WRITE, RATE_ADMIN_SETTINGS_WRITE, RATE_ADMIN_OLLAMA_WRITE
 from app.core.database import get_db
 from app.core.errors import ErrCode
 from app.models.user import User
@@ -34,6 +37,7 @@ from app.schemas.chat import RatingEntryOut
 from app.routers.deps import require_admin, get_current_user
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 # ── 스키마 ─────────────────────────────────────────────────────────────────────
@@ -57,6 +61,7 @@ class AdminUserOut(BaseModel):
 
 
 class UpdateUserRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     role: Optional[str] = None       # "admin" | "user" | "pending"
     is_active: Optional[bool] = None
     name: Optional[str] = Field(None, max_length=100)
@@ -167,7 +172,9 @@ async def get_user(
 # ── 유저 수정 ──────────────────────────────────────────────────────────────────
 
 @router.patch("/users/{user_id}", response_model=AdminUserOut)
+@limiter.limit(RATE_ADMIN_USER_WRITE)
 async def update_user(
+    request: Request,
     user_id: uuid.UUID,
     body: UpdateUserRequest,
     admin: User = Depends(require_admin),
@@ -196,8 +203,8 @@ async def update_user(
     if body.name is not None:
         user.name = body.name
 
-    await db.flush()
-    # M12: 캐시 무효화 — 수정된 역할/상태가 즉시 반영되도록
+    await db.commit()
+    # 캐시 무효화 — 수정된 역할/상태가 즉시 반영되도록
     from app.core.redis import user_cache_del
     await user_cache_del(str(user.id))
     return user
@@ -206,7 +213,9 @@ async def update_user(
 # ── 유저 삭제 ──────────────────────────────────────────────────────────────────
 
 @router.delete("/users/{user_id}", status_code=204)
+@limiter.limit(RATE_ADMIN_USER_WRITE)
 async def delete_user(
+    request: Request,
     user_id: uuid.UUID,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
@@ -319,7 +328,9 @@ class OllamaPullRequest(BaseModel):
 
 
 @router.post("/ollama/pull")
+@limiter.limit(RATE_ADMIN_OLLAMA_WRITE)
 async def pull_ollama_model(
+    request: Request,
     body: OllamaPullRequest,
     _admin: User = Depends(require_admin),
 ):
@@ -351,7 +362,9 @@ async def pull_ollama_model(
 
 
 @router.delete("/ollama/models/{model_name:path}", status_code=204)
+@limiter.limit(RATE_ADMIN_OLLAMA_WRITE)
 async def delete_ollama_model(
+    request: Request,
     model_name: str,
     _admin: User = Depends(require_admin),
 ):
@@ -427,21 +440,16 @@ async def list_enabled_models(
 
     result = []
 
-    # OpenAI
-    for mid in models_cfg.get("openai_enabled", []):
-        result.append({"id": mid, "name": mid, "provider": "OpenAI"})
-
-    # Anthropic
-    for mid in models_cfg.get("anthropic_enabled", []):
-        result.append({"id": mid, "name": mid, "provider": "Anthropic"})
-
-    # Google
-    for mid in models_cfg.get("google_enabled", []):
-        result.append({"id": mid, "name": mid, "provider": "Google"})
-
-    # xAI (Grok)
-    for mid in models_cfg.get("xai_enabled", []):
-        result.append({"id": mid, "name": mid, "provider": "xAI"})
+    # 정적 provider (설정 목록에서 직접 읽음)
+    _STATIC_PROVIDERS: dict[str, str] = {
+        "openai_enabled":    "OpenAI",
+        "anthropic_enabled": "Anthropic",
+        "google_enabled":    "Google",
+        "xai_enabled":       "xAI",
+    }
+    for cfg_key, provider_name in _STATIC_PROVIDERS.items():
+        for mid in models_cfg.get(cfg_key, []):
+            result.append({"id": mid, "name": mid, "provider": provider_name})
 
     # Ollama — live query
     ollama_url = connections.get("ollama_url", "") or settings.OLLAMA_URL
@@ -457,8 +465,8 @@ async def list_enabled_models(
                 # Only include if in ollama_enabled (or if list is empty = all enabled)
                 if not enabled_ollama or name in enabled_ollama:
                     result.append({"id": name, "name": name, "provider": "Ollama"})
-        except Exception:
-            pass  # Ollama unreachable — skip silently
+        except Exception as exc:
+            logger.warning("list_enabled_models: Ollama unreachable at %s: %s", ollama_url, exc)
 
     return result
 
@@ -600,7 +608,9 @@ class SettingsPatch(BaseModel):
 
 
 @router.patch("/settings")
+@limiter.limit(RATE_ADMIN_SETTINGS_WRITE)
 async def patch_settings(
+    request: Request,
     body: SettingsPatch,
     _admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
@@ -612,7 +622,7 @@ async def patch_settings(
     merged = _deep_merge(current, patch_dict)
     row.data = merged
     row.updated_at = datetime.now(timezone.utc)
-    await db.flush()
+    await db.commit()
     return merged
 
 

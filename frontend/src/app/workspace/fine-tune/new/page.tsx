@@ -117,7 +117,6 @@ export default function NewFineTunePage() {
   // 각 스텝 완료 조건
   const step0ok = dsMode === "existing" ? !!selectedDs : false;
   const step1ok = !!selectedModel;
-  const step2ok = true; // 기본값 있음
 
   const STEPS = ["데이터셋", "모델 선택", "학습 설정", "확인 & 시작"];
 

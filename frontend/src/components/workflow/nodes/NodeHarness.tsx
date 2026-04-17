@@ -21,7 +21,7 @@ interface NodeHarnessProps {
  * 키보드 단축키 (ReactFlow 기본):
  *  - Backspace / Delete : 선택된 노드·엣지 삭제
  */
-export function NodeHarness({ id, type, selected, children }: NodeHarnessProps) {
+export function NodeHarness({ id, selected, children }: NodeHarnessProps) {
   const { deleteElements, getNode, addNodes } = useReactFlow();
 
   const handleDelete = useCallback(() => {

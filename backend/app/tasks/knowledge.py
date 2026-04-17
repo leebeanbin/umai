@@ -209,8 +209,14 @@ def process_and_embed(
             _loop = _asyncio.new_event_loop()
             _already_embedded = _loop.run_until_complete(bloom_check(_doc_fingerprint))
             _loop.close()
-        except Exception:
-            _already_embedded = False  # Redis 오류 시 항상 재처리
+        except Exception as exc:
+            # Redis 장애 시 graceful degradation — 재처리 허용
+            # WARNING 레벨로 기록하여 지속적 Redis 장애를 운영자가 탐지할 수 있게 함
+            logger.warning(
+                "process_and_embed: Bloom filter check failed for id=%s (will re-embed): %s",
+                knowledge_id, exc,
+            )
+            _already_embedded = False
 
         if _already_embedded:
             logger.info(
@@ -260,8 +266,13 @@ def process_and_embed(
             _loop2 = _asyncio.new_event_loop()
             _loop2.run_until_complete(_bloom_add(_doc_fingerprint))
             _loop2.close()
-        except Exception:
-            pass  # Bloom filter 등록 실패는 치명적이지 않음
+        except Exception as exc:
+            # 등록 실패 시 다음 업로드에서 중복 임베딩 발생 가능 (과금 중복)
+            # 치명적이지 않으나 반복 시 비용 문제가 됨 → WARNING 기록
+            logger.warning(
+                "process_and_embed: Bloom filter add failed for id=%s (fingerprint=%s…): %s",
+                knowledge_id, _doc_fingerprint[:12], exc,
+            )
 
         publish_task_done(self.request.id, "process_and_embed")
         return {

@@ -93,17 +93,28 @@ TOOL_DEFINITIONS = [
 
 # ── 도구 실행 ─────────────────────────────────────────────────────────────────
 
+def _run_web_search(args: dict) -> str:
+    return _web_search(args.get("query", ""), args.get("max_results", 5))
+
+def _run_execute_python(args: dict) -> str:
+    return json.dumps(_execute_python(args.get("code", "")))
+
+def _run_knowledge_search(args: dict) -> str:
+    return _knowledge_search(args.get("query", ""), args.get("top_k", 5), args.get("user_id"))
+
+_TOOL_REGISTRY: dict[str, Any] = {
+    "web_search":       _run_web_search,
+    "execute_python":   _run_execute_python,
+    "knowledge_search": _run_knowledge_search,
+}
+
+
 def _run_tool(name: str, args: dict) -> str:
     """도구 이름과 인자를 받아 결과 문자열 반환"""
-    if name == "web_search":
-        return _web_search(args.get("query", ""), args.get("max_results", 5))
-    elif name == "execute_python":
-        result = _execute_python(args.get("code", ""))
-        return json.dumps(result)
-    elif name == "knowledge_search":
-        return _knowledge_search(args.get("query", ""), args.get("top_k", 5), args.get("user_id"))
-    else:
+    fn = _TOOL_REGISTRY.get(name)
+    if fn is None:
         return f"Unknown tool: {name}"
+    return fn(args)
 
 
 def _knowledge_search(query: str, top_k: int = 5, user_id: str | None = None) -> str:
@@ -149,8 +160,8 @@ def _knowledge_search(query: str, top_k: int = 5, user_id: str | None = None) ->
                     emb_data = raw_emb or {}
                 chunks  = emb_data.get("chunks", [])
                 vectors = emb_data.get("vectors", [])
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("knowledge_search: failed to parse embeddings for item %s: %s", item.name, exc)
 
             if not chunks and item.content:
                 chunks = [item.content[i:i+500] for i in range(0, len(item.content), 400)]
@@ -350,6 +361,10 @@ def _execute_python(code: str, timeout: int = 10) -> dict:
 
 # ── LLM 호출 (provider별 통합) ────────────────────────────────────────────────
 
+# provider → caller 매핑 (함수 정의 후 모듈 수준에서 초기화)
+_LLM_CALLERS: dict[str, Any] = {}  # populated after caller functions are defined
+
+
 def _call_llm(
     messages: list[dict],
     model: str,
@@ -361,18 +376,10 @@ def _call_llm(
     단일 LLM 호출. tool_calls 포함 응답 반환.
     Returns: {"content": str | None, "tool_calls": list | None, "finish_reason": str}
     """
-    if provider == "ollama":
-        return _call_ollama(messages, model, tools, temperature)
-    elif provider == "openai":
-        return _call_openai(messages, model, tools, temperature)
-    elif provider == "anthropic":
-        return _call_anthropic(messages, model, tools, temperature)
-    elif provider == "google":
-        return _call_google(messages, model, tools, temperature)
-    elif provider == "xai":
-        return _call_xai(messages, model, tools, temperature)
-    else:
+    caller = _LLM_CALLERS.get(provider)
+    if caller is None:
         raise ValueError(f"Unknown provider: {provider}")
+    return caller(messages, model, tools, temperature)
 
 
 def _call_openai(messages: list, model: str, tools: list | None, temperature: float) -> dict:
@@ -650,6 +657,16 @@ def _call_xai(messages: list, model: str, tools: list | None, temperature: float
         "tool_calls": msg.get("tool_calls"),
         "finish_reason": choice.get("finish_reason"),
     }
+
+
+# provider → caller 매핑 초기화 (모든 _call_* 함수 정의 후)
+_LLM_CALLERS.update({
+    "openai":    _call_openai,
+    "anthropic": _call_anthropic,
+    "google":    _call_google,
+    "xai":       _call_xai,
+    "ollama":    _call_ollama,
+})
 
 
 # ── 메인 태스크 ───────────────────────────────────────────────────────────────

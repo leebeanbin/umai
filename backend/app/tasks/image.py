@@ -11,7 +11,7 @@ import io
 import ipaddress
 import socket
 import time
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -347,6 +347,63 @@ def remove_background(
         raise self.retry(exc=exc, countdown=5)
 
 
+def _bg_solid(*, size: int, bg_color: str, **_: Any) -> "Image.Image":
+    c = bg_color.lstrip("#")
+    r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    return Image.new("RGBA", (size, size), (r, g, b, 255))
+
+
+def _bg_gradient(*, size: int, bg_color: str, bg_color2: str, **_: Any) -> "Image.Image":
+    import numpy as _np
+    c1 = bg_color.lstrip("#")
+    c2 = bg_color2.lstrip("#")
+    r1, g1, b1 = int(c1[0:2], 16), int(c1[2:4], 16), int(c1[4:6], 16)
+    r2, g2, b2 = int(c2[0:2], 16), int(c2[2:4], 16), int(c2[4:6], 16)
+    arr = _np.zeros((size, size, 4), dtype=_np.uint8)
+    for y in range(size):
+        t = y / (size - 1)
+        arr[y, :] = [int(r1+(r2-r1)*t), int(g1+(g2-g1)*t), int(b1+(b2-b1)*t), 255]
+    return Image.fromarray(arr, "RGBA")
+
+
+def _bg_ai(*, size: int, background_prompt: str, task_id: str, **_: Any) -> "Image.Image":
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY not configured")
+    _r = _get_task_redis()
+    _cache_key = key_task_dalle_cache(task_id)
+    bg_b64 = _r.get(_cache_key)
+    if bg_b64 is None:
+        enhanced = (f"{background_prompt}, background only, no people, no subjects, "
+                    "wide scene, professional photography")
+        with httpx.Client(timeout=120) as client:
+            resp = _openai_post(
+                client, "https://api.openai.com/v1/images/generations",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                json={"model": OPENAI_DALLE_3, "prompt": enhanced, "n": 1,
+                      "size": "1024x1024", "response_format": "b64_json"},
+            )
+        bg_b64 = resp.json()["data"][0]["b64_json"]
+        _r.setex(_cache_key, 7200, bg_b64)
+    bg = Image.open(io.BytesIO(base64.b64decode(bg_b64))).convert("RGBA")
+    if bg.size != (size, size):
+        bg = bg.resize((size, size), Image.LANCZOS)
+    return bg
+
+
+_BG_BUILDERS: dict[str, Any] = {
+    "solid":    _bg_solid,
+    "gradient": _bg_gradient,
+    "ai":       _bg_ai,
+}
+
+
+def _build_background(bg_type: str, **kwargs: Any) -> "Image.Image":
+    builder = _BG_BUILDERS.get(bg_type)
+    if builder is None:
+        raise ValueError(f"Unknown bg_type: {bg_type!r}")
+    return builder(**kwargs)
+
+
 @shared_task(bind=True, name="app.tasks.image.compose_studio", max_retries=1)
 def compose_studio(
     self,
@@ -380,57 +437,14 @@ def compose_studio(
         oy = (size - fg.height) // 2
         canvas_fg.paste(fg, (ox, oy), fg)
 
-        if bg_type == "solid":
-            # hex → RGBA
-            c = bg_color.lstrip("#")
-            r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
-            bg = Image.new("RGBA", (size, size), (r, g, b, 255))
-
-        elif bg_type == "gradient":
-            c1 = bg_color.lstrip("#");  r1,g1,b1 = int(c1[0:2],16),int(c1[2:4],16),int(c1[4:6],16)
-            c2 = bg_color2.lstrip("#"); r2,g2,b2 = int(c2[0:2],16),int(c2[2:4],16),int(c2[4:6],16)
-            import numpy as _np
-            arr = _np.zeros((size, size, 4), dtype=_np.uint8)
-            for y in range(size):
-                t = y / (size - 1)
-                arr[y, :] = [
-                    int(r1 + (r2 - r1) * t),
-                    int(g1 + (g2 - g1) * t),
-                    int(b1 + (b2 - b1) * t),
-                    255,
-                ]
-            bg = Image.fromarray(arr, "RGBA")
-
-        else:  # ai
-            if not OPENAI_API_KEY:
-                raise ValueError("OPENAI_API_KEY not configured")
-            # Retry 시 이중 과금 방지: DALL-E 결과를 Redis에 캐시 (2시간)
-            _r = _get_task_redis()
-            _cache_key = key_task_dalle_cache(self.request.id)
-            bg_b64 = _r.get(_cache_key)
-            if bg_b64 is None:
-                enhanced_prompt = (
-                    f"{background_prompt}, background only, no people, no subjects, "
-                    "wide scene, professional photography"
-                )
-                with httpx.Client(timeout=120) as client:
-                    resp = _openai_post(
-                        client,
-                        "https://api.openai.com/v1/images/generations",
-                        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                        json={
-                            "model": OPENAI_DALLE_3,
-                            "prompt": enhanced_prompt,
-                            "n": 1,
-                            "size": "1024x1024",
-                            "response_format": "b64_json",
-                        },
-                    )
-                bg_b64 = resp.json()["data"][0]["b64_json"]
-                _r.setex(_cache_key, 7200, bg_b64)
-            bg = Image.open(io.BytesIO(base64.b64decode(bg_b64))).convert("RGBA")
-            if bg.size != (size, size):
-                bg = bg.resize((size, size), Image.LANCZOS)
+        bg = _build_background(
+            bg_type=bg_type,
+            size=size,
+            bg_color=bg_color,
+            bg_color2=bg_color2,
+            background_prompt=background_prompt,
+            task_id=self.request.id,
+        )
 
         # alpha_composite: bg 위에 fg 합성
         result_img = Image.alpha_composite(bg, canvas_fg)
@@ -494,6 +508,59 @@ def segment_click(self, source: str, x: float, y: float) -> dict:
         raise self.retry(exc=exc, countdown=10)
 
 
+def _to_rgba_png_square(raw: bytes, label: str) -> bytes:
+    """gpt-image-1 요구사항: PNG, RGBA(투명도 포함), 정사각형, 4MB 미만."""
+    img = Image.open(io.BytesIO(raw)).convert("RGBA")
+    side = min(img.width, img.height)
+    if img.width != img.height:
+        x = (img.width  - side) // 2
+        y = (img.height - side) // 2
+        img = img.crop((x, y, x + side, y + side))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    data = buf.getvalue()
+    if len(data) > 4 * 1024 * 1024:
+        raise ValueError(f"{label} exceeds 4 MB after conversion")
+    return data
+
+
+def _edit_gpt_image_1(*, source: str, mask: str, prompt: str, size: str, **_: Any) -> dict:
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY not configured")
+    img_bytes  = _to_rgba_png_square(_load_image_bytes(source), "image")
+    mask_bytes = _to_rgba_png_square(_load_image_bytes(mask),   "mask")
+    with httpx.Client(timeout=120) as client:
+        resp = _openai_post(
+            client,
+            "https://api.openai.com/v1/images/edits",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            files={
+                "image": ("image.png", img_bytes,  "image/png"),
+                "mask":  ("mask.png",  mask_bytes, "image/png"),
+            },
+            data={"model": OPENAI_GPT_IMAGE_1, "prompt": prompt, "n": "1",
+                  "size": size, "response_format": "b64_json"},
+        )
+    return {"b64": resp.json()["data"][0]["b64_json"], "url": None, "provider": "gpt-image-1"}
+
+
+def _edit_comfyui(*, source: str, mask: str, prompt: str, comfyui_url: str, **_: Any) -> dict:
+    base = comfyui_url or settings.COMFYUI_URL
+    _validate_external_url(base)
+    workflow = _build_flux_fill_workflow(source, mask, prompt)
+    with httpx.Client(timeout=30) as client:
+        r = client.post(f"{base}/prompt", json={"prompt": workflow})
+        r.raise_for_status()
+    b64 = _poll_comfyui_result(base, r.json()["prompt_id"], timeout_s=300)
+    return {"b64": b64, "url": None, "provider": "comfyui"}
+
+
+_IMAGE_EDIT_HANDLERS: dict[str, Any] = {
+    "gpt-image-1": _edit_gpt_image_1,
+    "comfyui":     _edit_comfyui,
+}
+
+
 @shared_task(bind=True, name="app.tasks.image.edit_image", max_retries=1)
 def edit_image(
     self,
@@ -509,62 +576,11 @@ def edit_image(
     Returns: {"b64": str | None, "url": str | None, "provider": str}
     """
     try:
-        if provider == "gpt-image-1":
-            if not OPENAI_API_KEY:
-                raise ValueError("OPENAI_API_KEY not configured")
-            img_bytes  = _load_image_bytes(source)
-            mask_bytes = _load_image_bytes(mask)
-            # gpt-image-1 요구사항: PNG, RGBA(투명도 포함), 정사각형, 4MB 미만
-            def _to_rgba_png_square(raw: bytes, label: str) -> bytes:
-                img = Image.open(io.BytesIO(raw)).convert("RGBA")
-                # 정사각형으로 크롭 (짧은 쪽 기준)
-                side = min(img.width, img.height)
-                if img.width != img.height:
-                    x = (img.width  - side) // 2
-                    y = (img.height - side) // 2
-                    img = img.crop((x, y, x + side, y + side))
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                data = buf.getvalue()
-                if len(data) > 4 * 1024 * 1024:
-                    raise ValueError(f"{label} exceeds 4 MB after conversion")
-                return data
-            img_bytes  = _to_rgba_png_square(img_bytes,  "image")
-            mask_bytes = _to_rgba_png_square(mask_bytes, "mask")
-            with httpx.Client(timeout=120) as client:
-                resp = _openai_post(
-                    client,
-                    "https://api.openai.com/v1/images/edits",
-                    headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                    files={
-                        "image": ("image.png", img_bytes, "image/png"),
-                        "mask":  ("mask.png",  mask_bytes, "image/png"),
-                    },
-                    data={
-                        "model": OPENAI_GPT_IMAGE_1,
-                        "prompt": prompt,
-                        "n": "1",
-                        "size": size,
-                        "response_format": "b64_json",
-                    },
-                )
-            b64 = resp.json()["data"][0]["b64_json"]
-            result = {"b64": b64, "url": None, "provider": "gpt-image-1"}
-
-        elif provider == "comfyui":
-            base = comfyui_url or settings.COMFYUI_URL
-            _validate_external_url(base)  # SSRF: comfyui_url 파라미터 검증
-            workflow = _build_flux_fill_workflow(source, mask, prompt)
-            with httpx.Client(timeout=30) as client:
-                r = client.post(f"{base}/prompt", json={"prompt": workflow})
-                r.raise_for_status()
-            prompt_id = r.json()["prompt_id"]
-            # 결과 폴링 (fire-and-forget 제거 — 이전에는 prompt_id만 반환)
-            b64 = _poll_comfyui_result(base, prompt_id, timeout_s=300)
-            result = {"b64": b64, "url": None, "provider": "comfyui"}
-        else:
-            raise ValueError(f"Unknown provider: {provider}")
-
+        handler = _IMAGE_EDIT_HANDLERS.get(provider)
+        if handler is None:
+            raise ValueError(f"Unknown edit provider: {provider!r}")
+        result = handler(source=source, mask=mask, prompt=prompt,
+                         size=size, comfyui_url=comfyui_url)
         publish_task_done(self.request.id, "edit_image")
         return result
     except _RateLimitError as rate_err:
@@ -601,6 +617,75 @@ def _build_flux_fill_workflow(img_b64: str, mask_b64: str, prompt: str) -> dict:
     }
 
 
+def _gen_openai(*, task_id: str, prompt: str, model: str, size: str, quality: str, **_: Any) -> dict:
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY not configured")
+    # Retry 시 이중 과금 방지: DALL-E 결과를 Redis에 캐시 (2시간)
+    _r = _get_task_redis()
+    _cache_key = key_task_dalle_cache(task_id)
+    b64 = _r.get(_cache_key)
+    if b64 is None:
+        with httpx.Client(timeout=120) as client:
+            resp = _openai_post(
+                client,
+                "https://api.openai.com/v1/images/generations",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                json={"model": model, "prompt": prompt, "n": 1,
+                      "size": size, "quality": quality, "response_format": "b64_json"},
+            )
+        b64 = resp.json()["data"][0]["b64_json"]
+        _r.setex(_cache_key, 7200, b64)
+    return {"b64": b64, "url": None, "provider": "openai"}
+
+
+def _gen_comfyui(*, prompt: str, negative_prompt: str, size: str, comfyui_url: str, **_: Any) -> dict:
+    base = comfyui_url or settings.COMFYUI_URL
+    _validate_external_url(base)
+    img_w, img_h = (int(v) for v in (size.split("x") + ["1024", "1024"])[:2]) if size else (1024, 1024)
+    workflow = {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "v1-5-pruned-emaonly.ckpt"}},
+        "2": {"class_type": "EmptyLatentImage",       "inputs": {"width": img_w, "height": img_h, "batch_size": 1}},
+        "3": {"class_type": "CLIPTextEncode",         "inputs": {"text": prompt,          "clip": ["1", 1]}},
+        "4": {"class_type": "CLIPTextEncode",         "inputs": {"text": negative_prompt, "clip": ["1", 1]}},
+        "5": {"class_type": "KSampler", "inputs": {
+            "model": ["1", 0], "positive": ["3", 0], "negative": ["4", 0],
+            "latent_image": ["2", 0],
+            "seed": 42, "steps": 20, "cfg": 7.0,
+            "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
+        }},
+        "6": {"class_type": "VAEDecode",          "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
+        "7": {"class_type": "SaveImageWebsocket", "inputs": {"images": ["6", 0]}},
+    }
+    with httpx.Client(timeout=30) as client:
+        r = client.post(f"{base}/prompt", json={"prompt": workflow})
+        r.raise_for_status()
+    b64 = _poll_comfyui_result(base, r.json()["prompt_id"], timeout_s=300)
+    return {"b64": b64, "url": None, "provider": "comfyui"}
+
+
+def _gen_automatic1111(*, prompt: str, negative_prompt: str, size: str, a1111_url: str, **_: Any) -> dict:
+    try:
+        img_w, img_h = (int(v) for v in size.split("x", 1))
+    except (ValueError, IndexError):
+        img_w, img_h = 1024, 1024
+    base = a1111_url or settings.A1111_URL
+    _validate_external_url(base)
+    with httpx.Client(timeout=300) as client:
+        r = client.post(f"{base}/sdapi/v1/txt2img", json={
+            "prompt": prompt, "negative_prompt": negative_prompt,
+            "steps": 20, "width": img_w, "height": img_h,
+        })
+        r.raise_for_status()
+    return {"b64": r.json()["images"][0], "url": None, "provider": "automatic1111"}
+
+
+_IMAGE_GEN_HANDLERS: dict[str, Any] = {
+    "openai":        _gen_openai,
+    "comfyui":       _gen_comfyui,
+    "automatic1111": _gen_automatic1111,
+}
+
+
 @shared_task(bind=True, name="app.tasks.image.generate_image", max_retries=1)
 def generate_image(
     self,
@@ -618,85 +703,17 @@ def generate_image(
     Returns: {"url": str | None, "b64": str | None, "provider": str}
     """
     try:
-        if provider == "openai":
-            if not OPENAI_API_KEY:
-                raise ValueError("OPENAI_API_KEY not configured")
-            # Retry 시 이중 과금 방지: DALL-E 결과를 Redis에 캐시 (2시간)
-            _r = _get_task_redis()
-            _cache_key = key_task_dalle_cache(self.request.id)
-            b64 = _r.get(_cache_key)
-            if b64 is None:
-                with httpx.Client(timeout=120) as client:
-                    resp = _openai_post(
-                        client,
-                        "https://api.openai.com/v1/images/generations",
-                        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                        json={
-                            "model": model,
-                            "prompt": prompt,
-                            "n": 1,
-                            "size": size,
-                            "quality": quality,
-                            "response_format": "b64_json",
-                        },
-                    )
-                b64 = resp.json()["data"][0]["b64_json"]
-                _r.setex(_cache_key, 7200, b64)
-            result = {"b64": b64, "url": None, "provider": "openai"}
-            publish_task_done(self.request.id, "generate_image")
-            return result
-
-        elif provider == "comfyui":
-            base = comfyui_url or settings.COMFYUI_URL
-            _validate_external_url(base)  # SSRF: comfyui_url 파라미터 검증
-            # Minimal but complete SD/SDXL txt2img workflow
-            img_w, img_h = (int(v) for v in (size.split("x") + ["1024", "1024"])[:2]) if size else (1024, 1024)
-            workflow = {
-                "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "v1-5-pruned-emaonly.ckpt"}},
-                "2": {"class_type": "EmptyLatentImage",       "inputs": {"width": img_w, "height": img_h, "batch_size": 1}},
-                "3": {"class_type": "CLIPTextEncode",         "inputs": {"text": prompt,          "clip": ["1", 1]}},
-                "4": {"class_type": "CLIPTextEncode",         "inputs": {"text": negative_prompt, "clip": ["1", 1]}},
-                "5": {"class_type": "KSampler", "inputs": {
-                    "model": ["1", 0], "positive": ["3", 0], "negative": ["4", 0],
-                    "latent_image": ["2", 0],
-                    "seed": 42, "steps": 20, "cfg": 7.0,
-                    "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
-                }},
-                "6": {"class_type": "VAEDecode",            "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
-                "7": {"class_type": "SaveImageWebsocket",   "inputs": {"images": ["6", 0]}},
-            }
-            with httpx.Client(timeout=30) as client:
-                r = client.post(f"{base}/prompt", json={"prompt": workflow})
-                r.raise_for_status()
-            prompt_id = r.json()["prompt_id"]
-            b64 = _poll_comfyui_result(base, prompt_id, timeout_s=300)
-            result = {"b64": b64, "url": None, "provider": "comfyui"}
-            publish_task_done(self.request.id, "generate_image")
-            return result
-
-        elif provider == "automatic1111":
-            try:
-                img_w, img_h = (int(v) for v in size.split("x", 1))
-            except (ValueError, IndexError):
-                img_w, img_h = 1024, 1024
-            base = a1111_url or settings.A1111_URL
-            _validate_external_url(base)  # SSRF: a1111_url 파라미터 검증
-            with httpx.Client(timeout=300) as client:
-                r = client.post(f"{base}/sdapi/v1/txt2img", json={
-                    "prompt": prompt,
-                    "negative_prompt": negative_prompt,
-                    "steps": 20,
-                    "width": img_w,
-                    "height": img_h,
-                })
-                r.raise_for_status()
-                b64 = r.json()["images"][0]
-            result = {"b64": b64, "url": None, "provider": "automatic1111"}
-            publish_task_done(self.request.id, "generate_image")
-            return result
-
-        else:
-            raise ValueError(f"Unknown provider: {provider}")
+        handler = _IMAGE_GEN_HANDLERS.get(provider)
+        if handler is None:
+            raise ValueError(f"Unknown image generation provider: {provider!r}")
+        result = handler(
+            task_id=self.request.id,
+            prompt=prompt, negative_prompt=negative_prompt,
+            model=model, size=size, quality=quality,
+            comfyui_url=comfyui_url, a1111_url=a1111_url,
+        )
+        publish_task_done(self.request.id, "generate_image")
+        return result
 
     except _RateLimitError as rate_err:
         logger.warning("generate_image rate limited: retry after %ds", rate_err.retry_after)

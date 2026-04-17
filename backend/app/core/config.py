@@ -1,3 +1,38 @@
+"""
+애플리케이션 설정 — pydantic-settings 기반 환경 변수 파싱.
+
+모든 설정은 `.env` 파일 또는 OS 환경 변수로 주입된다. pydantic-settings가
+타입 강제 변환과 유효성 검사를 처리하므로 잘못된 값은 시작 시 즉시 오류로
+발생한다.
+
+## 프로덕션 Fail-Fast 검증
+
+애플리케이션은 다음 조건 중 하나라도 충족하면 DEBUG=False 환경에서 시작을
+거부한다:
+  - SECRET_KEY == 기본값 ("change-me-in-production")
+  - SECRET_KEY 길이 < 32자
+  - FRONTEND_URL 또는 BACKEND_URL이 HTTP (HTTPS 강제)
+  - SESSION_SECRET_KEY 미설정 (키 분리 원칙)
+
+이는 경고(warning)가 무시될 수 있기 때문에 RuntimeError로 대체한 것이다.
+
+## 키 분리 원칙
+
+SECRET_KEY (JWT 서명)와 SESSION_SECRET_KEY (Starlette 세션 미들웨어)를
+반드시 별도 값으로 설정해야 한다. 하나의 키 유출이 두 가지 인증 채널 모두에
+영향을 미치는 Single Point of Failure를 방지하기 위함이다.
+
+## Redis DB 분리
+
+| 용도            | DB 번호 | 환경 변수                 |
+|-----------------|---------|--------------------------|
+| 세션/캐시        | 0       | REDIS_URL                |
+| Celery 브로커    | 1       | CELERY_BROKER_URL        |
+| Celery 결과      | 2       | CELERY_RESULT_BACKEND    |
+
+DB를 분리하면 `FLUSHDB`로 특정 용도의 데이터만 초기화할 수 있고,
+Redis 모니터링 시 용도별 메모리 사용량을 구분할 수 있다.
+"""
 import warnings
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List

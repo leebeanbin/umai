@@ -42,7 +42,7 @@ export default function ModelSelect({ value, onChange, showTuning = true }: Prop
   useEffect(() => {
     setModels(loadModels()); // eslint-disable-line react-hooks/set-state-in-effect
     fetchModels().then((fresh) => {
-      if (fresh.length > 0) setModels(fresh); // eslint-disable-line react-hooks/set-state-in-effect
+      if (fresh.length > 0) setModels(fresh);
     }).catch(() => {});
   }, []);
 

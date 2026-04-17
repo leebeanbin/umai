@@ -92,6 +92,7 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   // run input modal
   const [runModal, setRunModal] = useState<{ fields: { key: string; type: string }[] } | null>(null);
   const [runInputs, setRunInputs] = useState<Record<string, string>>({});
@@ -120,7 +121,7 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
       setWorkflowName(wf.name);
       if (wf.graph?.nodes) setNodes(wf.graph.nodes as Node[]);
       if (wf.graph?.edges) setEdges(wf.graph.edges as Edge[]);
-    }).catch(() => {});
+    }).catch(() => setLoadError("워크플로우를 불러오지 못했습니다."));
   }, [workflowId, user, authLoading, setNodes, setEdges]);
 
   // ── 자동 저장 (debounce 1.5초) ────────────────────────────────────────────
@@ -345,7 +346,7 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
       setSelectedNode(null);
       debounceSave(newNodes, newEdges);
     },
-    [nodes.length, setNodes, setEdges, debounceSave],
+    [nodes.length, setNodes, setEdges, debounceSave, t],
   );
 
   // ── 수동 저장 버튼 ────────────────────────────────────────────────────────
@@ -478,6 +479,12 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
           </button>
         </header>
 
+        {/* 로드 에러 배너 */}
+        {loadError && (
+          <div className="mx-4 mt-2 px-3 py-2 rounded-lg bg-danger/10 border border-danger/30 text-danger text-xs">
+            {loadError}
+          </div>
+        )}
         {/* 실행 에러 배너 */}
         {runError && (
           <div className="mx-4 mt-2 flex items-start justify-between gap-2 px-3 py-2 rounded-lg bg-danger/10 border border-danger/30 text-danger text-xs">

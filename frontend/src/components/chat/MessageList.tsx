@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Copy, RotateCcw, ThumbsUp, ThumbsDown, Pencil, ChevronDown, Check, X, ExternalLink } from "lucide-react";
+import { Copy, RotateCcw, ThumbsUp, ThumbsDown, Pencil, ChevronDown, Check, ExternalLink } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { type TranslationKey } from "@/lib/i18n";
 import { apiRateMessage } from "@/lib/api/backendClient";
@@ -166,6 +166,7 @@ function UserMessage({ message, lang, onEdit, t }: UserMessageProps) {
           <div className="mb-1 flex flex-col items-end gap-1 w-full">
             <div className="flex gap-2 flex-wrap justify-end">
               {message.images.map((src, i) => (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img key={i} src={src} alt="" className="max-h-96 rounded-2xl object-cover border border-border" />
               ))}
             </div>
@@ -297,6 +298,7 @@ function AssistantMessage({ message, chatId, isLast, lang, onRegenerate, t }: As
         {message.images && message.images.length > 0 && (
           <div className="my-1 w-full flex overflow-x-auto gap-2 flex-wrap mb-3">
             {message.images.map((src, i) => (
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 key={i}
                 src={src}
@@ -354,9 +356,12 @@ function AssistantMessage({ message, chatId, isLast, lang, onRegenerate, t }: As
 
           <button
             onClick={() => {
+              const prev = rating;
               const next = rating === "up" ? null : "up";
               setRating(next);
-              if (chatId) apiRateMessage(chatId, message.id, next ? "positive" : null).catch(() => {});
+              if (chatId) apiRateMessage(chatId, message.id, next ? "positive" : null).catch(() => {
+                setRating(prev); // rollback on failure
+              });
             }}
             title={t("msg.like")}
             className={`p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg hover:text-text-primary transition ${rating === "up" ? "text-accent" : ""}`}
@@ -365,9 +370,12 @@ function AssistantMessage({ message, chatId, isLast, lang, onRegenerate, t }: As
           </button>
           <button
             onClick={() => {
+              const prev = rating;
               const next = rating === "down" ? null : "down";
               setRating(next);
-              if (chatId) apiRateMessage(chatId, message.id, next ? "negative" : null).catch(() => {});
+              if (chatId) apiRateMessage(chatId, message.id, next ? "negative" : null).catch(() => {
+                setRating(prev); // rollback on failure
+              });
             }}
             title={t("msg.dislike")}
             className={`p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg hover:text-text-primary transition ${rating === "down" ? "text-danger" : ""}`}

@@ -54,7 +54,7 @@ export default function ModelsPage() {
   // 마운트 후 localStorage 로드 → 인증 후 백엔드 동기화
   useEffect(() => {
     setBuiltinModels(loadModels()); // eslint-disable-line react-hooks/set-state-in-effect
-    setCustom(loadWs<CustomModel>(LOCAL_KEY, INITIAL_CUSTOM)); // eslint-disable-line react-hooks/set-state-in-effect
+    setCustom(loadWs<CustomModel>(LOCAL_KEY, INITIAL_CUSTOM));
   }, []);
 
   useEffect(() => {

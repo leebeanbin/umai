@@ -1,15 +1,57 @@
 """
 오픈 모델 파인튜닝 API
 
-엔드포인트:
-  POST   /fine-tune/datasets          — 데이터셋 생성 (JSONL 파싱)
+## 개요
+
+LoRA / QLoRA 방식으로 오픈 LLM을 파인튜닝하는 REST API.
+
+## 지원 데이터 형식
+
+| 형식        | 설명                                                      | 예시                                      |
+|-------------|----------------------------------------------------------|--------------------------------------------|
+| chat        | OpenAI ChatCompletion 형식 (messages 배열)               | `{"messages": [{"role": "user", ...}]}`    |
+| instruction | Alpaca 형식 (instruction + output)                       | `{"instruction": "...", "output": "..."}`  |
+| completion  | 단순 텍스트 완성 (prompt + completion)                    | `{"prompt": "...", "completion": "..."}`   |
+
+raw_data는 JSONL(줄당 JSON) 또는 JSON 배열 형식을 모두 허용.
+
+## 지원 모델군 (2025)
+
+- **LLaMA 3.x** — Meta, 3B~70B, 사실상 오픈소스 표준
+- **Gemma 2** — Google, 2B~27B, 추론 효율 우수
+- **Gemma 4** — Google (2025-04), 1B~27B, 128 K 컨텍스트, 멀티모달
+  - 1B / 4B: 8 GB 이하 VRAM으로 엣지 배포 가능
+- **Mistral** — 7B~12B, 긴 컨텍스트 + 슬라이딩 윈도우 어텐션
+- **Qwen 2.5** — Alibaba, 7B~72B, 한국어/중국어/영어 다국어 강점
+- **Phi 3.5** — Microsoft, 3.8B~14B, VRAM 절약형 고성능
+
+## 학습 방식
+
+| 방식   | 설명                                            | VRAM 절약 |
+|--------|------------------------------------------------|-----------|
+| LoRA   | 저랭크 행렬 분해로 일부 파라미터만 학습         | ★★★       |
+| QLoRA  | 4bit 양자화 + LoRA — GPU 메모리 최대 75% 절약  | ★★★★★     |
+| Full   | 전체 파라미터 파인튜닝 (최고 품질, 고 VRAM)    | ☆         |
+
+## 현재 구현 상태
+
+`_simulate_training` 함수가 실제 Unsloth / HuggingFace Trainer 대신
+지수 감소 손실 곡선을 시뮬레이션합니다. 프로덕션 전환 시:
+  1. `_simulate_training` → Celery 태스크 `run_fine_tune_task.delay(job_id)`
+  2. Celery 워커에 GPU + Unsloth 환경 구성
+
+## 엔드포인트
+
+  POST   /fine-tune/datasets          — 데이터셋 생성 (JSONL 파싱, 201)
   GET    /fine-tune/datasets          — 데이터셋 목록
-  DELETE /fine-tune/datasets/{id}     — 데이터셋 삭제
+  DELETE /fine-tune/datasets/{id}     — 데이터셋 삭제 (204, 비소유자 404)
+
+  GET    /fine-tune/models            — 지원 모델 목록
 
   POST   /fine-tune/jobs              — 파인튜닝 작업 생성 + 즉시 시작
   GET    /fine-tune/jobs              — 작업 목록
   GET    /fine-tune/jobs/{id}         — 작업 상세 + 실시간 지표
-  POST   /fine-tune/jobs/{id}/cancel  — 작업 취소
+  POST   /fine-tune/jobs/{id}/cancel  — 작업 취소 (done/failed → 400)
 """
 
 import asyncio
@@ -50,6 +92,11 @@ SUPPORTED_MODELS = [
     {"id": "google/gemma-2-2b-it",               "name": "Gemma 2 2B IT",           "family": "Gemma",   "size": "2B",  "vram": "8GB"},
     {"id": "google/gemma-2-9b-it",               "name": "Gemma 2 9B IT",           "family": "Gemma",   "size": "9B",  "vram": "18GB"},
     {"id": "google/gemma-2-27b-it",              "name": "Gemma 2 27B IT",          "family": "Gemma",   "size": "27B", "vram": "54GB"},
+    # Gemma 4 (2025-04 release) — multimodal, 128 K context, sub-16 GB options
+    {"id": "google/gemma-4-1b-it",               "name": "Gemma 4 1B IT",           "family": "Gemma",   "size": "1B",  "vram": "4GB"},
+    {"id": "google/gemma-4-4b-it",               "name": "Gemma 4 4B IT",           "family": "Gemma",   "size": "4B",  "vram": "10GB"},
+    {"id": "google/gemma-4-12b-it",              "name": "Gemma 4 12B IT",          "family": "Gemma",   "size": "12B", "vram": "24GB"},
+    {"id": "google/gemma-4-27b-it",              "name": "Gemma 4 27B IT",          "family": "Gemma",   "size": "27B", "vram": "54GB"},
     # Qwen 2.5
     {"id": "Qwen/Qwen2.5-7B-Instruct",           "name": "Qwen 2.5 7B Instruct",    "family": "Qwen",    "size": "7B",  "vram": "14GB"},
     {"id": "Qwen/Qwen2.5-14B-Instruct",          "name": "Qwen 2.5 14B Instruct",   "family": "Qwen",    "size": "14B", "vram": "28GB"},
@@ -203,6 +250,7 @@ async def list_datasets(
         select(TrainingDataset)
         .where(TrainingDataset.owner_id == current_user.id)
         .order_by(TrainingDataset.created_at.desc())
+        .limit(200)
     )
     return [DatasetOut.from_orm(d) for d in result.scalars().all()]
 
@@ -240,6 +288,35 @@ def _calc_total_steps(example_count: int, epochs: int, batch_size: int) -> int:
     return steps_per_epoch * epochs
 
 
+import contextlib
+import logging as _ft_logger
+
+_logger = _ft_logger.getLogger(__name__)
+
+
+@contextlib.asynccontextmanager
+async def _job_lifecycle(job_id: uuid.UUID):
+    """Fine-tune job의 라이프사이클을 관리하는 context manager.
+
+    이 레이어의 단일 책임: 예외 발생 시 job을 "failed"로 마킹.
+    비즈니스 로직(_simulate_training)은 여기에 섞지 않는다.
+    """
+    from app.core.database import AsyncSessionLocal
+    try:
+        yield
+    except asyncio.CancelledError:
+        raise  # FastAPI/asyncio가 정상 처리하도록 전파
+    except Exception as exc:
+        _logger.error("fine_tune job %s failed: %s", job_id, exc, exc_info=True)
+        async with AsyncSessionLocal() as err_db:
+            r = await err_db.execute(select(FineTuneJob).where(FineTuneJob.id == job_id))
+            job = r.scalar_one_or_none()
+            if job and job.status == "running":
+                job.status = "failed"
+                job.finished_at = datetime.now(timezone.utc)
+                await err_db.commit()
+
+
 async def _simulate_training(job_id: uuid.UUID) -> None:
     """
     실제 Unsloth / HuggingFace Trainer 연동 대신
@@ -248,10 +325,13 @@ async def _simulate_training(job_id: uuid.UUID) -> None:
     프로덕션에서는 이 함수를 Celery 태스크로 교체:
       from app.tasks.fine_tune import run_fine_tune_task
       run_fine_tune_task.delay(str(job_id))
+
+    _job_lifecycle context manager가 예외 처리와 job 상태 마킹을 담당한다.
     """
     from app.core.database import AsyncSessionLocal  # 지연 임포트 (순환 방지)
 
-    await asyncio.sleep(2)  # 초기 준비 딜레이
+    async with _job_lifecycle(job_id):
+        await asyncio.sleep(2)  # 초기 준비 딜레이
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(FineTuneJob).where(FineTuneJob.id == job_id))
@@ -424,6 +504,7 @@ async def list_jobs(
         select(FineTuneJob)
         .where(FineTuneJob.owner_id == current_user.id)
         .order_by(FineTuneJob.created_at.desc())
+        .limit(200)
     )
     return [JobOut.from_orm(j) for j in result.scalars().all()]
 

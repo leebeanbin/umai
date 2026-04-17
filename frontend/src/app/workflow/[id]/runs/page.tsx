@@ -138,6 +138,7 @@ export default function RunsHistoryPage() {
   const [runs, setRuns] = useState<RunListItem[]>([]);
   const [stats, setStats] = useState<WorkflowStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -146,13 +147,15 @@ export default function RunsHistoryPage() {
     if (!workflowId || authLoading) return;
     if (!user) { setLoading(false); return; }
     setLoading(true);
+    setLoadError(null);
     Promise.all([
       apiListRuns(workflowId, page),
       apiGetStats(workflowId),
     ]).then(([r, s]) => {
       setRuns(r);
       setStats(s);
-    }).catch(() => {}).finally(() => setLoading(false));
+    }).catch(() => setLoadError("실행 기록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요."))
+      .finally(() => setLoading(false));
   }, [workflowId, page, user, authLoading]);
 
   async function handleCancel(e: React.MouseEvent, runId: string) {
@@ -183,6 +186,11 @@ export default function RunsHistoryPage() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {loadError && (
+          <div className="px-4 py-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-sm">
+            {loadError}
+          </div>
+        )}
         {/* 통계 카드 */}
         {stats && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

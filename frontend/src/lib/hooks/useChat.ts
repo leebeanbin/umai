@@ -4,7 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { streamChat, type ChatMessage } from "@/lib/apis/chat";
 import { loadSettings } from "@/lib/appStore";
 import { getModelCapabilities } from "@/lib/modelCapabilities";
-import { getStoredToken, isAuthenticated, apiEnqueueAgentTask } from "@/lib/api/backendClient";
+import { apiFetch, isAuthenticated, apiEnqueueAgentTask } from "@/lib/api/backendClient";
 import { loadWs } from "@/lib/workspaceStore";
 
 /** Custom model의 systemPrompt를 가져온다. 없으면 undefined. */
@@ -119,16 +119,14 @@ export function inferProvider(model: string): "openai" | "anthropic" | "google" 
  */
 export async function saveToDb(chatId: string, userMsg: Message, asstMsg: Message) {
   if (!isAuthenticated()) return;
-  const token = getStoredToken();
   const messages = [
     { id: userMsg.id, role: userMsg.role, content: userMsg.content, images: userMsg.images ?? null },
     { id: asstMsg.id, role: asstMsg.role, content: asstMsg.content, images: null },
   ];
-  fetch(`/api/v1/chats/${chatId}/messages/batch`, {
+  apiFetch(`/api/v1/chats/${chatId}/messages/batch`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ messages }),
-  }).catch(() => {});
+  }).catch((e) => { console.error("saveToDb failed:", e); });
 }
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
@@ -198,29 +196,19 @@ export function useChat(chatId?: string) {
       // ── [2] RAG: Knowledge Base search ───────────────────────────────────────
       if (opts?.useRag && content.trim()) {
         try {
-            const ragToken = getStoredToken();
-          const r = await fetch(
+          const body = await apiFetch<{ results?: { chunk: string; source: string; score: number }[] }>(
             `/api/v1/rag/search?q=${encodeURIComponent(content)}&top_k=5`,
-            {
-              credentials: "include",
-              headers: ragToken ? { Authorization: `Bearer ${ragToken}` } : {},
-              signal: AbortSignal.timeout(10_000),
-            }
+            { signal: AbortSignal.timeout(10_000) },
           );
-          if (r.ok) {
-            const body = await r.json() as {
-              results?: { chunk: string; source: string; score: number }[];
-            };
-            const results = Array.isArray(body.results) ? body.results : [];
-            if (results.length > 0) {
-              const context = results
-                .map((item, i) => `[KB${i + 1}] (${item.source})\n${item.chunk}`)
-                .join("\n\n---\n\n");
-              apiMsgs.push({
-                role: "system",
-                content: `[Knowledge Base]\n${context}\n\n${ctxMsg("rag", lang)}`,
-              });
-            }
+          const results = Array.isArray(body.results) ? body.results : [];
+          if (results.length > 0) {
+            const context = results
+              .map((item, i) => `[KB${i + 1}] (${item.source})\n${item.chunk}`)
+              .join("\n\n---\n\n");
+            apiMsgs.push({
+              role: "system",
+              content: `[Knowledge Base]\n${context}\n\n${ctxMsg("rag", lang)}`,
+            });
           }
         } catch { /* RAG failure is non-fatal */ }
       }
@@ -229,24 +217,16 @@ export function useChat(chatId?: string) {
       if (images.length > 0 && !caps.vision) {
         for (const img of images) {
           try {
-            const ocrToken = getStoredToken();
-            const r = await fetch("/api/ocr", {
+            const { text } = await apiFetch<{ text: string }>("/api/ocr", {
               method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...(ocrToken ? { Authorization: `Bearer ${ocrToken}` } : {}),
-              },
               body: JSON.stringify({ image: img }),
               signal: AbortSignal.timeout(30_000),
             });
-            if (r.ok) {
-              const { text } = await r.json() as { text: string };
-              if (text.trim()) {
-                apiMsgs.push({
-                  role: "system",
-                  content: `[Image OCR Text]\n${text.trim()}\n\n${ctxMsg("ocr", lang)}`,
-                });
-              }
+            if (text.trim()) {
+              apiMsgs.push({
+                role: "system",
+                content: `[Image OCR Text]\n${text.trim()}\n\n${ctxMsg("ocr", lang)}`,
+              });
             }
           } catch { /* OCR failure is non-fatal */ }
         }
@@ -256,24 +236,20 @@ export function useChat(chatId?: string) {
       let searchSources: SearchSource[] = [];
       if (opts?.webSearch) {
         try {
-          const wsToken = getStoredToken();
-          const r = await fetch(`/api/websearch?q=${encodeURIComponent(content)}`, {
-            headers: wsToken ? { Authorization: `Bearer ${wsToken}` } : {},
-            signal: AbortSignal.timeout(8000),
-          });
-          if (r.ok) {
-            const wsBody = await r.json() as { results?: SearchSource[] };
-            const results = Array.isArray(wsBody.results) ? wsBody.results : [];
-            if (results.length > 0) {
-              searchSources = results;
-              const searchContext = results
-                .map((s, i) => `[${i + 1}] ${s.title ? s.title + ': ' : ''}${s.snippet} (${s.url})`)
-                .join('\n');
-              apiMsgs.push({
-                role: "system",
-                content: `[Web Search Results for: "${content}"]\n${searchContext}\n\n${ctxMsg("webSearch", lang)}`,
-              });
-            }
+          const wsBody = await apiFetch<{ results?: SearchSource[] }>(
+            `/api/websearch?q=${encodeURIComponent(content)}`,
+            { signal: AbortSignal.timeout(8000) },
+          );
+          const results = Array.isArray(wsBody.results) ? wsBody.results : [];
+          if (results.length > 0) {
+            searchSources = results;
+            const searchContext = results
+              .map((s, i) => `[${i + 1}] ${s.title ? s.title + ': ' : ''}${s.snippet} (${s.url})`)
+              .join('\n');
+            apiMsgs.push({
+              role: "system",
+              content: `[Web Search Results for: "${content}"]\n${searchContext}\n\n${ctxMsg("webSearch", lang)}`,
+            });
           }
         } catch { /* timeout or fail — continue without search */ }
       }

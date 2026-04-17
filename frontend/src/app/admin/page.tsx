@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Shield, Users, Settings, Search, MoreHorizontal, Crown, User, Ban, Loader2, ChevronRight, BarChart3, X } from "lucide-react";
+import { Shield, Settings, Search, MoreHorizontal, Crown, User, Ban, Loader2, ChevronRight, BarChart3, X } from "lucide-react";
 import Link from "next/link";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
@@ -184,6 +184,7 @@ function UsersPanel({ t }: { t: TFn }) {
             return (
               <div key={user.id} className="flex items-center gap-3 px-4 py-3 hover:bg-hover transition-colors group">
                 {user.avatar_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img src={user.avatar_url} alt={user.name} className="size-8 rounded-full object-cover shrink-0" />
                 ) : (
                   <div

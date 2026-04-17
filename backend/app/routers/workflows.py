@@ -1,15 +1,59 @@
 """
 워크플로우 CRUD + 실행 API
 
-엔드포인트:
-  POST   /workflow/                      — 워크플로우 생성
+## 개요
+
+시각적 DAG(Directed Acyclic Graph) 빌더로 구성한 AI 워크플로우를 저장하고
+Celery 워커에서 실행하는 REST API 모음.
+
+프론트엔드는 ReactFlow 기반으로 노드/엣지를 편집하고 JSON 그래프로 직렬화해
+PUT /{id}로 저장한다. POST /{id}/run 에서 WorkflowRun 레코드를 생성한 뒤
+Celery 'ai' 큐에 비동기 태스크를 추가한다.
+
+## 노드 타입
+
+| 노드         | 동작                                                              |
+|-------------|-------------------------------------------------------------------|
+| InputNode   | 런타임 입력값을 context에 주입                                     |
+| LLMNode     | OpenAI/Anthropic/Ollama 모델 호출 + 결과를 context에 저장          |
+| ToolNode    | web_search / execute_python 도구 실행                             |
+| BranchNode  | 조건식(context 값 참조) 평가 → true/false 엣지로 분기              |
+| HumanNode   | 실행을 일시 중단하고 사람의 승인/거부를 대기 (Redis SUSPEND 저장)  |
+| OutputNode  | 최종 출력값 결정 및 WorkflowRun.outputs 저장                       |
+
+## HumanNode 일시 중단 흐름
+
+```
+1. execute_workflow (Celery) → HumanNode 도달
+2. Redis SUSPEND key에 {node_id, context} 저장 (TTL 24h)
+3. WebSocket 이벤트 'workflow_suspended' 발행
+4. Celery 태스크 종료 (run.status = "suspended")
+
+5. 사람이 POST /runs/{run_id}/resume 호출 (approved=True/False)
+6. Redis SUSPEND key 삭제
+7. approved=True → execute_workflow 재큐잉 (완료 스텝 건너뜀)
+8. approved=False → run.status = "failed"
+```
+
+## 실행 히스토리
+
+WorkflowRun / WorkflowRunStep 모델에 모든 실행 결과를 저장.
+워커 재시작 후에도 상태 복구 가능. 취소는 celery_app.control.revoke()로
+SIGTERM을 보낸 뒤 run.status = "failed"로 마킹.
+
+## 엔드포인트
+
+  POST   /workflow/                      — 워크플로우 생성 (201)
   GET    /workflow/                      — 목록 (owner 기준)
-  GET    /workflow/{id}                  — 단건 조회
-  PUT    /workflow/{id}                  — 그래프 저장 (nodes + edges)
-  DELETE /workflow/{id}                  — 삭제
-  POST   /workflow/{id}/run              — 실행 시작
+  GET    /workflow/{id}                  — 단건 조회 (403: 비소유자)
+  PATCH  /workflow/{id}                  — 그래프/이름/설명 업데이트
+  DELETE /workflow/{id}                  — 삭제 (204)
+  POST   /workflow/{id}/run              — 실행 시작 (202, Celery 비동기)
   GET    /workflow/runs/{run_id}         — 실행 상태 + 스텝별 결과
+  GET    /workflow/{id}/runs             — 실행 히스토리 목록 (페이지네이션)
+  GET    /workflow/{id}/stats            — 성공/실패 통계
   POST   /workflow/runs/{run_id}/resume  — HumanNode 승인/거부
+  POST   /workflow/runs/{run_id}/cancel  — 실행 강제 취소
 """
 import json
 import uuid
@@ -23,7 +67,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import RATE_WORKFLOW_RESUME
+from app.core.constants import (
+    RATE_WORKFLOW_CREATE, RATE_WORKFLOW_UPDATE, RATE_WORKFLOW_DELETE,
+    RATE_WORKFLOW_RUN, RATE_WORKFLOW_RESUME, RATE_WORKFLOW_CANCEL,
+)
 from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.redis_keys import key_workflow_suspend
@@ -153,7 +200,9 @@ def _assert_owner(resource_owner_id: uuid.UUID, user: User, resource: str = "res
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
 @router.post("", response_model=WorkflowOut, status_code=201)
+@limiter.limit(RATE_WORKFLOW_CREATE)
 async def create_workflow(
+    request: Request,
     body: WorkflowCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -172,6 +221,8 @@ async def create_workflow(
 
 @router.get("", response_model=list[WorkflowOut])
 async def list_workflows(
+    page: int = Query(1, ge=1, le=1000),
+    limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[WorkflowOut]:
@@ -179,6 +230,8 @@ async def list_workflows(
         select(Workflow)
         .where(Workflow.owner_id == current_user.id)
         .order_by(Workflow.updated_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
     )
     return [WorkflowOut.from_orm(w) for w in result.scalars().all()]
 
@@ -216,7 +269,9 @@ async def get_workflow(
 
 
 @router.patch("/{workflow_id}", response_model=WorkflowOut)
+@limiter.limit(RATE_WORKFLOW_UPDATE)
 async def update_workflow(
+    request: Request,
     workflow_id: str,
     body: WorkflowUpdate,
     db: AsyncSession = Depends(get_db),
@@ -239,7 +294,9 @@ async def update_workflow(
 
 
 @router.delete("/{workflow_id}", status_code=204)
+@limiter.limit(RATE_WORKFLOW_DELETE)
 async def delete_workflow(
+    request: Request,
     workflow_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -255,7 +312,9 @@ async def delete_workflow(
 # ── 실행 ──────────────────────────────────────────────────────────────────────
 
 @router.post("/{workflow_id}/run", response_model=RunOut, status_code=202)
+@limiter.limit(RATE_WORKFLOW_RUN)
 async def run_workflow(
+    request: Request,
     workflow_id: str,
     body: RunRequest,
     db: AsyncSession = Depends(get_db),
@@ -280,7 +339,15 @@ async def run_workflow(
 
     # Celery 비동기 실행 — task_id=run_id 로 설정해 취소 시 별도 컬럼 없이 revoke 가능
     from app.tasks.workflow import execute_workflow  # lazy import
-    execute_workflow.apply_async(args=[str(run.id)], queue="ai", task_id=str(run.id))
+    try:
+        execute_workflow.apply_async(args=[str(run.id)], queue="ai", task_id=str(run.id))
+    except Exception as exc:
+        # Celery 브로커 장애 시 run을 즉시 failed로 마킹하고 503 반환
+        # (미처리 시 run이 영구적으로 "running" 상태로 고착됨)
+        run.status = "failed"
+        run.finished_at = datetime.now(timezone.utc)
+        await db.commit()
+        raise HTTPException(503, f"Failed to queue workflow execution: {exc}") from exc
 
     return _run_out(run, [])
 
@@ -444,7 +511,9 @@ async def _do_cancel_run(run_id: str, db: AsyncSession, current_user: User) -> N
 
 
 @router.post("/runs/{run_id}/cancel", status_code=204)
+@limiter.limit(RATE_WORKFLOW_CANCEL)
 async def cancel_run_post(
+    request: Request,
     run_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -454,7 +523,9 @@ async def cancel_run_post(
 
 
 @router.delete("/runs/{run_id}", status_code=204)
+@limiter.limit(RATE_WORKFLOW_CANCEL)
 async def cancel_run(
+    request: Request,
     run_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),

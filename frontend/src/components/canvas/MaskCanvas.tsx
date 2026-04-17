@@ -66,7 +66,8 @@ export const MaskCanvas = forwardRef<MaskCanvasHandle, Props>(function MaskCanva
     },
   }));
 
-  useEffect(() => { clear(); }, [imageSrc]); // eslint-disable-line react-hooks/set-state-in-effect
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- clear is a stable imperative ref; adding it would cause infinite re-renders
+  useEffect(() => { clear(); }, [imageSrc]);
 
   function toLocal(e: React.MouseEvent<HTMLCanvasElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -164,6 +165,7 @@ export const MaskCanvas = forwardRef<MaskCanvasHandle, Props>(function MaskCanva
         style={{ aspectRatio: `${width}/${height}` }}
       >
         {imageSrc ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={imageSrc}
             alt={t("mask.title")}

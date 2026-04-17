@@ -111,6 +111,7 @@ export default function FolderModal({ open, folder, onClose, onSave }: Props) {
           onClick={() => bgInputRef.current?.click()}
         >
           {bgImageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
             <img src={bgImageUrl} alt="bg" className="w-full h-full object-cover" />
           ) : (
             <div className="flex flex-col items-center justify-center h-full gap-1.5 text-text-muted group-hover:text-text-secondary transition-colors">

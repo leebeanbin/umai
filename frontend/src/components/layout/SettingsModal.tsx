@@ -507,6 +507,7 @@ export default function SettingsModal({ open, onClose }: Props) {
                     <div className="flex items-center gap-4 p-4 bg-surface rounded-2xl border border-border">
                       <div className="size-12 rounded-full bg-accent/15 border border-accent/20 flex items-center justify-center text-lg font-bold text-accent shrink-0">
                         {user.avatar_url
+                          // eslint-disable-next-line @next/next/no-img-element
                           ? <img src={user.avatar_url} alt={user.name} className="size-12 rounded-full object-cover" />
                           : user.name.charAt(0).toUpperCase()
                         }

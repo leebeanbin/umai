@@ -32,6 +32,8 @@ from app.core.constants import (
     SUPPORTED_DOCUMENT_TYPES,
     TASK_OWNER_TTL, MAX_FILE_SIZE_BYTES, MAX_DOCUMENT_CHARS, MAX_DOCUMENT_PAGES,
     RATE_TASK_KNOWLEDGE, RATE_TASK_EXTRACT,
+    RATE_TASK_IMAGE, RATE_TASK_IMAGE_GEN, RATE_TASK_IMAGE_EDIT,
+    RATE_TASK_AI_AGENT, RATE_TASK_AI_SEARCH,
 )
 from app.core.database import get_db
 from app.core.redis import get_redis
@@ -52,20 +54,32 @@ class TaskResponse(BaseModel):
     error: str | None = None
 
 
+async def _enqueue_task(celery_task: Any, kwargs: dict, user_id: str) -> TaskResponse:
+    """Celery 태스크 큐잉 + Redis owner 등록 공통 헬퍼."""
+    try:
+        task = celery_task.apply_async(kwargs=kwargs)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
+    redis = await get_redis()
+    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, user_id)
+    return TaskResponse(task_id=task.id, status="queued")
+
+
+_CELERY_STATE_MAP: dict[str, str] = {
+    "PENDING": "pending",
+    "STARTED": "running",
+}
+
+
 def _task_status(task_id: str) -> TaskResponse:
     # M2: Redis/Celery 백엔드 장애 시 graceful fallback (500 대신 unknown 반환)
     try:
         result: AsyncResult = AsyncResult(task_id, app=celery_app)
-        if result.state == "PENDING":
-            return TaskResponse(task_id=task_id, status="pending")
-        elif result.state == "STARTED":
-            return TaskResponse(task_id=task_id, status="running")
-        elif result.state == "SUCCESS":
+        if result.state == "SUCCESS":
             return TaskResponse(task_id=task_id, status="success", result=result.result)
-        elif result.state == "FAILURE":
+        if result.state == "FAILURE":
             return TaskResponse(task_id=task_id, status="failed", error=str(result.result))
-        else:
-            return TaskResponse(task_id=task_id, status=result.state.lower())
+        return TaskResponse(task_id=task_id, status=_CELERY_STATE_MAP.get(result.state, result.state.lower()))
     except Exception:
         return TaskResponse(task_id=task_id, status="unknown")
 
@@ -112,51 +126,31 @@ class ImageGenerateRequest(BaseModel):
 
 
 @router.post("/image/resize", response_model=TaskResponse, status_code=202)
-async def enqueue_resize(body: ImageResizeRequest, current_user: User = Depends(get_current_user)):
+@limiter.limit(RATE_TASK_IMAGE)
+async def enqueue_resize(request: Request, body: ImageResizeRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import resize_image
-    try:
-        task = resize_image.apply_async(kwargs=body.model_dump())
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
-    redis = await get_redis()
-    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
-    return TaskResponse(task_id=task.id, status="queued")
+    return await _enqueue_task(resize_image, body.model_dump(), str(current_user.id))
 
 
 @router.post("/image/ocr", response_model=TaskResponse, status_code=202)
-async def enqueue_ocr(body: ImageOcrRequest, current_user: User = Depends(get_current_user)):
+@limiter.limit(RATE_TASK_IMAGE)
+async def enqueue_ocr(request: Request, body: ImageOcrRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import ocr_image
-    try:
-        task = ocr_image.apply_async(kwargs=body.model_dump())
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
-    redis = await get_redis()
-    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
-    return TaskResponse(task_id=task.id, status="queued")
+    return await _enqueue_task(ocr_image, body.model_dump(), str(current_user.id))
 
 
 @router.post("/image/analyze", response_model=TaskResponse, status_code=202)
-async def enqueue_analyze(body: ImageAnalyzeRequest, current_user: User = Depends(get_current_user)):
+@limiter.limit(RATE_TASK_IMAGE)
+async def enqueue_analyze(request: Request, body: ImageAnalyzeRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import analyze_image
-    try:
-        task = analyze_image.apply_async(kwargs=body.model_dump())
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
-    redis = await get_redis()
-    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
-    return TaskResponse(task_id=task.id, status="queued")
+    return await _enqueue_task(analyze_image, body.model_dump(), str(current_user.id))
 
 
 @router.post("/image/generate", response_model=TaskResponse, status_code=202)
-async def enqueue_generate(body: ImageGenerateRequest, current_user: User = Depends(get_current_user)):
+@limiter.limit(RATE_TASK_IMAGE_GEN)
+async def enqueue_generate(request: Request, body: ImageGenerateRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import generate_image
-    try:
-        task = generate_image.apply_async(kwargs=body.model_dump())
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
-    redis = await get_redis()
-    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
-    return TaskResponse(task_id=task.id, status="queued")
+    return await _enqueue_task(generate_image, body.model_dump(), str(current_user.id))
 
 
 # ── AI 에이전트 태스크 ────────────────────────────────────────────────────────
@@ -191,51 +185,31 @@ class ImageEditRequest(BaseModel):
 
 
 @router.post("/image/remove-background", response_model=TaskResponse, status_code=202)
-async def enqueue_remove_background(body: ImageRemoveBgRequest, current_user: User = Depends(get_current_user)):
+@limiter.limit(RATE_TASK_IMAGE_EDIT)
+async def enqueue_remove_background(request: Request, body: ImageRemoveBgRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import remove_background
-    try:
-        task = remove_background.apply_async(kwargs=body.model_dump())
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
-    redis = await get_redis()
-    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
-    return TaskResponse(task_id=task.id, status="queued")
+    return await _enqueue_task(remove_background, body.model_dump(), str(current_user.id))
 
 
 @router.post("/image/compose-studio", response_model=TaskResponse, status_code=202)
-async def enqueue_compose_studio(body: ImageComposeStudioRequest, current_user: User = Depends(get_current_user)):
+@limiter.limit(RATE_TASK_IMAGE_EDIT)
+async def enqueue_compose_studio(request: Request, body: ImageComposeStudioRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import compose_studio
-    try:
-        task = compose_studio.apply_async(kwargs=body.model_dump())
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
-    redis = await get_redis()
-    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
-    return TaskResponse(task_id=task.id, status="queued")
+    return await _enqueue_task(compose_studio, body.model_dump(), str(current_user.id))
 
 
 @router.post("/image/segment-click", response_model=TaskResponse, status_code=202)
-async def enqueue_segment_click(body: ImageSegmentClickRequest, current_user: User = Depends(get_current_user)):
+@limiter.limit(RATE_TASK_IMAGE)
+async def enqueue_segment_click(request: Request, body: ImageSegmentClickRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import segment_click
-    try:
-        task = segment_click.apply_async(kwargs=body.model_dump())
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
-    redis = await get_redis()
-    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
-    return TaskResponse(task_id=task.id, status="queued")
+    return await _enqueue_task(segment_click, body.model_dump(), str(current_user.id))
 
 
 @router.post("/image/edit", response_model=TaskResponse, status_code=202)
-async def enqueue_edit_image(body: ImageEditRequest, current_user: User = Depends(get_current_user)):
+@limiter.limit(RATE_TASK_IMAGE_EDIT)
+async def enqueue_edit_image(request: Request, body: ImageEditRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.image import edit_image
-    try:
-        task = edit_image.apply_async(kwargs=body.model_dump())
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
-    redis = await get_redis()
-    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
-    return TaskResponse(task_id=task.id, status="queued")
+    return await _enqueue_task(edit_image, body.model_dump(), str(current_user.id))
 
 
 class AgentRequest(BaseModel):
@@ -254,27 +228,17 @@ class WebSearchRequest(BaseModel):
 
 
 @router.post("/ai/agent", response_model=TaskResponse, status_code=202)
-async def enqueue_agent(body: AgentRequest, current_user: User = Depends(get_current_user)):
+@limiter.limit(RATE_TASK_AI_AGENT)
+async def enqueue_agent(request: Request, body: AgentRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.ai import run_agent
-    try:
-        task = run_agent.apply_async(kwargs=body.model_dump())
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
-    redis = await get_redis()
-    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
-    return TaskResponse(task_id=task.id, status="queued")
+    return await _enqueue_task(run_agent, body.model_dump(), str(current_user.id))
 
 
 @router.post("/ai/search", response_model=TaskResponse, status_code=202)
-async def enqueue_search(body: WebSearchRequest, current_user: User = Depends(get_current_user)):
+@limiter.limit(RATE_TASK_AI_SEARCH)
+async def enqueue_search(request: Request, body: WebSearchRequest, current_user: User = Depends(get_current_user)):
     from app.tasks.ai import web_search
-    try:
-        task = web_search.apply_async(kwargs=body.model_dump())
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
-    redis = await get_redis()
-    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
-    return TaskResponse(task_id=task.id, status="queued")
+    return await _enqueue_task(web_search, body.model_dump(), str(current_user.id))
 
 
 # ── Knowledge 태스크 ──────────────────────────────────────────────────────────
@@ -310,20 +274,14 @@ async def enqueue_knowledge_process(
     b64 = base64.b64encode(raw).decode()
 
     from app.tasks.knowledge import process_and_embed
-    try:
-        task = process_and_embed.apply_async(kwargs={
-            "knowledge_id": knowledge_id,
-            "file_bytes_b64": b64,
-            "content_type": file.content_type or "text/plain",
-            "filename": file.filename or "",
-            "embedding_provider": embedding_provider,
-            "embedding_model": embedding_model,
-        })
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Task queue unavailable: {exc}")
-    redis = await get_redis()
-    await redis.setex(key_task_owner(str(task.id)), TASK_OWNER_TTL, str(current_user.id))  # C4: task_time_limit(1800s) × 4 버퍼
-    return TaskResponse(task_id=task.id, status="queued")
+    return await _enqueue_task(process_and_embed, {
+        "knowledge_id": knowledge_id,
+        "file_bytes_b64": b64,
+        "content_type": file.content_type or "text/plain",
+        "filename": file.filename or "",
+        "embedding_provider": embedding_provider,
+        "embedding_model": embedding_model,
+    }, str(current_user.id))
 
 
 # ── 문서 즉시 추출 (동기, 채팅 컨텍스트용) ──────────────────────────────────────
@@ -365,14 +323,17 @@ async def extract_document(
 
     # 확장자로 타입 보정
     if not content_type or content_type == "application/octet-stream":
-        if filename.lower().endswith(".pdf"):
-            content_type = "application/pdf"
-        elif filename.lower().endswith(".docx"):
-            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        elif filename.lower().endswith((".md", ".markdown")):
-            content_type = "text/markdown"
-        else:
-            content_type = "text/plain"
+        _fn = filename.lower()
+        _EXT_TYPE = {
+            ".pdf":      "application/pdf",
+            ".docx":     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".md":       "text/markdown",
+            ".markdown": "text/markdown",
+        }
+        content_type = next(
+            (ct for ext, ct in _EXT_TYPE.items() if _fn.endswith(ext)),
+            "text/plain",
+        )
 
     if content_type not in SUPPORTED_TYPES and not content_type.startswith("text/"):
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}")

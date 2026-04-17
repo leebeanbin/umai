@@ -61,15 +61,6 @@ export default function PlaygroundPage() {
   );
 }
 
-function ComingSoon({ label }: { label: string }) {
-  return (
-    <div className="h-full flex flex-col items-center justify-center gap-3 text-text-muted">
-      <FlaskConical size={36} className="opacity-30" />
-      <p className="text-sm">{label} — Coming Soon</p>
-    </div>
-  );
-}
-
 // ── Images Playground ─────────────────────────────────────────────────────────
 
 type ImageModel = "dall-e-3" | "dall-e-2";

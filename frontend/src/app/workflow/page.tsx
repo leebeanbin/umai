@@ -17,13 +17,14 @@ export default function WorkflowListPage() {
   const [workflows, setWorkflows] = useState<WorkflowOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (authLoading) return;
     if (!user) { setLoading(false); return; }
     apiListWorkflows()
       .then(setWorkflows)
-      .catch(() => {})
+      .catch(() => setLoadError("워크플로우를 불러오지 못했습니다. 잠시 후 다시 시도해주세요."))
       .finally(() => setLoading(false));
   }, [user, authLoading]);
 
@@ -64,6 +65,11 @@ export default function WorkflowListPage() {
 
       {/* 본문 */}
       <div className="flex-1 overflow-y-auto p-6">
+        {loadError && (
+          <div className="mb-4 px-4 py-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-sm">
+            {loadError}
+          </div>
+        )}
         {loading ? (
           <div className="flex items-center justify-center h-40">
             <Loader2 size={20} className="animate-spin text-text-muted" />

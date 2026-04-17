@@ -159,7 +159,7 @@ export default function AdminAnalyticsPage() {
     }
   };
 
-  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, []);
 
   if (me && me.role !== "admin") {
     return <div className="flex h-full items-center justify-center text-sm text-text-muted">관리자 권한이 필요합니다.</div>;

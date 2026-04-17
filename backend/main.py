@@ -1,3 +1,36 @@
+"""
+Umai FastAPI 애플리케이션 엔트리포인트.
+
+## 시작 순서
+
+1. `lifespan` 컨텍스트 진입:
+   - PostgreSQL 테이블 생성 (Alembic 마이그레이션 없을 때 폴백)
+   - Redis 연결 초기화 및 ping 확인
+   - 프로덕션 환경 강제 검증 (HTTPS, 시크릿 길이)
+2. 모든 라우터 등록 (`/api/v1/*`)
+3. 미들웨어 스택 (적용 역순으로 정렬):
+   - SlowAPIMiddleware: IP 기반 전역 rate limit (200 req/min)
+   - SessionMiddleware: OAuth state 세션 쿠키
+   - GZipMiddleware: 1 KB 이상 응답 자동 압축
+   - CORSMiddleware: FRONTEND_URL 화이트리스트 (프로덕션 단일 도메인)
+
+## Rate Limiting 전략
+
+Global limiter (main.py) + 엔드포인트 limiter (각 라우터) 두 계층으로 구성.
+- 전역 200 req/min: 무차별 스캔, DDoS 1차 방어
+- 엔드포인트별 한도: constants.py 중앙 관리 (RATE_AUTH_LOGIN 등)
+- IP 추출: Nginx X-Real-IP 헤더 우선 (L7 프록시 환경에서 클라이언트 조작 불가)
+
+## 오류 처리
+
+AppException → 공통 JSON 응답 `{detail, code}` 포맷.
+RateLimitExceeded → 429 + Retry-After 헤더 (SlowAPI 기본값).
+Unhandled 500 → FastAPI 기본 처리 (로그 + 500 응답).
+
+## 헬스체크
+
+GET /api/v1/health → DB/Redis 연결 상태 JSON. 로드밸런서 health probe 용도.
+"""
 import time
 from contextlib import asynccontextmanager
 

@@ -22,6 +22,7 @@ from app.core.security import create_access_token
 from app.core.redis import access_set
 from app.models import user, chat, workspace   # noqa: F401
 from app.models import settings as _           # noqa: F401
+from app.models import workflow, fine_tune     # noqa: F401
 
 _ASYNC_URL = os.getenv(
     "TEST_DATABASE_URL",
@@ -32,7 +33,10 @@ _SYNC_URL = _ASYNC_URL.replace("+asyncpg", "")
 # 삭제 순서 (외래키 의존 역순)
 _TRUNCATE_TABLES = [
     "chat_members", "messages", "chats", "folders",
-    "knowledge_items", "workspace_items", "system_settings", "users",
+    "knowledge_items", "workspace_items", "system_settings",
+    "workflow_run_steps", "workflow_runs", "workflows",
+    "fine_tune_jobs", "training_datasets",
+    "users",
 ]
 
 
@@ -68,6 +72,8 @@ def test_app(_create_tables):
     from app.routers import auth, chats, folders, admin, workspace as ws
     from app.routers import tasks as tasks_router
     from app.routers import rag as rag_router
+    from app.routers import workflows as workflows_router
+    from app.routers import fine_tune as fine_tune_router
 
     app = FastAPI()
     # SessionMiddleware는 필요 (OAuth state), SlowAPI는 제외 (loop 충돌)
@@ -80,13 +86,15 @@ def test_app(_create_tables):
             content={"detail": exc.detail, "code": exc.code.name},
         )
 
-    app.include_router(auth.router,         prefix="/api/v1")
-    app.include_router(chats.router,        prefix="/api/v1")
-    app.include_router(folders.router,      prefix="/api/v1")
-    app.include_router(admin.router,        prefix="/api/v1")
-    app.include_router(ws.router,           prefix="/api/v1")
-    app.include_router(tasks_router.router, prefix="/api/v1")
-    app.include_router(rag_router.router,   prefix="/api/v1")
+    app.include_router(auth.router,                prefix="/api/v1")
+    app.include_router(chats.router,               prefix="/api/v1")
+    app.include_router(folders.router,             prefix="/api/v1")
+    app.include_router(admin.router,               prefix="/api/v1")
+    app.include_router(ws.router,                  prefix="/api/v1")
+    app.include_router(tasks_router.router,        prefix="/api/v1")
+    app.include_router(rag_router.router,          prefix="/api/v1")
+    app.include_router(workflows_router.router,    prefix="/api/v1")
+    app.include_router(fine_tune_router.router,    prefix="/api/v1")
     return app
 
 

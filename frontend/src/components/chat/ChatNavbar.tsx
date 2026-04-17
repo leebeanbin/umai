@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useLanguage } from "@/components/providers/LanguageProvider";
 import { loadSettings, saveSettings, loadModels, type DynamicModel } from "@/lib/appStore";
 import { loadSessions, updateSessionModel } from "@/lib/store";
 import ModelSelect from "@/components/common/ModelSelect";
@@ -22,8 +21,6 @@ export default function ChatNavbar({
   onToggleFineTuneMode,
   onSaveFineTuneExamples,
 }: Props) {
-  const { t } = useLanguage();
-
   // null = not yet hydrated (SSR/client 불일치 방지 — localStorage는 클라이언트 전용)
   const [navState, setNavState] = useState<{
     model: DynamicModel;

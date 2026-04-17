@@ -28,7 +28,7 @@ from app.core.config import settings
 from app.core.constants import (
     REFRESH_COOKIE_MAX_AGE, OAUTH_STATE_BYTES,
     RATE_AUTH_REFRESH, RATE_AUTH_LOGOUT, RATE_AUTH_OAUTH,
-    RATE_AUTH_ONBOARD, RATE_AUTH_TOKEN_EXCH,
+    RATE_AUTH_ONBOARD, RATE_AUTH_TOKEN_EXCH, RATE_AUTH_UPDATE_ME,
 )
 from app.core.database import get_db
 from app.core.errors import ErrCode
@@ -209,7 +209,9 @@ class UpdateMeRequest(BaseModel):
 
 
 @router.patch("/me", response_model=UserOut)
+@limiter.limit(RATE_AUTH_UPDATE_ME)
 async def update_me(
+    request: Request,
     body: UpdateMeRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -294,6 +296,19 @@ async def _oauth_finish(state: str, user_kwargs: dict, db: AsyncSession):
     return await _redirect_with_code(str(user.id), frontend_origin)
 
 
+async def _authorize_oauth(oauth_client, request: Request) -> tuple[dict, str]:
+    """OAuth 토큰 교환 + state 파라미터 검증 공통 처리."""
+    try:
+        token = await oauth_client.authorize_access_token(request)
+    except OAuthError as e:
+        logger.warning("OAuth error: %s", e)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Authentication failed")
+    state = request.query_params.get("state")
+    if not state:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing OAuth state")
+    return token, state
+
+
 # ── Google OAuth ──────────────────────────────────────────────────────────────
 
 @router.get("/oauth/google")
@@ -305,16 +320,7 @@ async def google_login(request: Request, db: AsyncSession = Depends(get_db)):
 @router.get("/oauth/google/callback")
 @limiter.limit(RATE_AUTH_OAUTH)
 async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
-    try:
-        token = await oauth.google.authorize_access_token(request)
-    except OAuthError as e:
-        logger.warning("Google OAuth error: %s", e)
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Authentication failed")
-
-    state = request.query_params.get("state")
-    if not state:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing OAuth state")
-
+    token, state = await _authorize_oauth(oauth.google, request)
     userinfo = token.get("userinfo") or await oauth.google.userinfo(token=token)
     return await _oauth_finish(
         state=state,
@@ -340,15 +346,7 @@ async def github_login(request: Request, db: AsyncSession = Depends(get_db)):
 @router.get("/oauth/github/callback")
 @limiter.limit(RATE_AUTH_OAUTH)
 async def github_callback(request: Request, db: AsyncSession = Depends(get_db)):
-    try:
-        token = await oauth.github.authorize_access_token(request)
-    except OAuthError as e:
-        logger.warning("GitHub OAuth error: %s", e)
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Authentication failed")
-
-    state = request.query_params.get("state")
-    if not state:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Missing OAuth state")
+    token, state = await _authorize_oauth(oauth.github, request)
 
     resp = await oauth.github.get("user", token=token)
     profile = resp.json()

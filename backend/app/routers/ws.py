@@ -171,9 +171,8 @@ async def chat_ws(
                 await websocket.close(code=4008)
                 break
             if not await check_ws_rate_limit(user_id):
-                await websocket.send_text(
-                    json.dumps({"type": "error", "code": "rate_limited"})
-                )
+                await websocket.close(code=4029)
+                break
     except WebSocketDisconnect:
         pass
     finally:

@@ -16,6 +16,11 @@ from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.constants import (
+    RATE_WORKSPACE_ITEM_WRITE,
+    RATE_WORKSPACE_KNOWLEDGE_UPLOAD,
+    RATE_WORKSPACE_KNOWLEDGE_DELETE,
+)
 from app.core.database import get_db
 from app.models.user import User
 from app.routers.deps import get_current_user
@@ -88,7 +93,9 @@ async def list_items(
 
 
 @router.post("/items", response_model=WorkspaceItemOut, status_code=201)
+@limiter.limit(RATE_WORKSPACE_ITEM_WRITE)
 async def create_item(
+    request: Request,
     body: WorkspaceItemCreate,
     svc: WorkspaceService = Depends(get_workspace_service),
     user: User = Depends(get_current_user),
@@ -104,7 +111,9 @@ async def create_item(
 
 
 @router.patch("/items/{item_id}", response_model=WorkspaceItemOut)
+@limiter.limit(RATE_WORKSPACE_ITEM_WRITE)
 async def update_item(
+    request: Request,
     item_id: uuid.UUID,
     body: WorkspaceItemPatch,
     svc: WorkspaceService = Depends(get_workspace_service),
@@ -116,7 +125,9 @@ async def update_item(
 
 
 @router.delete("/items/{item_id}", status_code=204)
+@limiter.limit(RATE_WORKSPACE_ITEM_WRITE)
 async def delete_item(
+    request: Request,
     item_id: uuid.UUID,
     svc: WorkspaceService = Depends(get_workspace_service),
     user: User = Depends(get_current_user),
@@ -137,7 +148,7 @@ async def list_knowledge(
 
 
 @router.post("/knowledge", response_model=KnowledgeItemOut, status_code=201)
-@limiter.limit("20/minute")
+@limiter.limit(RATE_WORKSPACE_KNOWLEDGE_UPLOAD)
 async def upload_knowledge(
     request: Request,
     file: UploadFile = File(...),
@@ -161,7 +172,9 @@ async def upload_knowledge(
 
 
 @router.delete("/knowledge/{item_id}", status_code=204)
+@limiter.limit(RATE_WORKSPACE_KNOWLEDGE_DELETE)
 async def delete_knowledge(
+    request: Request,
     item_id: uuid.UUID,
     svc: WorkspaceService = Depends(get_workspace_service),
     user: User = Depends(get_current_user),
