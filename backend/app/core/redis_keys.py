@@ -89,3 +89,10 @@ def key_embed_query(content_hash: str) -> str:
 def key_http_rate_limit(user_id: str, endpoint: str) -> str:
     """HTTP 엔드포인트별 사용자 rate limit Sorted Set."""
     return f"http_rate:{endpoint}:{user_id}"
+
+
+# ── DAU (Daily Active Users) ──────────────────────────────────────────────────
+
+def key_dau(date_str: str) -> str:
+    """날짜별 DAU HyperLogLog 키. date_str 형식: YYYY-MM-DD."""
+    return f"dau:{date_str}"

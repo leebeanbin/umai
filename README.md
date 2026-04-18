@@ -527,7 +527,7 @@ umai/
             ├── api/
             │   ├── backendClient.ts       ← apiFetch wrapper (auth header, error norm)
             │   └── endpoints.ts           ← typed API endpoint constants
-            └── store.ts                   ← Zustand global state
+            └── store.ts                   ← localStorage-based global state (no external state lib)
 ```
 
 ---

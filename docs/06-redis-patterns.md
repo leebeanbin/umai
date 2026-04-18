@@ -133,16 +133,17 @@ Sorted Set은 "지금 이 순간으로부터 과거 1분" 기준이므로 항상
 ## HyperLogLog — DAU 집계
 
 ```python
-# backend/app/core/redis.py:264
+# backend/app/core/redis.py
 
 async def dau_add(user_id: str, date_str: str) -> None:
     r = await get_redis()
-    await r.pfadd(f"dau:{date_str}", user_id)  # PFADD
-    await r.expire(f"dau:{date_str}", 32 * 86400)
+    k = key_dau(date_str)          # "dau:{date_str}" — redis_keys.py에서 관리
+    await r.pfadd(k, user_id)      # PFADD
+    await r.expire(k, 32 * 86400)
 
 async def dau_count(date_str: str) -> int:
     r = await get_redis()
-    return await r.pfcount(f"dau:{date_str}")   # PFCOUNT
+    return await r.pfcount(key_dau(date_str))   # PFCOUNT
 ```
 
 **HyperLogLog를 사용하는 이유:**
@@ -163,7 +164,7 @@ async def dau_count_range(date_strs: list[str]) -> list[int]:
     r = await get_redis()
     pipe = r.pipeline()
     for d in date_strs:
-        pipe.pfcount(f"dau:{d}")
+        pipe.pfcount(key_dau(d))
     return list(await pipe.execute())
 ```
 

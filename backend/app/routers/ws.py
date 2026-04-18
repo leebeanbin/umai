@@ -25,7 +25,7 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.core.redis_keys import key_chat_channel
+from app.core.redis_keys import key_chat_channel, key_task_notification
 from app.core.constants import (
     WS_MAX_CONN_PER_USER_PER_ROOM, WS_MAX_CONN_TASK_CHANNEL,
     WS_MAX_MESSAGE_BYTES, WS_TOKEN_REVALIDATE_INTERVAL,
@@ -221,7 +221,7 @@ async def tasks_ws(
     # publish_task_done() in tasks/_utils.py publishes to task:{owner_id}, so
     # this subscription is already scoped to the current user — no cross-user
     # event leakage is possible via this channel.
-    await pubsub.subscribe(f"task:{user_id}")
+    await pubsub.subscribe(key_task_notification(user_id))
 
     forward_task = asyncio.create_task(_pubsub_forward(pubsub, websocket))
     reauth_task  = asyncio.create_task(_periodic_token_revalidate(websocket, token))
@@ -235,5 +235,5 @@ async def tasks_ws(
         forward_task.cancel()
         reauth_task.cancel()
         manager.remove("__tasks__", meta)
-        await pubsub.unsubscribe(f"task:{user_id}")
+        await pubsub.unsubscribe(key_task_notification(user_id))
         await pubsub_client.aclose()

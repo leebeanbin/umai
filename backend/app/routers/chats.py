@@ -41,6 +41,7 @@ from slowapi.util import get_remote_address
 
 limiter = Limiter(key_func=get_remote_address)
 from app.core.redis import publish_event
+from app.core.redis_keys import key_chat_channel
 from app.services.chat_service import ChatService
 from app.services.title_service import (
     TitleService,
@@ -210,7 +211,7 @@ async def _save_messages_bg(chat_id: uuid.UUID, rows: list[dict]) -> None:
                 stmt = pg_insert(Message).values(rows).on_conflict_do_nothing(index_elements=["id"])
                 await db.execute(stmt)
                 await db.commit()
-            await publish_event(f"chat:{chat_id}", {
+            await publish_event(key_chat_channel(str(chat_id)), {
                 "type": "messages_saved",
                 "ids": [str(r["id"]) for r in rows],
             })

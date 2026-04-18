@@ -45,6 +45,7 @@ from app.core.redis_keys import (
     key_access, key_session, key_user_cache,
     key_oauth_code, key_oauth_origin,
     key_ws_rate_limit, key_embed_query, key_http_rate_limit,
+    key_dau,
 )
 from app.core.constants import (
     REDIS_MAX_CONNECTIONS, REDIS_SOCKET_CONNECT_TIMEOUT, REDIS_SOCKET_TIMEOUT,
@@ -264,15 +265,15 @@ DAU_TTL = 32 * 86_400  # 32일
 async def dau_add(user_id: str, date_str: str) -> None:
     """유저를 해당 날짜 DAU HyperLogLog에 등록."""
     r = await get_redis()
-    key = f"dau:{date_str}"
-    await r.pfadd(key, user_id)
-    await r.expire(key, DAU_TTL)
+    k = key_dau(date_str)
+    await r.pfadd(k, user_id)
+    await r.expire(k, DAU_TTL)
 
 
 async def dau_count(date_str: str) -> int:
     """해당 날짜 유니크 활성 유저 수 추정 (±0.81% 오차)."""
     r = await get_redis()
-    return await r.pfcount(f"dau:{date_str}")
+    return await r.pfcount(key_dau(date_str))
 
 
 async def dau_count_range(date_strs: list[str]) -> list[int]:
@@ -280,7 +281,7 @@ async def dau_count_range(date_strs: list[str]) -> list[int]:
     r = await get_redis()
     pipe = r.pipeline()
     for d in date_strs:
-        pipe.pfcount(f"dau:{d}")
+        pipe.pfcount(key_dau(d))
     return list(await pipe.execute())
 
 
