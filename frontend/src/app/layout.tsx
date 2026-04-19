@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Geist } from "next/font/google";
 import "./globals.css";
 import AppShell from "@/components/layout/AppShell";
 import ThemeProvider from "@/components/providers/ThemeProvider";
@@ -7,7 +7,7 @@ import LanguageProvider from "@/components/providers/LanguageProvider";
 import { SidebarProvider } from "@/components/providers/SidebarProvider";
 import AuthProvider from "@/components/providers/AuthProvider";
 
-const inter = Inter({ subsets: ["latin"] });
+const geist = Geist({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Umai-bin",
@@ -24,7 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* 테마 flash 방지: 렌더 전 동기 실행 */}
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
-      <body className={`${inter.className} bg-base text-text-primary h-full`}>
+      <body className={`${geist.className} bg-base text-text-primary h-full`}>
         <LanguageProvider>
           <ThemeProvider>
             <AuthProvider>

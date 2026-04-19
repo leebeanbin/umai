@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ImageIcon, Lightbulb, Sparkles, StopCircle, Zap } from "lucide-react";
+import { AlertTriangle, Aperture, Building2, ImageIcon, Leaf, Lightbulb, Sparkles, StopCircle, Sun, Telescope, Zap } from "lucide-react";
+import type { LucideProps } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { streamChat } from "@/lib/apis/chat";
 
@@ -9,7 +10,7 @@ type Phase = "idle" | "masking" | "ready" | "queued" | "processing" | "succeeded
 
 export type BackgroundPreset = {
   label: string;
-  icon: string;
+  Icon: React.ComponentType<LucideProps> | null;
   bgType: "solid" | "gradient" | "ai";
   bgColor?: string;
   bgColor2?: string;
@@ -17,18 +18,18 @@ export type BackgroundPreset = {
 };
 
 export const BACKGROUNDS: BackgroundPreset[] = [
-  // solid / gradient (즉시, API 비용 없음)
-  { label: "화이트",    icon: "⬜", bgType: "solid",    bgColor: "#ffffff", prompt: "" },
-  { label: "블랙",     icon: "⬛", bgType: "solid",    bgColor: "#111111", prompt: "" },
-  { label: "그레이",    icon: "🔳", bgType: "gradient", bgColor: "#f5f5f5", bgColor2: "#c0c0c0", prompt: "" },
-  { label: "크림",     icon: "🟫", bgType: "gradient", bgColor: "#fdf6ec", bgColor2: "#e8d5b0", prompt: "" },
+  // solid / gradient (즉시, API 비용 없음) — Icon null: color swatch으로 렌더링
+  { label: "화이트",    Icon: null, bgType: "solid",    bgColor: "#ffffff", prompt: "" },
+  { label: "블랙",     Icon: null, bgType: "solid",    bgColor: "#111111", prompt: "" },
+  { label: "그레이",    Icon: null, bgType: "gradient", bgColor: "#f5f5f5", bgColor2: "#c0c0c0", prompt: "" },
+  { label: "크림",     Icon: null, bgType: "gradient", bgColor: "#fdf6ec", bgColor2: "#e8d5b0", prompt: "" },
   // AI 생성 배경 (DALL-E 3, 실제 사진 품질)
-  { label: "선셋",     icon: "🌅", bgType: "ai", prompt: "beautiful golden sunset sky, warm orange and pink gradient clouds, cinematic" },
-  { label: "도시 야경", icon: "🌃", bgType: "ai", prompt: "city night skyline, glowing windows, bokeh lights, cinematic photography" },
-  { label: "숲 배경",  icon: "🌿", bgType: "ai", prompt: "lush green forest, natural soft dappled light, shallow depth of field" },
-  { label: "Bokeh",  icon: "✨", bgType: "ai", prompt: "soft pastel bokeh background, dreamy blur, shallow depth of field" },
-  { label: "우주",     icon: "🌌", bgType: "ai", prompt: "deep space nebula background, purple and blue cosmic, stars" },
-  { label: "스튜디오", icon: "💡", bgType: "ai", prompt: "professional studio photography background, soft gradient grey, rim lighting" },
+  { label: "선셋",     Icon: Sun,       bgType: "ai", prompt: "beautiful golden sunset sky, warm orange and pink gradient clouds, cinematic" },
+  { label: "도시 야경", Icon: Building2, bgType: "ai", prompt: "city night skyline, glowing windows, bokeh lights, cinematic photography" },
+  { label: "숲 배경",  Icon: Leaf,      bgType: "ai", prompt: "lush green forest, natural soft dappled light, shallow depth of field" },
+  { label: "Bokeh",  Icon: Aperture,  bgType: "ai", prompt: "soft pastel bokeh background, dreamy blur, shallow depth of field" },
+  { label: "우주",     Icon: Telescope, bgType: "ai", prompt: "deep space nebula background, purple and blue cosmic, stars" },
+  { label: "스튜디오", Icon: Lightbulb, bgType: "ai", prompt: "professional studio photography background, soft gradient grey, rim lighting" },
 ];
 
 type Props = {
@@ -235,7 +236,7 @@ export default function AssistPanel({
               <p className="text-xs font-medium text-text-muted">스튜디오 배경</p>
             </div>
             <p className="text-[10px] text-text-muted leading-relaxed px-0.5">
-              자동 누끼 후 배경 교체. <span className="text-text-secondary">⬜⬛🔳🟫 즉시</span> · <span className="text-accent">AI 배경은 DALL-E 3 사용</span>
+              자동 누끼 후 배경 교체. <span className="text-text-secondary">솔리드·그라디언트 즉시</span> · <span className="text-accent">AI 배경은 DALL-E 3 사용</span>
             </p>
             <div className="grid grid-cols-2 gap-1.5">
               {BACKGROUNDS.map((bg) => (
@@ -250,7 +251,10 @@ export default function AssistPanel({
                       : "text-text-secondary bg-elevated border border-border hover:border-accent/40 hover:text-accent"
                     }`}
                 >
-                  <span>{bg.icon}</span>
+                  {bg.Icon
+                    ? <bg.Icon size={11} className="flex-shrink-0" />
+                    : <span className="w-3.5 h-3.5 rounded-sm flex-shrink-0 border border-black/10" style={{ background: bg.bgColor }} />
+                  }
                   <span>{bg.label}</span>
                   {bg.bgType === "ai" && <span className="ml-auto text-[9px] opacity-60">AI</span>}
                 </button>

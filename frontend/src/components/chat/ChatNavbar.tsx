@@ -95,12 +95,12 @@ export default function ChatNavbar({
         <ModelSelect value={navState.model} onChange={handleModelChange} />
 
         {navState.inputBadge && (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium">
+          <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20 font-medium">
             IN→{navState.inputBadge}
           </span>
         )}
         {navState.outputBadge && (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-medium">
+          <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20 font-medium">
             OUT→{navState.outputBadge}
           </span>
         )}

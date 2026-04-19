@@ -3,6 +3,13 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
 
+  images: {
+    remotePatterns: [
+      { protocol: "https", hostname: "lh3.googleusercontent.com" },
+      { protocol: "https", hostname: "avatars.githubusercontent.com" },
+    ],
+  },
+
   // Proxy /api/* → backend server
   // INTERNAL_API_URL is a server-side-only env var (not exposed to browser)
   // dev:  set in .env.local          (INTERNAL_API_URL=http://localhost:8001)

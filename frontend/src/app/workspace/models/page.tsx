@@ -136,9 +136,9 @@ export default function ModelsPage() {
                 className="flex items-center gap-3 transition rounded-2xl w-full p-2.5 hover:bg-hover cursor-default"
               >
                 <div className={`size-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 ${
-                  m.provider === "OpenAI" ? "bg-gray-700" :
-                  m.provider === "Google" ? "bg-blue-600" :
-                  m.provider === "Anthropic" ? "bg-orange-600" : "bg-accent"
+                  m.provider === "OpenAI" ? "bg-elevated border border-border" :
+                  m.provider === "Google" ? "bg-accent" :
+                  m.provider === "Anthropic" ? "bg-accent-hover" : "bg-accent"
                 }`}>
                   {m.name[0]}
                 </div>
@@ -177,7 +177,7 @@ export default function ModelsPage() {
                   </div>
                   <button
                     onClick={() => handleDelete(m.id)}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-white/5 text-text-muted hover:text-red-400 transition"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-danger/10 text-text-muted hover:text-danger transition"
                   >
                     <X size={13} />
                   </button>

@@ -245,8 +245,8 @@ export default function AdminAnalyticsPage() {
                 />
                 <KpiCard
                   icon={<Calendar size={15} />}
-                  iconBg="bg-purple-400/10"
-                  iconColor="text-purple-400"
+                  iconBg="bg-accent/10"
+                  iconColor="text-accent"
                   label={ko ? "이번 주 신규" : "New This Week"}
                   value={stats?.new_this_week ?? 0}
                   trend={stats && stats.new_this_week > 0 ? "up" : "flat"}
@@ -301,11 +301,11 @@ export default function AdminAnalyticsPage() {
                       barColor="bg-green-400"
                     />
                     <MetricRow
-                      icon={<Clock size={13} className="text-purple-400" />}
+                      icon={<Clock size={13} className="text-accent" />}
                       label={ko ? "대기 유저" : "Pending Users"}
                       value={String(m?.pendingUsers ?? 0)}
                       barPct={stats && stats.total_users > 0 ? ((m?.pendingUsers ?? 0) / stats.total_users) * 100 : 0}
-                      barColor="bg-purple-400"
+                      barColor="bg-accent"
                     />
                   </div>
                 </div>
@@ -369,8 +369,8 @@ export default function AdminAnalyticsPage() {
                         label={ko ? "이번 주 신규" : "New / week"}
                         value={stats.new_this_week}
                         max={Math.max(stats.total_users, 1)}
-                        color="bg-purple-400"
-                        icon={<TrendingUp size={12} className="text-purple-400" />}
+                        color="bg-accent"
+                        icon={<TrendingUp size={12} className="text-accent" />}
                       />
                     </div>
                   ) : (

@@ -60,11 +60,11 @@ function RunDetailDrawer({ runId, onClose }: { runId: string; onClose: () => voi
 
   return (
     <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/30" onClick={onClose} />
+      <div className="flex-1 bg-black/30" onClick={onClose} aria-hidden="true" />
       <aside className="w-[480px] bg-base border-l border-border flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
           <span className="text-xs font-semibold text-text-primary">실행 상세</span>
-          <button onClick={onClose} className="p-1 text-text-muted hover:text-text-primary"><X size={13} /></button>
+          <button onClick={onClose} aria-label="Close" className="p-1 text-text-muted hover:text-text-primary"><X size={13} /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">

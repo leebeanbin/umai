@@ -334,7 +334,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
               <div className="mx-2 mt-2.5 pb-1.5 flex items-center flex-wrap gap-2">
                 {images.map((img) => (
                   <div key={img.id} className="relative group/file">
-                    <img src={img.dataUrl} alt={img.name} className="size-14 rounded-xl object-cover border border-border" /> {/* eslint-disable-line @next/next/no-img-element */}
+                    <img src={img.dataUrl} alt={img.name} loading="lazy" className="size-14 rounded-xl object-cover border border-border" /> {/* eslint-disable-line @next/next/no-img-element */}
                     <button
                       type="button"
                       onClick={() => setImages((prev) => prev.filter((i) => i.id !== img.id))}
@@ -346,7 +346,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
                       type="button"
                       onClick={() => setMaskTarget(img)}
                       title={t("input.mask")}
-                      className="absolute -bottom-1 -left-1 bg-blue-600 text-white rounded-full size-4 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition"
+                      className="absolute -bottom-1 -left-1 bg-accent text-white rounded-full size-4 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition"
                     >
                       <Brush size={9} />
                     </button>
@@ -355,7 +355,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
                       onClick={() => handleResize(img)}
                       disabled={resizingIds.has(img.id)}
                       title={lang === "ko" ? "1024px로 리사이즈" : "Resize to 1024px"}
-                      className="absolute -bottom-1 -right-1 bg-violet-600 text-white rounded-full size-4 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition disabled:opacity-60"
+                      className="absolute -bottom-1 -right-1 bg-accent-hover text-white rounded-full size-4 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition disabled:opacity-60"
                     >
                       {resizingIds.has(img.id)
                         ? <Loader2 size={9} className="animate-spin" />

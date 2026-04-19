@@ -343,7 +343,7 @@ function ImagesPlayground() {
             </div>
           </div>
           {error && (
-            <p className="mt-2 text-xs text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-2 rounded-xl">
+            <p className="mt-2 text-xs text-danger bg-danger/10 border border-danger/20 px-3 py-2 rounded-xl">
               {error}
             </p>
           )}
@@ -391,7 +391,7 @@ function ImagesPlayground() {
             onClick={(e) => e.stopPropagation()}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={preview.url} alt={preview.prompt} className="w-full object-contain max-h-[70vh]" />
+            <img src={preview.url} alt={preview.prompt} loading="lazy" className="w-full object-contain max-h-[70vh]" />
             <div className="p-4 flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-text-secondary mb-0.5">
@@ -714,7 +714,7 @@ function ChatPlayground({ t }: { t: TFn }) {
               style={{ maxHeight: "120px" }}
             />
             {generating ? (
-              <button onClick={stop} className="p-1.5 rounded-full bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors shrink-0">
+              <button onClick={stop} className="p-1.5 rounded-full bg-danger/15 text-danger hover:bg-danger/25 transition-colors shrink-0">
                 <StopCircle size={16} />
               </button>
             ) : (
@@ -868,7 +868,7 @@ function CompletionsPlayground({ t }: { t: TFn }) {
           {generating ? (
             <button
               onClick={handleStop}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-danger/15 text-danger hover:bg-danger/25 transition-colors"
             >
               <StopCircle size={14} />Stop
             </button>
@@ -951,7 +951,7 @@ function PlaygroundMessage({
             : "bg-surface border border-border text-text-primary"
         }`}>
           {message.error ? (
-            <span className="text-red-400 text-xs">{message.error}</span>
+            <span className="text-danger text-xs">{message.error}</span>
           ) : message.streaming && !message.content ? (
             <span className="inline-flex gap-1">
               <span className="size-1.5 rounded-full bg-text-muted animate-bounce" style={{ animationDelay: "0ms" }} />

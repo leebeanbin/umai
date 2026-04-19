@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shield, Settings, Search, MoreHorizontal, Crown, User, Ban, Loader2, ChevronRight, BarChart3, X } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
@@ -16,8 +17,8 @@ import { AdminNav } from "@/components/admin/AdminNav";
 type TFn = (key: TranslationKey) => string;
 
 const ROLE_STYLES: Record<string, string> = {
-  admin:   "text-amber-400 bg-amber-400/10 border-amber-400/20",
-  user:    "text-blue-400  bg-blue-400/10  border-blue-400/20",
+  admin:   "text-[--color-role-admin] bg-[--color-role-admin]/10 border-[--color-role-admin]/20",
+  user:    "text-accent bg-accent/10 border-accent/20",
   pending: "text-text-muted bg-hover border-border",
 };
 
@@ -124,7 +125,7 @@ function UsersPanel({ t }: { t: TFn }) {
       {mutationError && (
         <div className="flex items-center justify-between gap-2 px-4 py-2 rounded-lg bg-danger/10 border border-danger/20 text-sm text-danger">
           <span>{mutationError}</span>
-          <button onClick={() => setMutationError(null)} className="shrink-0 hover:opacity-70 transition-opacity">
+          <button onClick={() => setMutationError(null)} aria-label="Dismiss" className="shrink-0 hover:opacity-70 transition-opacity">
             <X size={14} />
           </button>
         </div>
@@ -184,8 +185,7 @@ function UsersPanel({ t }: { t: TFn }) {
             return (
               <div key={user.id} className="flex items-center gap-3 px-4 py-3 hover:bg-hover transition-colors group">
                 {user.avatar_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={user.avatar_url} alt={user.name} className="size-8 rounded-full object-cover shrink-0" />
+                  <Image src={user.avatar_url} alt={user.name} width={32} height={32} className="size-8 rounded-full object-cover shrink-0" />
                 ) : (
                   <div
                     className="size-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
@@ -248,7 +248,7 @@ function UserMenu({
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden="true" />
           <div className="absolute right-0 top-full mt-1 w-44 bg-elevated border border-border rounded-xl shadow-xl z-50 py-1 overflow-hidden">
             {user.role !== "admin" && (
               <button

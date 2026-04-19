@@ -76,7 +76,7 @@ export default function ChatShareModal({ sessionId, sessionTitle, onClose }: Pro
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" onClick={onClose} aria-hidden="true">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
       <div
         className="relative w-full max-w-sm bg-surface border border-border rounded-2xl shadow-2xl p-5 flex flex-col gap-5"
@@ -88,7 +88,7 @@ export default function ChatShareModal({ sessionId, sessionTitle, onClose }: Pro
             <h2 className="text-sm font-semibold text-text-primary">공유 및 내보내기</h2>
             <p className="text-xs text-text-muted mt-0.5 truncate max-w-[220px]">{sessionTitle}</p>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-hover transition-colors shrink-0">
+          <button onClick={onClose} aria-label="Close" className="p-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-hover transition-colors shrink-0">
             <X size={15} />
           </button>
         </div>

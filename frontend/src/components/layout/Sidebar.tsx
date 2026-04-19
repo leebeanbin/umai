@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -226,7 +227,7 @@ export default function Sidebar() {
       {/* 컨텍스트 메뉴 */}
       {contextMenu && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
+          <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} aria-hidden="true" />
           <div
             className="fixed z-50 w-52 bg-elevated border border-border rounded-xl shadow-xl overflow-hidden py-1"
             style={{
@@ -347,7 +348,7 @@ export default function Sidebar() {
           <div className="relative">
             {showUserMenu && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} aria-hidden="true" />
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-44 bg-elevated border border-border rounded-xl shadow-xl overflow-hidden py-1 z-50">
                   <button
                     onClick={() => { setShowSettings(true); setShowUserMenu(false); }}
@@ -389,8 +390,7 @@ export default function Sidebar() {
                 const pastel = user ? getPastelColor(user.id) : { bg: "hsl(220,55%,82%)", text: "hsl(220,45%,32%)" };
                 const initials = user ? getInitials(user.name) : "U";
                 return user?.avatar_url
-                  // eslint-disable-next-line @next/next/no-img-element
-                  ? <img src={user.avatar_url} alt={user.name} className="size-6 rounded-full object-cover" />
+                  ? <Image src={user.avatar_url} alt={user.name} width={24} height={24} className="size-6 rounded-full object-cover" />
                   : <div className="size-6 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: pastel.bg, color: pastel.text }}>{initials}</div>;
               })()}
             </button>
@@ -565,7 +565,7 @@ export default function Sidebar() {
           <div className="shrink-0 px-3 py-3 border-t border-border-subtle relative">
             {showUserMenu && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} aria-hidden="true" />
                 <div className="absolute bottom-full left-3 right-3 mb-2 bg-elevated border border-border rounded-xl shadow-xl overflow-hidden py-1 z-50">
                   <button
                     onClick={() => { setShowSettings(true); setShowUserMenu(false); }}
@@ -604,8 +604,7 @@ export default function Sidebar() {
               className="flex items-center gap-2.5 w-full px-2 py-1.5 rounded-xl text-sm text-text-secondary hover:bg-hover transition-colors group"
             >
               {user?.avatar_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={user.avatar_url} alt={user.name} className="size-6 rounded-full object-cover shrink-0" />
+                <Image src={user.avatar_url} alt={user.name} width={24} height={24} className="size-6 rounded-full object-cover shrink-0" />
               ) : (() => {
                 const pastel = user ? getPastelColor(user.id) : { bg: "hsl(220,55%,82%)", text: "hsl(220,45%,32%)" };
                 const initials = user ? getInitials(user.name) : "U";

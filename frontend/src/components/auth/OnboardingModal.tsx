@@ -36,11 +36,6 @@ export default function OnboardingModal({ user, onComplete }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-base/70 backdrop-blur-xl px-4">
-      {/* Glow */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden>
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full bg-accent/5 blur-3xl" />
-      </div>
-
       <div className="relative w-full max-w-sm bg-surface border border-border rounded-2xl shadow-2xl shadow-black/20 p-8 animate-modal">
         {/* Avatar preview */}
         <div className="flex flex-col items-center mb-6">

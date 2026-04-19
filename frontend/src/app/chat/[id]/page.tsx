@@ -287,15 +287,15 @@ export default function ChatSession() {
 
       {/* Temporary chat indicator */}
       {isTemp && (
-        <div className="flex items-center justify-between px-4 py-2 bg-amber-500/8 border-b border-amber-500/15">
-          <div className="flex items-center gap-2 text-xs text-amber-400">
+        <div className="flex items-center justify-between px-4 py-2 bg-[--color-warning-bg] border-b border-warning/15">
+          <div className="flex items-center gap-2 text-xs text-warning">
             <Clock size={12} />
             <span>{t("chat.temp.label")}</span>
-            <span className="text-amber-400/60">· {t("chat.temp.tooltip")}</span>
+            <span className="text-warning/60">· {t("chat.temp.tooltip")}</span>
           </div>
           <button
             onClick={saveTempChat}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs bg-amber-500/15 border border-amber-500/25 text-amber-400 hover:bg-amber-500/25 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs bg-warning/15 border border-warning/25 text-warning hover:bg-warning/25 transition-colors"
           >
             <BookmarkPlus size={11} />
             {tempSaved ? t("chat.temp.saved") : t("chat.temp.save")}

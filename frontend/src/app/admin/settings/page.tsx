@@ -132,7 +132,7 @@ function SaveBar({ onSave, saved, error }: { onSave: () => void; saved: boolean;
   return (
     <div className="sticky bottom-0 left-0 right-0 flex items-center justify-end gap-3 pt-4 pb-2 bg-gradient-to-t from-base to-transparent pointer-events-none">
       {error && (
-        <span className="pointer-events-auto text-xs text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-full">
+        <span className="pointer-events-auto text-xs text-danger bg-danger/10 border border-danger/20 px-3 py-1.5 rounded-full">
           {error}
         </span>
       )}
@@ -829,7 +829,7 @@ export default function AdminSettingsPage() {
                   {ollamaModelNames.map((name, i) => {
                     const caps = ollamaCapabilities[name] ?? [];
                     const CAP_STYLE: Record<string, string> = {
-                      vision: "bg-purple-400/10 text-purple-400 border-purple-400/20",
+                      vision: "bg-accent/10 text-accent border-accent/20",
                       ocr:    "bg-blue-400/10 text-blue-400 border-blue-400/20",
                       tools:  "bg-yellow-400/10 text-yellow-400 border-yellow-400/20",
                       code:   "bg-green-400/10 text-green-400 border-green-400/20",
@@ -865,7 +865,7 @@ export default function AdminSettingsPage() {
                             type="button"
                             onClick={() => deleteOllamaModel(name)}
                             disabled={ollamaDeleting === name}
-                            className="p-1 rounded-lg text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-40"
+                            className="p-1 rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 transition-colors disabled:opacity-40"
                             aria-label={`Delete ${name}`}
                           >
                             <Trash2 size={12} className={ollamaDeleting === name ? "animate-pulse" : ""} />
@@ -949,7 +949,7 @@ export default function AdminSettingsPage() {
                         <button
                           type="button"
                           onClick={() => setModels((prev) => prev.filter((m) => m !== id))}
-                          className="hover:text-red-400 transition-colors leading-none"
+                          className="hover:text-danger transition-colors leading-none"
                           aria-label={`Remove ${id}`}
                         >
                           ×
@@ -1124,7 +1124,7 @@ export default function AdminSettingsPage() {
               <div className="pt-3">
                 <label className="block text-xs font-medium text-text-secondary mb-2">OCR {lang === "ko" ? "엔진" : "Engine"}</label>
                 {(hasVisionCapability || hasOcrCapability) && (
-                  <div className="flex items-start gap-2 p-3 rounded-xl bg-purple-400/5 border border-purple-400/20 text-xs text-purple-300 mb-2">
+                  <div className="flex items-start gap-2 p-3 rounded-xl bg-accent/5 border border-accent/20 text-xs text-accent mb-2">
                     <Info size={12} className="shrink-0 mt-0.5" />
                     <span>
                       {lang === "ko"

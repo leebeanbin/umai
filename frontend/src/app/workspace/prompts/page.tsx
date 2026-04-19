@@ -110,7 +110,7 @@ export default function PromptsPage() {
             placeholder={t("workspace.search")}
             className="w-full text-sm py-1 outline-none bg-transparent text-text-primary placeholder:text-text-muted"
           />
-          {query && <button onClick={() => setQuery("")} className="p-0.5 rounded-full hover:bg-hover transition"><X size={12} className="text-text-muted" /></button>}
+          {query && <button onClick={() => setQuery("")} aria-label="Clear search" className="p-0.5 rounded-full hover:bg-hover transition"><X size={12} className="text-text-muted" /></button>}
         </div>
 
         <div className="px-3 mt-2 grid gap-1 sm:grid-cols-2">
@@ -127,10 +127,10 @@ export default function PromptsPage() {
                   <p className="text-xs text-text-muted line-clamp-2 leading-relaxed">{p.content}</p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition">
-                  <button onClick={() => handleCopy(p)} className="p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-text-secondary transition">
+                  <button onClick={() => handleCopy(p)} aria-label="Copy prompt" className="p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-text-secondary transition">
                     {copiedId === p.id ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
                   </button>
-                  <button onClick={() => handleDelete(p.id)} className="p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-red-400 transition">
+                  <button onClick={() => handleDelete(p.id)} aria-label="Delete prompt" className="p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-danger transition">
                     <X size={13} />
                   </button>
                 </div>
@@ -142,11 +142,11 @@ export default function PromptsPage() {
 
       {/* 생성 모달 */}
       {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) setShowCreate(false); }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) setShowCreate(false); }} aria-hidden="true">
           <div className="w-full max-w-md bg-elevated border border-border rounded-2xl shadow-2xl animate-modal">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <h3 className="text-sm font-semibold text-text-primary">{t("workspace.newPrompt")}</h3>
-              <button onClick={() => setShowCreate(false)} className="p-1.5 rounded-lg text-text-muted hover:bg-hover transition"><X size={15} /></button>
+              <button onClick={() => setShowCreate(false)} aria-label="Close" className="p-1.5 rounded-lg text-text-muted hover:bg-hover transition"><X size={15} /></button>
             </div>
             <div className="px-5 py-4 flex flex-col gap-4">
               <div className="grid grid-cols-2 gap-3">

@@ -175,7 +175,7 @@ export default function ModelSelect({ value, onChange, showTuning = true }: Prop
                       type="range" min={0} max={2} step={0.05} value={tempVal}
                       onChange={(e) => setTemperature(Number(e.target.value))}
                       className="flex-1 h-1.5 rounded-full cursor-pointer accent-accent"
-                      style={{ background: `linear-gradient(to right, #7c6af5 ${(tempVal / 2) * 100}%, var(--color-border) ${(tempVal / 2) * 100}%)` }}
+                      style={{ background: `linear-gradient(to right, var(--color-accent) ${(tempVal / 2) * 100}%, var(--color-border) ${(tempVal / 2) * 100}%)` }}
                     />
                     <input
                       type="number" min={0} max={2} step={0.05} value={tempVal}

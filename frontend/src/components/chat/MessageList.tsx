@@ -167,7 +167,7 @@ function UserMessage({ message, lang, onEdit, t }: UserMessageProps) {
             <div className="flex gap-2 flex-wrap justify-end">
               {message.images.map((src, i) => (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img key={i} src={src} alt="" className="max-h-96 rounded-2xl object-cover border border-border" />
+                <img key={i} src={src} alt="" loading="lazy" className="max-h-96 rounded-2xl object-cover border border-border" />
               ))}
             </div>
           </div>
@@ -303,6 +303,7 @@ function AssistantMessage({ message, chatId, isLast, lang, onRegenerate, t }: As
                 key={i}
                 src={src}
                 alt={`result ${i + 1}`}
+                loading="lazy"
                 className="h-40 rounded-2xl object-cover border border-border cursor-pointer hover:border-accent/50 transition-colors"
               />
             ))}
@@ -547,7 +548,7 @@ function InlineMarkdown({ text, sources }: { text: string; sources?: SearchSourc
     // Blockquote
     else if (line.startsWith("> ")) {
       result.push(
-        <blockquote key={i} className="border-l-2 border-accent/40 pl-3 text-text-muted italic my-1">
+        <blockquote key={i} className="rounded-md border border-border bg-elevated/60 px-3 py-2 text-text-muted italic my-1">
           {parseInline(line.slice(2), sources)}
         </blockquote>
       );
