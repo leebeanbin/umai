@@ -49,7 +49,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
       </nav>
 
       {/* Content area */}
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div className="flex-1 overflow-y-auto px-5 py-4 scroll-area">
         {children}
       </div>
     </div>

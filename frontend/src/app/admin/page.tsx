@@ -13,6 +13,7 @@ import {
 import { getPastelColor, getInitials } from "@/lib/utils/avatar";
 import { type TranslationKey } from "@/lib/i18n";
 import { AdminNav } from "@/components/admin/AdminNav";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 type TFn = (key: TranslationKey) => string;
 
@@ -45,7 +46,7 @@ export default function AdminPage() {
   return (
     <div className="flex h-full bg-base overflow-hidden">
       <AdminNav active="users" />
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div className="flex-1 overflow-y-auto px-5 py-4 scroll-area">
         <UsersPanel t={t} />
       </div>
     </div>
@@ -59,6 +60,7 @@ function UsersPanel({ t }: { t: TFn }) {
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState("");
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([apiAdminListUsers(), apiAdminStats()])
@@ -96,7 +98,6 @@ function UsersPanel({ t }: { t: TFn }) {
   }
 
   async function deleteUser(id: string) {
-    if (!confirm("이 유저를 삭제하시겠습니까? 되돌릴 수 없습니다.")) return;
     setMutationError(null);
     try {
       await apiAdminDeleteUser(id);
@@ -122,6 +123,14 @@ function UsersPanel({ t }: { t: TFn }) {
 
   return (
     <div className="flex flex-col gap-4 mt-2 max-w-3xl">
+      <ConfirmModal
+        open={deleteTarget !== null}
+        message="이 유저를 삭제하시겠습니까? 되돌릴 수 없습니다."
+        confirmLabel="삭제"
+        danger
+        onConfirm={() => { const id = deleteTarget!; setDeleteTarget(null); deleteUser(id); }}
+        onCancel={() => setDeleteTarget(null)}
+      />
       {mutationError && (
         <div className="flex items-center justify-between gap-2 px-4 py-2 rounded-lg bg-danger/10 border border-danger/20 text-sm text-danger">
           <span>{mutationError}</span>
@@ -214,7 +223,7 @@ function UsersPanel({ t }: { t: TFn }) {
                     user={user}
                     onSetRole={updateRole}
                     onToggleActive={toggleActive}
-                    onDelete={deleteUser}
+                    onDelete={setDeleteTarget}
                   />
                 </div>
               </div>

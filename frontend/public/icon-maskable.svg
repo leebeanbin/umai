@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9b8dfa"/>
+      <stop offset="100%" stop-color="#6250e4"/>
+    </linearGradient>
+  </defs>
+  <!-- Full-bleed background for Android adaptive icon (no rounded corners) -->
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!--
+    U letterform scaled to inner safe zone (80% = 410px circle).
+    Slightly inset from the regular icon for maskable compliance.
+    Outer: x 156–356, y 120–392  |  arm width 66  |  outer r=100, inner r=34
+  -->
+  <path
+    d="M 156,120
+       L 156,292
+       A 100,100 0 1 1 356,292
+       L 356,120
+       L 290,120
+       L 290,292
+       A 34,34  0 1 0 222,292
+       L 222,120
+       Z"
+    fill="white"
+  />
+</svg>

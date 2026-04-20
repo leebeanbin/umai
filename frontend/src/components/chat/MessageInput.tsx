@@ -277,7 +277,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
         onApply={handleMaskApply}
       />
 
-      <div className="w-full px-3 pb-4 pt-1">
+      <div className="w-full px-3 pt-1" style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}>
         <div className="flex flex-col max-w-3xl mx-auto gap-1">
 
           {/* 프롬프트 평가 패널 */}
@@ -338,7 +338,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
                     <button
                       type="button"
                       onClick={() => setImages((prev) => prev.filter((i) => i.id !== img.id))}
-                      className="absolute -top-1 -right-1 bg-white text-black border border-white rounded-full size-4 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition"
+                      className="absolute -top-2 -right-2 bg-white text-black border border-white rounded-full size-5 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition"
                     >
                       <X size={10} />
                     </button>
@@ -346,7 +346,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
                       type="button"
                       onClick={() => setMaskTarget(img)}
                       title={t("input.mask")}
-                      className="absolute -bottom-1 -left-1 bg-accent text-white rounded-full size-4 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition"
+                      className="absolute -bottom-2 -left-2 bg-accent text-white rounded-full size-5 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition"
                     >
                       <Brush size={9} />
                     </button>
@@ -355,7 +355,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
                       onClick={() => handleResize(img)}
                       disabled={resizingIds.has(img.id)}
                       title={lang === "ko" ? "1024px로 리사이즈" : "Resize to 1024px"}
-                      className="absolute -bottom-1 -right-1 bg-accent-hover text-white rounded-full size-4 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition disabled:opacity-60"
+                      className="absolute -bottom-2 -right-2 bg-accent-hover text-white rounded-full size-5 flex items-center justify-center outline-none group-hover/file:opacity-100 opacity-0 transition disabled:opacity-60"
                     >
                       {resizingIds.has(img.id)
                         ? <Loader2 size={9} className="animate-spin" />
@@ -420,7 +420,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
               placeholder={t("input.placeholder")}
               rows={1}
               disabled={disabled}
-              className="scrollbar-none bg-transparent text-sm text-text-primary placeholder:text-text-muted outline-none w-full py-3 px-3 resize-none overflow-auto leading-relaxed"
+              className="scrollbar-none bg-transparent text-[16px] leading-relaxed text-text-primary placeholder:text-text-muted outline-none w-full py-3 px-3 resize-none overflow-auto"
               style={{ maxHeight: "144px" }}
             />
 
@@ -526,7 +526,7 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
                   <button
                     type="button"
                     onClick={onStop}
-                    className="bg-surface hover:bg-hover text-text-primary border border-border transition rounded-full p-1.5"
+                    className="bg-surface hover:bg-hover active:scale-95 text-text-primary border border-border transition rounded-full p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center"
                     title={t("input.stop")}
                   >
                     <StopCircle size={16} />
@@ -536,9 +536,9 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
                     type="button"
                     onClick={handleSubmit}
                     disabled={!canSend}
-                    className={`transition rounded-full p-1.5 self-center ${
+                    className={`transition rounded-full p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center self-center ${
                       canSend
-                        ? "bg-text-primary text-base hover:opacity-90 cursor-pointer"
+                        ? "bg-text-primary text-base hover:opacity-90 active:scale-95 cursor-pointer"
                         : "text-text-muted bg-hover cursor-not-allowed"
                     }`}
                     title={t("input.sendTitle")}

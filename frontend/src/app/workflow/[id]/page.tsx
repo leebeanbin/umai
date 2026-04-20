@@ -42,6 +42,7 @@ import {
 import { useWorkflowSocket } from "@/lib/hooks/useWebSocket";
 import { useRouter } from "next/navigation";
 import { Play, Save, Loader2, CheckCircle2, XCircle, PauseCircle, History, X } from "lucide-react";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 // ── 노드 타입 등록 ────────────────────────────────────────────────────────────
 
@@ -96,6 +97,8 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   // run input modal
   const [runModal, setRunModal] = useState<{ fields: { key: string; type: string }[] } | null>(null);
   const [runInputs, setRunInputs] = useState<Record<string, string>>({});
+  const [clearConfirm, setClearConfirm] = useState(false);
+  const pendingTemplateRef = useRef<{ nodes: Node[]; edges: Edge[] } | null>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
@@ -320,15 +323,8 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   }, [nodes, doRun]);
 
   // ── 템플릿 로드 ──────────────────────────────────────────────────────────
-  const handleLoadTemplate = useCallback(
+  const applyTemplate = useCallback(
     (templateNodes: Node[], templateEdges: Edge[]) => {
-      if (
-        nodes.length > 0 &&
-        !window.confirm(t("workflow.confirmClear"))
-      ) {
-        return;
-      }
-      // 기존 노드 ID → 새 ID 매핑 (충돌 방지)
       const idMap: Record<string, string> = {};
       const newNodes = templateNodes.map((n) => {
         const newId = `${n.type ?? "node"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -346,7 +342,19 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
       setSelectedNode(null);
       debounceSave(newNodes, newEdges);
     },
-    [nodes.length, setNodes, setEdges, debounceSave, t],
+    [setNodes, setEdges, debounceSave],
+  );
+
+  const handleLoadTemplate = useCallback(
+    (templateNodes: Node[], templateEdges: Edge[]) => {
+      if (nodes.length > 0) {
+        pendingTemplateRef.current = { nodes: templateNodes, edges: templateEdges };
+        setClearConfirm(true);
+      } else {
+        applyTemplate(templateNodes, templateEdges);
+      }
+    },
+    [nodes.length, applyTemplate],
   );
 
   // ── 수동 저장 버튼 ────────────────────────────────────────────────────────
@@ -368,6 +376,20 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
 
   return (
     <div className="flex h-full bg-base overflow-hidden">
+      <ConfirmModal
+        open={clearConfirm}
+        message={t("workflow.confirmClear")}
+        confirmLabel="초기화"
+        danger
+        onConfirm={() => {
+          setClearConfirm(false);
+          if (pendingTemplateRef.current) {
+            applyTemplate(pendingTemplateRef.current.nodes, pendingTemplateRef.current.edges);
+            pendingTemplateRef.current = null;
+          }
+        }}
+        onCancel={() => { setClearConfirm(false); pendingTemplateRef.current = null; }}
+      />
       {/* 실행 입력 모달 */}
       {runModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">

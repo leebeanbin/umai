@@ -13,6 +13,7 @@ import {
   type JobStatus,
 } from "@/lib/api/fineTuneClient";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 // ── 상태 배지 ─────────────────────────────────────────────────────────────────
 
@@ -53,6 +54,8 @@ export default function FineTunePage() {
   const [datasets, setDatasets] = useState<DatasetOut[]>([]);
   const [tab, setTab]           = useState<"jobs" | "datasets">("jobs");
   const [loading, setLoading]   = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -77,18 +80,25 @@ export default function FineTunePage() {
   }, [user, authLoading, load]);
 
   async function handleCancelJob(id: string) {
+    setMutationError(null);
     try {
       await apiCancelJob(id);
       load();
-    } catch {
-      alert("작업 취소에 실패했습니다.");
+    } catch (e: unknown) {
+      setMutationError(e instanceof Error ? e.message : "작업 취소에 실패했습니다.");
     }
   }
 
   async function handleDeleteDataset(id: string) {
-    if (!confirm("데이터셋을 삭제하시겠습니까?")) return;
-    await apiDeleteDataset(id);
-    setDatasets((prev) => prev.filter((d) => d.id !== id));
+    setMutationError(null);
+    const prev = datasets;
+    setDatasets((d) => d.filter((x) => x.id !== id));
+    try {
+      await apiDeleteDataset(id);
+    } catch (e: unknown) {
+      setDatasets(prev);
+      setMutationError(e instanceof Error ? e.message : "삭제에 실패했습니다.");
+    }
   }
 
   if (authLoading || loading) {
@@ -101,6 +111,19 @@ export default function FineTunePage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
+      <ConfirmModal
+        open={deleteTarget !== null}
+        message="데이터셋을 삭제하시겠습니까? 되돌릴 수 없습니다."
+        confirmLabel="삭제"
+        danger
+        onConfirm={() => { const id = deleteTarget!; setDeleteTarget(null); handleDeleteDataset(id); }}
+        onCancel={() => setDeleteTarget(null)}
+      />
+      {mutationError && (
+        <div className="px-4 py-2 rounded-lg bg-danger/10 border border-danger/20 text-sm text-danger">
+          {mutationError}
+        </div>
+      )}
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <div>
@@ -261,7 +284,7 @@ export default function FineTunePage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => handleDeleteDataset(ds.id)}
+                  onClick={() => setDeleteTarget(ds.id)}
                   className="p-1.5 rounded hover:bg-hover text-text-muted hover:text-danger transition-colors flex-shrink-0"
                 >
                   <Trash2 size={13} />

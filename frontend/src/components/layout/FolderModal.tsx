@@ -99,7 +99,7 @@ export default function FolderModal({ open, folder, onClose, onSave }: Props) {
           </h2>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-text-muted hover:bg-hover hover:text-text-secondary transition-colors"
+            className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-text-muted hover:bg-hover hover:text-text-secondary transition-colors"
           >
             <X size={15} />
           </button>

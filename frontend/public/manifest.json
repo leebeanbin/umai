@@ -1,0 +1,58 @@
+{
+  "name": "Umai",
+  "short_name": "Umai",
+  "description": "Chat-based AI image editor",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "background_color": "#0e0f13",
+  "theme_color": "#7c6af5",
+  "orientation": "portrait-primary",
+  "lang": "ko",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "새 채팅",
+      "short_name": "채팅",
+      "description": "새 AI 채팅 시작",
+      "url": "/chat/new",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "이미지 편집",
+      "short_name": "편집",
+      "description": "AI 이미지 편집기 열기",
+      "url": "/editor",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "screenshots": [
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Umai AI Chat"
+    }
+  ]
+}

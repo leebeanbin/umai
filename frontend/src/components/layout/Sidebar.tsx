@@ -408,6 +408,7 @@ export default function Sidebar() {
             <div className="flex items-center gap-0.5">
               <button
                 onClick={() => { setShowSearch((v) => !v); if (showSearch) setSearch(""); }}
+                aria-label={showSearch ? "검색 닫기" : "검색"}
                 className={`p-1.5 rounded-lg transition-colors ${
                   showSearch ? "bg-accent/15 text-accent" : "text-text-muted hover:bg-hover hover:text-text-secondary"
                 }`}
@@ -456,7 +457,7 @@ export default function Sidebar() {
 
           <div className="mx-3 my-1.5 border-t border-border-subtle" />
 
-          <div className="flex-1 overflow-y-auto min-h-0 px-2 pb-2">
+          <div className="flex-1 overflow-y-auto min-h-0 px-2 pb-2 scroll-area">
 
             {folders.map((folder) => {
               const children = folderSessions(folder.id);
@@ -482,6 +483,7 @@ export default function Sidebar() {
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); setContextMenu({ type: "folder", id: folder.id, x: e.clientX, y: e.clientY }); }}
+                      aria-label="폴더 메뉴"
                       className="shrink-0 p-1 rounded-md opacity-0 group-hover:opacity-100 text-text-muted hover:text-text-secondary transition-all"
                     >
                       <MoreHorizontal size={13} />
@@ -704,7 +706,7 @@ const SessionItem = memo(function SessionItem({
     <Link
       href={href}
       onContextMenu={(e) => { e.preventDefault(); onContext(e); }}
-      className={`flex items-center gap-2 px-2 py-1.5 rounded-xl text-sm group transition-colors ${
+      className={`flex items-center gap-2 px-2 py-2.5 rounded-xl text-sm group transition-colors min-h-[44px] ${
         active ? "bg-hover text-text-primary" : "text-text-secondary hover:bg-hover hover:text-text-primary"
       }`}
     >
@@ -714,6 +716,7 @@ const SessionItem = memo(function SessionItem({
       <span className="truncate flex-1">{session.title}</span>
       <button
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onContext(e); }}
+        aria-label="채팅 메뉴"
         className="shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 text-text-muted hover:text-text-secondary transition-all"
       >
         <MoreHorizontal size={12} />

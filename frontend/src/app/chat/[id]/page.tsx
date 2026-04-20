@@ -13,6 +13,8 @@ import { createSession, updateSessionTitle } from "@/lib/store";
 import { loadSettings } from "@/lib/appStore";
 import { apiFetch, apiGenerateChatTitle, apiGetTask } from "@/lib/api/backendClient";
 import { apiCreateDataset } from "@/lib/api/fineTuneClient";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { PromptModal } from "@/components/ui/PromptModal";
 
 // ── Intent 분석 — 도구가 필요한 질문인지 판단 ────────────────────────────────
 function analyzeIntent(content: string): { useAgent: boolean; tools: string[] } {
@@ -110,6 +112,8 @@ export default function ChatSession() {
   // 수집된 예제: [{user: string, assistant: string}]
   const ftExamples = useRef<{ user: string; assistant: string }[]>([]);
   const [ftCount, setFtCount] = useState(0);
+  const [ftClearConfirm, setFtClearConfirm] = useState(false);
+  const [ftSavePrompt, setFtSavePrompt] = useState(false);
 
   const [isTemp,    setIsTemp]    = useState(false);
   const [tempSaved, setTempSaved] = useState(false);
@@ -239,14 +243,14 @@ export default function ChatSession() {
   }, []);
 
   // ── FT 예제를 데이터셋으로 저장 ──────────────────────────────────────────
-  const handleSaveFtExamples = useCallback(async () => {
+  const handleSaveFtExamples = useCallback(() => {
+    if (ftExamples.current.length === 0) return;
+    setFtSavePrompt(true);
+  }, []);
+
+  const handleConfirmSaveDataset = useCallback(async (name: string) => {
+    setFtSavePrompt(false);
     const examples = ftExamples.current;
-    if (examples.length === 0) return;
-    const name = prompt(
-      `${examples.length}개의 대화 쌍을 데이터셋으로 저장합니다.\n데이터셋 이름을 입력하세요:`,
-      `채팅 수집 ${new Date().toLocaleDateString("ko-KR")}`,
-    );
-    if (!name) return;
     const rawData = examples
       .map((ex) =>
         JSON.stringify({
@@ -259,28 +263,42 @@ export default function ChatSession() {
       .join("\n");
     try {
       await apiCreateDataset({ name, format: "chat", raw_data: rawData });
-      alert(`✅ "${name}" 데이터셋이 저장되었습니다.\nWorkspace › Fine-tune에서 학습을 시작하세요.`);
       ftExamples.current = [];
       setFtCount(0);
       setFtModeOn(false);
-    } catch (e: unknown) {
-      alert(`저장 실패: ${e instanceof Error ? e.message : "알 수 없는 오류"}`);
+    } catch {
+      // 저장 실패 시 모드 유지
     }
   }, []);
 
   return (
     <div className="flex flex-col h-full bg-base">
+      <ConfirmModal
+        open={ftClearConfirm}
+        message={`파인튜닝 모드를 끄면 수집된 ${ftCount}개 예제가 사라집니다. 계속하시겠습니까?`}
+        confirmLabel="끄기"
+        danger
+        onConfirm={() => { setFtClearConfirm(false); ftExamples.current = []; setFtCount(0); setFtModeOn(false); }}
+        onCancel={() => setFtClearConfirm(false)}
+      />
+      <PromptModal
+        open={ftSavePrompt}
+        message={`${ftExamples.current.length}개의 대화 쌍을 데이터셋으로 저장합니다. 이름을 입력하세요.`}
+        defaultValue={`채팅 수집 ${new Date().toLocaleDateString("ko-KR")}`}
+        confirmLabel="저장"
+        onConfirm={handleConfirmSaveDataset}
+        onCancel={() => setFtSavePrompt(false)}
+      />
       <ChatNavbar
         chatId={id}
         fineTuneModeOn={ftModeOn}
         fineTuneExampleCount={ftCount}
         onToggleFineTuneMode={() => {
           if (ftModeOn && ftCount > 0) {
-            if (!confirm(`파인튜닝 모드를 끄면 수집된 ${ftCount}개 예제가 사라집니다. 계속하시겠습니까?`)) return;
-            ftExamples.current = [];
-            setFtCount(0);
+            setFtClearConfirm(true);
+          } else {
+            setFtModeOn((v) => !v);
           }
-          setFtModeOn((v) => !v);
         }}
         onSaveFineTuneExamples={handleSaveFtExamples}
       />

@@ -16,6 +16,7 @@ import {
   type RunOut,
   type WorkflowStats,
 } from "@/lib/api/backendClient";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 // ── 상태 배지 ─────────────────────────────────────────────────────────────────
 
@@ -141,6 +142,7 @@ export default function RunsHistoryPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -160,7 +162,11 @@ export default function RunsHistoryPage() {
 
   async function handleCancel(e: React.MouseEvent, runId: string) {
     e.stopPropagation();
-    if (!confirm("실행을 취소하시겠습니까?")) return;
+    setCancelTarget(runId);
+  }
+
+  async function confirmCancel(runId: string) {
+    setCancelTarget(null);
     setCancelling(runId);
     try {
       await apiCancelRun(runId);
@@ -174,6 +180,13 @@ export default function RunsHistoryPage() {
 
   return (
     <div className="flex flex-col h-full bg-base">
+      <ConfirmModal
+        open={cancelTarget !== null}
+        message="실행을 취소하시겠습니까?"
+        confirmLabel="취소하기"
+        onConfirm={() => { const id = cancelTarget!; confirmCancel(id); }}
+        onCancel={() => setCancelTarget(null)}
+      />
       {/* 헤더 */}
       <header className="flex items-center gap-3 px-6 py-4 border-b border-border flex-shrink-0">
         <button

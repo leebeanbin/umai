@@ -37,6 +37,16 @@
 
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
 
+  /* ── Fluid type scale (clamp: min @ 320px → max @ 1280px) ── */
+  --text-xs:   clamp(0.688rem, 0.654rem + 0.17vw,  0.75rem);
+  --text-sm:   clamp(0.813rem, 0.761rem + 0.26vw,  0.875rem);
+  --text-base: clamp(0.938rem, 0.866rem + 0.36vw,  1rem);
+  --text-md:   clamp(1rem,     0.913rem + 0.43vw,  1.125rem);
+  --text-lg:   clamp(1.125rem, 1.022rem + 0.52vw,  1.25rem);
+  --text-xl:   clamp(1.25rem,  1.087rem + 0.82vw,  1.5rem);
+  --text-2xl:  clamp(1.5rem,   1.239rem + 1.30vw,  2rem);
+  --text-3xl:  clamp(1.875rem, 1.467rem + 2.04vw,  2.75rem);
+
   /* semantic color tokens */
   --color-role-admin:  var(--color-warning);
   --color-role-user:   var(--color-accent);
@@ -72,7 +82,32 @@ html, body, #__next {
   -webkit-font-smoothing: antialiased;
 }
 
+html {
+  overflow-x: hidden;
+  touch-action: manipulation;
+}
+
+body {
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+*, *::before, *::after {
+  -webkit-tap-highlight-color: transparent;
+}
+
 * { box-sizing: border-box; }
+
+/*
+  iOS momentum scroll + overscroll containment.
+  .scroll-area를 overflow-y-auto 컨테이너에 적용하면:
+  - iOS에서 관성 스크롤(rubber-band)이 컨테이너 안에서만 발생
+  - Android에서도 pull-to-refresh가 의도치 않게 트리거되지 않음
+*/
+.scroll-area {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
 
 /* 스크롤바 */
 ::-webkit-scrollbar         { width: 4px; height: 4px; }

@@ -60,7 +60,7 @@ export default function MessageList({ messages, chatId, onEdit, onRegenerate }: 
         onScroll={handleScroll}
         role="feed"
         aria-label="메시지 목록"
-        className="h-full overflow-y-auto overflow-x-hidden overscroll-contain flex flex-col px-2.5"
+        className="h-full overflow-y-auto overflow-x-hidden overscroll-contain scroll-area flex flex-col px-2.5"
       >
         <div className="w-full max-w-3xl mx-auto py-6 flex flex-col gap-2">
           {messages.map((msg, i) =>
