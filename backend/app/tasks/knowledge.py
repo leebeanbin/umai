@@ -13,7 +13,7 @@ import tiktoken
 from celery import shared_task
 from celery.utils.log import get_task_logger
 
-from app.tasks._utils import publish_task_done
+from app.tasks._utils import UmaiBaseTask, publish_task_done
 from app.services.embedding_service import embed_texts_sync
 
 logger = get_task_logger(__name__)
@@ -68,7 +68,7 @@ def _chunk_text(
 
 # ── 태스크 ────────────────────────────────────────────────────────────────────
 
-@shared_task(bind=True, name="app.tasks.knowledge.process_document", max_retries=2)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.knowledge.process_document", max_retries=2)
 def process_document(
     self,
     knowledge_id: str,
@@ -108,7 +108,7 @@ def process_document(
         raise self.retry(exc=exc, countdown=10)
 
 
-@shared_task(bind=True, name="app.tasks.knowledge.embed_chunks", max_retries=2)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.knowledge.embed_chunks", max_retries=2)
 def embed_chunks(
     self,
     knowledge_id: str,
@@ -172,7 +172,7 @@ def embed_chunks(
         raise self.retry(exc=exc, countdown=15)
 
 
-@shared_task(bind=True, name="app.tasks.knowledge.process_and_embed", max_retries=1)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.knowledge.process_and_embed", max_retries=1)
 def process_and_embed(
     self,
     knowledge_id: str,

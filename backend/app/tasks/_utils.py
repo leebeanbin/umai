@@ -7,12 +7,14 @@ publish_task_done: 태스크 완료를 소유자 전용 Redis 채널에 발행.
 
 ai_api_retry: tenacity 지수 백오프 데코레이터 (일시적 네트워크 오류 대상).
 move_to_dlq: 최대 재시도 초과 태스크를 Redis DLQ 리스트에 보존.
+UmaiBaseTask: 영구 실패 시 자동으로 DLQ에 보존하는 Celery 베이스 태스크.
 """
 import json
 import logging
 from datetime import datetime, timezone
 
 import redis as _sync_redis
+from celery import Task
 
 from app.core.config import settings
 from app.core.redis_keys import key_task_notification, key_dlq
@@ -90,6 +92,17 @@ def move_to_dlq(task_name: str, kwargs: dict, error: str) -> None:
         r.ltrim(key_dlq(), 0, 999)
     except Exception as exc:
         logger.warning("move_to_dlq failed: %s", exc)
+
+
+class UmaiBaseTask(Task):
+    """영구 실패(max_retries 초과) 태스크를 자동으로 DLQ에 보존하는 베이스 클래스.
+
+    모든 @shared_task에 base=UmaiBaseTask를 지정하면 on_failure가 자동 호출된다.
+    """
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        move_to_dlq(self.name, kwargs, str(exc))
+        super().on_failure(exc, task_id, args, kwargs, einfo)
 
 
 def publish_workflow_event(owner_id: str, event_type: str, payload: dict) -> None:

@@ -14,7 +14,7 @@ import secrets
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import RedirectResponse
@@ -197,6 +197,7 @@ async def me(current_user: User = Depends(get_current_user)):
 
 
 class UpdateMeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str | None = Field(None, min_length=1, max_length=100)
     notification_email: str | None = Field(None, max_length=254)
 

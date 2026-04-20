@@ -97,6 +97,7 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""
     XAI_API_KEY: str = ""        # xAI Grok (https://console.x.ai)
     TAVILY_API_KEY: str = ""     # Tavily 웹 검색 (https://tavily.com)
+    TOGETHER_API_KEY: str = ""   # Together AI — open model fine-tuning (https://api.together.xyz)
 
     # ── Observability ────────────────────────────────────────────────────────
     OTEL_ENDPOINT: str = ""    # OTLP gRPC endpoint (e.g. http://jaeger:4317); "" = disabled

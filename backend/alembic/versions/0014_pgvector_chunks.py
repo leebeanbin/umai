@@ -142,10 +142,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TRIGGER IF EXISTS knowledge_chunks_tsv_trigger ON knowledge_chunks")
-    op.execute("DROP FUNCTION IF EXISTS knowledge_chunks_tsv_update()")
-    op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_knowledge_chunks_embedding_hnsw")
-    op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_knowledge_chunks_tsv")
-    op.drop_index("ix_knowledge_chunks_item_idx", table_name="knowledge_chunks")
-    op.drop_table("knowledge_chunks")
-    op.execute("DROP EXTENSION IF EXISTS vector")
+    # knowledge_chunks 테이블에는 실제 청크 데이터가 저장된다.
+    # 롤백하면 모든 임베딩·청크가 영구 소실되므로 자동 다운그레이드를 금지한다.
+    raise RuntimeError(
+        "Migration 0014 is not reversible — "
+        "dropping knowledge_chunks would permanently destroy embedded data. "
+        "Restore from a database backup instead."
+    )

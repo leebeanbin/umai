@@ -24,7 +24,7 @@ from app.core.config import settings
 from app.core.redis_keys import key_task_dalle_cache
 from app.core.model_registry import OPENAI_DALLE_3, OPENAI_GPT_IMAGE_1
 from app.core.http_headers import openai_auth_headers
-from app.tasks._utils import publish_task_done
+from app.tasks._utils import UmaiBaseTask, publish_task_done
 
 logger = get_task_logger(__name__)
 
@@ -168,7 +168,7 @@ def _encode_mask_png(mask_arr) -> dict:
 
 # ── 태스크 ────────────────────────────────────────────────────────────────────
 
-@shared_task(bind=True, name="app.tasks.image.resize_image", max_retries=2)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.image.resize_image", max_retries=2)
 def resize_image(
     self,
     source: str,
@@ -210,7 +210,7 @@ def resize_image(
         raise self.retry(exc=exc, countdown=5)
 
 
-@shared_task(bind=True, name="app.tasks.image.ocr_image", max_retries=2)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.image.ocr_image", max_retries=2)
 def ocr_image(
     self,
     source: str,
@@ -249,7 +249,7 @@ def ocr_image(
         raise self.retry(exc=exc, countdown=10)
 
 
-@shared_task(bind=True, name="app.tasks.image.analyze_image", max_retries=2)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.image.analyze_image", max_retries=2)
 def analyze_image(
     self,
     source: str,
@@ -310,7 +310,7 @@ def analyze_image(
         raise self.retry(exc=exc, countdown=10)
 
 
-@shared_task(bind=True, name="app.tasks.image.remove_background", max_retries=2)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.image.remove_background", max_retries=2)
 def remove_background(
     self,
     source: str,
@@ -404,7 +404,7 @@ def _build_background(bg_type: str, **kwargs: Any) -> "Image.Image":
     return builder(**kwargs)
 
 
-@shared_task(bind=True, name="app.tasks.image.compose_studio", max_retries=1)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.image.compose_studio", max_retries=1)
 def compose_studio(
     self,
     foreground_b64: str,
@@ -464,7 +464,7 @@ def compose_studio(
         raise self.retry(exc=exc, countdown=10)
 
 
-@shared_task(bind=True, name="app.tasks.image.segment_click", max_retries=1)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.image.segment_click", max_retries=1)
 def segment_click(self, source: str, x: float, y: float) -> dict:
     """
     SAM2 tiny로 클릭 좌표(정규화 0~1) → 바이너리 마스크.
@@ -561,7 +561,7 @@ _IMAGE_EDIT_HANDLERS: dict[str, Any] = {
 }
 
 
-@shared_task(bind=True, name="app.tasks.image.edit_image", max_retries=1)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.image.edit_image", max_retries=1)
 def edit_image(
     self,
     source: str,
@@ -686,7 +686,7 @@ _IMAGE_GEN_HANDLERS: dict[str, Any] = {
 }
 
 
-@shared_task(bind=True, name="app.tasks.image.generate_image", max_retries=1)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.image.generate_image", max_retries=1)
 def generate_image(
     self,
     prompt: str,

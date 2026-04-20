@@ -92,7 +92,7 @@ async def get_current_user(
         data["id"] = uuid.UUID(data["id"])
         # DAU HyperLogLog 기록 (캐시 히트 경로 — fire-and-forget)
         _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        asyncio.get_event_loop().create_task(_safe_dau_add(user_id, _today))
+        asyncio.ensure_future(_safe_dau_add(user_id, _today))
         return SimpleNamespace(**data)  # type: ignore[return-value]
 
     # ── Step 4: DB 조회 (캐시 miss) ──────────────────────────────────────────

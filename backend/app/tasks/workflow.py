@@ -67,7 +67,7 @@ from celery.utils.log import get_task_logger
 
 from app.core.database import sync_session
 from app.core.redis_keys import key_workflow_suspend
-from app.tasks._utils import publish_workflow_event, _get_redis
+from app.tasks._utils import UmaiBaseTask, publish_workflow_event, _get_redis
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 
 logger = get_task_logger(__name__)
@@ -292,6 +292,7 @@ _NODE_HANDLERS: dict[str, Any] = {
 
 @shared_task(
     bind=True,
+    base=UmaiBaseTask,
     name="app.tasks.workflow.execute_workflow",
     queue="ai",
     max_retries=0,

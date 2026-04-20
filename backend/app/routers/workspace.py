@@ -54,6 +54,7 @@ class WorkspaceItemOut(BaseModel):
 
 
 class WorkspaceItemCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     item_type: WorkspaceItemType
     name: str = Field(..., min_length=1, max_length=200)
     data: dict = {}
@@ -61,6 +62,7 @@ class WorkspaceItemCreate(BaseModel):
 
 
 class WorkspaceItemPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     data: Optional[dict] = None
     is_enabled: Optional[bool] = None
