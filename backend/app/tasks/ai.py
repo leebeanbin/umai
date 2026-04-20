@@ -27,8 +27,8 @@ from celery.utils.log import get_task_logger
 
 from app.core.config import settings
 from app.core.http_headers import openai_auth_headers, anthropic_auth_headers
-from app.core.model_registry import OPENAI_GPT_4O
-from app.tasks._utils import publish_task_done
+from app.core.model_registry import OPENAI_GPT_4O, CONTEXT_WINDOW, MAX_TOKENS_RESERVE
+from app.tasks._utils import UmaiBaseTask, publish_task_done
 from app.services.embedding_service import embed_query_sync
 
 logger = get_task_logger(__name__)
@@ -279,10 +279,14 @@ def _execute_python(code: str, timeout: int = 10) -> dict:
     _BLOCKED_BUILTINS = {
         "eval", "exec", "compile", "__import__", "open", "input",
         "breakpoint", "memoryview", "vars", "dir", "globals", "locals",
+        # Prevent descriptor/attribute protocol abuse for sandbox escape
+        "getattr", "setattr", "delattr", "type",
     }
     _BLOCKED_ATTRS = {
         "system", "popen", "spawn", "exec_command", "call", "run",
         "Popen", "check_output", "getoutput",
+        # Prevent __builtins__ access to recover blocked builtins
+        "__builtins__",
     }
 
     for node in ast.walk(tree):
@@ -669,10 +673,42 @@ _LLM_CALLERS.update({
 })
 
 
+# ── 히스토리 트리밍 (컨텍스트 윈도우 초과 방지) ─────────────────────────────
+
+def _count_tokens(messages: list[dict]) -> int:
+    """Rough token estimate — 4 chars ≈ 1 token (no tiktoken dependency)."""
+    return sum(len(str(m.get("content") or "")) for m in messages) // 4
+
+
+def _trim_history(messages: list[dict], model: str) -> list[dict]:
+    """Return a trimmed copy of messages that fits within the model context window.
+
+    Preserves the system prompt and drops the oldest non-system messages first.
+    Uses a character-count approximation so tiktoken is not required.
+    """
+    limit = CONTEXT_WINDOW.get(model, 32_000) - MAX_TOKENS_RESERVE
+    if _count_tokens(messages) <= limit:
+        return messages
+
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    other_msgs  = [m for m in messages if m.get("role") != "system"]
+
+    while other_msgs and _count_tokens(system_msgs + other_msgs) > limit:
+        other_msgs.pop(0)
+
+    trimmed = system_msgs + other_msgs
+    logger.warning(
+        "History trimmed %d→%d messages to fit model=%s (limit≈%d tokens)",
+        len(messages), len(trimmed), model, limit,
+    )
+    return trimmed
+
+
 # ── 메인 태스크 ───────────────────────────────────────────────────────────────
 
 @shared_task(
     bind=True,
+    base=UmaiBaseTask,
     name="app.tasks.ai.run_agent",
     max_retries=1,
     soft_time_limit=300,   # 5분 후 SoftTimeLimitExceeded
@@ -715,7 +751,7 @@ def run_agent(
 
     try:
         for _ in range(max_steps):
-            response = _call_llm(history, model, provider, tools=tools, temperature=temperature)
+            response = _call_llm(_trim_history(history, model), model, provider, tools=tools, temperature=temperature)
 
             # 도구 호출 없음 → 최종 응답
             if not response.get("tool_calls"):
@@ -757,7 +793,7 @@ def run_agent(
         # max_steps 도달 → 현재까지 내용으로 최종 응답 요청
         logger.warning("run_agent reached max_steps=%d, forcing final response", max_steps)
         history.append({"role": "user", "content": "지금까지 수집된 정보를 바탕으로 최종 답변을 해줘."})
-        final = _call_llm(history, model, provider, tools=None, temperature=temperature)
+        final = _call_llm(_trim_history(history, model), model, provider, tools=None, temperature=temperature)
         publish_task_done(self.request.id, "run_agent")
         return {
             "content": final.get("content", ""),
@@ -784,7 +820,7 @@ def run_agent(
         raise  # re-raise so Celery records the failure and retries if configured
 
 
-@shared_task(bind=True, name="app.tasks.ai.web_search", max_retries=2)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.ai.web_search", max_retries=2)
 def web_search(self, query: str, max_results: int = 5) -> dict:
     """독립 웹 검색 태스크"""
     try:
@@ -795,7 +831,7 @@ def web_search(self, query: str, max_results: int = 5) -> dict:
         raise self.retry(exc=exc, countdown=5)
 
 
-@shared_task(bind=True, name="app.tasks.ai.chat_completion", max_retries=1)
+@shared_task(bind=True, base=UmaiBaseTask, name="app.tasks.ai.chat_completion", max_retries=1)
 def chat_completion(
     self,
     messages: list[dict],

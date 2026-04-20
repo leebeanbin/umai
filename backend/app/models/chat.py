@@ -52,6 +52,10 @@ class Chat(Base):
 
 class Message(Base):
     __tablename__ = "messages"
+    # Covers the common paginated query: WHERE chat_id=X ORDER BY created_at [DESC] LIMIT N
+    __table_args__ = (
+        Index("ix_messages_chat_created", "chat_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

@@ -43,6 +43,24 @@ ANTHROPIC_API_VERSION  = "2023-06-01"     # anthropic-version 헤더값
 OLLAMA_EMBED_DEFAULT   = "nomic-embed-text"   # 임베딩 기본 모델
 OLLAMA_VISION_DEFAULT  = "llava"              # OCR/vision fallback
 
+# ── 컨텍스트 윈도우 크기 (토큰) ──────────────────────────────────────────────
+# run_agent 히스토리 트리밍에 사용. 미등록 모델은 32K fallback.
+
+CONTEXT_WINDOW: dict[str, int] = {
+    "gpt-4o":                       128_000,
+    "gpt-4o-mini":                  128_000,
+    "claude-opus-4-7":              200_000,
+    "claude-sonnet-4-6":            200_000,
+    "claude-haiku-4-5-20251001":    200_000,
+    "gemini-2.0-flash":           1_048_576,
+    "gemini-2.5-pro":             2_097_152,
+    "gemini-2.5-flash":           1_048_576,
+    "grok-3":                       131_072,
+    "grok-3-mini":                  131_072,
+}
+
+MAX_TOKENS_RESERVE = 8_000  # 응답 + tool call 여유분
+
 # ── 기본값 (시스템 설정에서 오버라이드 가능) ──────────────────────────────────
 
 DEFAULT_CHAT_MODEL           = OPENAI_GPT_4O

@@ -45,6 +45,7 @@ knowledge_chunks 테이블에 별도 저장/인덱스를 만드는 이유:
   DELETE /rag/files/{id}            — 파일 삭제
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -65,7 +66,7 @@ from app.core.constants import (
     RATE_RAG_SEARCH,
 )
 from app.core.database import get_db
-from app.core.redis import embed_query_cache_get, embed_query_cache_set
+from app.core.redis import embed_query_cache_get, embed_query_cache_set, get_redis
 from app.models.user import User
 from app.models.workspace import KnowledgeItem
 from app.routers.deps import get_current_user
@@ -215,10 +216,40 @@ async def rag_search(
     _query_hash = hashlib.md5(_cache_seed.encode()).hexdigest()
 
     query_vector = await embed_query_cache_get(_query_hash)
+
+    # Fix: validate cached dimension against stored vectors (prevents stale hits
+    # after a model/provider switch where cache seed is identical but dim differs)
+    if query_vector is not None and items_with_embeddings:
+        _first_stored = (items_with_embeddings[0].embeddings_json or {}).get("vectors", [])
+        if _first_stored and len(_first_stored[0]) != len(query_vector):
+            logger.warning(
+                "RAG embed cache: dimension mismatch (cached=%d, stored=%d) — invalidating",
+                len(query_vector), len(_first_stored[0]),
+            )
+            query_vector = None
+
     if query_vector is None:
-        query_vector = await embed_query_async(q)
-        if query_vector is not None:
-            await embed_query_cache_set(_query_hash, query_vector)
+        # NX lock: prevents cache stampede when many concurrent requests miss
+        # on the same query — only the lock holder embeds, others wait and reuse.
+        _r = await get_redis()
+        _lock_key = f"embed_lock:{_query_hash}"
+        _acquired = await _r.set(_lock_key, "1", nx=True, px=3000)
+        if _acquired:
+            try:
+                query_vector = await embed_query_async(q)
+                if query_vector is not None:
+                    await embed_query_cache_set(_query_hash, query_vector)
+            finally:
+                await _r.delete(_lock_key)
+        else:
+            # Another coroutine is embedding; wait briefly then recheck cache
+            await asyncio.sleep(0.15)
+            query_vector = await embed_query_cache_get(_query_hash)
+            if query_vector is None:
+                # Lock holder failed or timed out — embed directly as fallback
+                query_vector = await embed_query_async(q)
+                if query_vector is not None:
+                    await embed_query_cache_set(_query_hash, query_vector)
 
     if query_vector is None:
         # 임베딩 생성 실패 → 키워드 fallback

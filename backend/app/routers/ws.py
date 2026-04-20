@@ -55,7 +55,19 @@ class _ConnMeta:
 
 
 class ConnectionManager:
-    """채팅방별 WebSocket 연결 관리 (단일 프로세스)."""
+    """채팅방별 WebSocket 연결 관리 (단일 프로세스).
+
+    ARCHITECTURE NOTE — single-process only:
+      _rooms is an in-memory dict. This works correctly for a single uvicorn
+      worker. With multi-worker gunicorn (`-w N`), each process maintains its
+      own dict, so a broadcast in process A will not reach connections in
+      process B.
+
+    To support multi-worker deployments, replace with Redis Pub/Sub:
+      - On connect: SUBSCRIBE ws:room:{room_id}
+      - On broadcast: PUBLISH ws:room:{room_id} <payload>
+      - Each process relays published messages to its local connections.
+    """
 
     def __init__(self) -> None:
         self._rooms: dict[str, list[_ConnMeta]] = {}
