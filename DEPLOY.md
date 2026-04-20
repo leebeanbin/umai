@@ -2,6 +2,8 @@
 
 > Single-host Docker Compose deployment for a full-stack AI platform: Next.js frontend, FastAPI backend, PostgreSQL + pgvector, Redis, and Celery workers — all behind a hardened Nginx reverse proxy.
 
+**English** | [한국어](DEPLOY.ko.md)
+
 ---
 
 ## Architecture Overview

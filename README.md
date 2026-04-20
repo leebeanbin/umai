@@ -2,6 +2,8 @@
 
 > Full-stack AI platform with multi-provider chat, RAG knowledge base, visual workflow automation, and fine-tuning — built for production from day one.
 
+**English** | [한국어](README.ko.md)
+
 ![Next.js](https://img.shields.io/badge/Next.js_15-black?logo=next.js&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL_16-316192?logo=postgresql&logoColor=white)
