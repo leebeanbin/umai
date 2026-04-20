@@ -81,7 +81,47 @@ ReAct 패턴(Reason + Act)의 구현입니다:
 2. 도구 실행 결과를 컨텍스트에 추가
 3. LLM이 결과를 보고 다음 행동 결정
 
-`max_steps=10`으로 무한 루프를 방지합니다.
+`max_steps=5`으로 무한 루프를 방지합니다 (기본값 — timeout 안전 마진).
+
+---
+
+## 컨텍스트 윈도우 트리밍
+
+```python
+# backend/app/core/model_registry.py
+
+CONTEXT_WINDOW: dict[str, int] = {
+    "gpt-4o":            128_000,
+    "claude-sonnet-4-6": 200_000,
+    "gemini-2.0-flash":  1_048_576,
+    # ...
+}
+MAX_TOKENS_RESERVE = 8_000  # 응답 + tool call 여유분
+
+# backend/app/tasks/ai.py
+
+def _trim_history(messages, model):
+    limit = CONTEXT_WINDOW.get(model, 32_000) - MAX_TOKENS_RESERVE
+    if _count_tokens(messages) <= limit:
+        return messages
+    # 시스템 프롬프트 보존 + 오래된 메시지부터 제거
+    system = [m for m in messages if m["role"] == "system"]
+    others = [m for m in messages if m["role"] != "system"]
+    while others and _count_tokens(system + others) > limit:
+        others.pop(0)
+    return system + others
+
+# 에이전트 루프에서 매 호출 전 적용
+response = _call_llm(_trim_history(history, model), model, provider, ...)
+```
+
+**왜 필요한가:**
+GPT-4o 기준 컨텍스트 128K 토큰 초과 시 OpenAI API 422 오류 → 태스크 실패.
+Tool call 결과가 누적되면 수십 번 반복 후 한도를 초과할 수 있습니다.
+
+트리밍 전략: 시스템 프롬프트(지시사항)를 항상 유지하고,
+히스토리가 길어지면 **가장 오래된 메시지부터 제거**합니다.
+최신 tool result가 더 중요하기 때문입니다.
 
 ---
 
@@ -121,7 +161,19 @@ def _web_search(query: str, max_results: int = 5) -> str:
 ```python
 def _execute_python(code: str) -> dict:
     # 1단계: AST 화이트리스트 검사
-    tree = ast.parse(code)
+    _BLOCKED_BUILTINS = {
+        "eval", "exec", "compile", "__import__", "open", "input",
+        "breakpoint", "memoryview", "vars", "dir", "globals", "locals",
+        # descriptor/attribute 프로토콜 우회 차단 (sandbox escape vector)
+        "getattr", "setattr", "delattr", "type",
+    }
+    _BLOCKED_ATTRS = {
+        "system", "popen", "spawn", "exec_command", "call", "run",
+        "Popen", "check_output", "getoutput",
+        # __builtins__ 접근으로 차단된 함수를 복구하는 경로 차단
+        "__builtins__",
+    }
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             if top not in _ALLOWED_IMPORTS:
@@ -129,24 +181,27 @@ def _execute_python(code: str) -> dict:
         elif isinstance(node, ast.Call):
             if node.func.id in _BLOCKED_BUILTINS:
                 return {"error": f"Built-in not allowed"}
+        elif isinstance(node, ast.Attribute):
+            if node.attr.startswith("__") or node.attr in _BLOCKED_ATTRS:
+                return {"error": f"Attribute not allowed"}
 
     # 2단계: 임시 파일에 저장 후 subprocess 실행
-    with tempfile.NamedTemporaryFile(suffix=".py") as f:
-        f.write(code)
-
     result = subprocess.run(
         [sys.executable, fname],
         capture_output=True, text=True,
-        timeout=10,                  # 10초 타임아웃
-        cwd="/tmp",                  # 현재 디렉토리 격리
+        timeout=10,
+        preexec_fn=_set_resource_limits,  # CPU/메모리/fork 제한 (Unix)
     )
 ```
 
-보안 계층:
-1. AST 분석으로 금지된 import/함수 차단 (정적 분석)
-2. subprocess로 별도 프로세스에서 실행 (프로세스 격리)
-3. `timeout=10` 무한 루프 방지
-4. `cwd="/tmp"` 현재 프로젝트 파일 접근 방지
+보안 계층 (4단계 다층 방어):
+1. **AST 정적 분석** — import 화이트리스트, 위험 함수·속성 차단
+   - `getattr`/`setattr`/`delattr`/`type` 차단 — descriptor 프로토콜 우회 방지
+   - `__builtins__` 속성 접근 차단 — 차단된 함수를 복구하는 경로 제거
+   - dunder(`__x__`) 속성 전체 차단
+2. **subprocess 프로세스 격리** — 별도 프로세스에서 실행
+3. **OS 리소스 제한** — CPU 시간, 메모리 256MB, fork 금지, 파일 생성 금지 (Unix)
+4. **타임아웃** — 10초 초과 시 강제 종료
 
 ### Knowledge Search (RAG)
 

@@ -161,18 +161,40 @@ results = await db.execute(
 ## 쿼리 임베딩 캐시
 
 ```python
-# backend/app/services/embedding_service.py:embed_query_async()
-# backend/app/core/redis.py:335
+# backend/app/routers/rag.py
 
-async def embed_query_cache_get(content_hash: str) -> list[float] | None:
-    r = await get_redis()
-    raw = await r.get(key_embed_query(content_hash))
-    if raw:
-        return json.loads(raw)
-    return None
+_cache_seed = f"{q}\x00{settings.OPENAI_EMBED_MODEL}\x00{settings.OLLAMA_EMBED_MODEL}"
+_query_hash = hashlib.md5(_cache_seed.encode()).hexdigest()
+
+query_vector = await embed_query_cache_get(_query_hash)
+
+# 캐시 히트 후 dimension 검증 — 모델 교체 시 stale 벡터 방지
+if query_vector is not None and items_with_embeddings:
+    stored_dim = len((items_with_embeddings[0].embeddings_json or {})
+                     .get("vectors", [[]])[0] or [])
+    if stored_dim and stored_dim != len(query_vector):
+        query_vector = None  # 차원 불일치 → 캐시 무효화
+
+if query_vector is None:
+    # NX lock: 동시 요청이 모두 캐시 미스일 때 OpenAI API 중복 호출 방지
+    acquired = await redis.set(f"embed_lock:{_query_hash}", "1", nx=True, px=3000)
+    if acquired:
+        query_vector = await embed_query_async(q)
+        await embed_query_cache_set(_query_hash, query_vector)
+    else:
+        await asyncio.sleep(0.15)         # lock 보유자가 채울 때까지 대기
+        query_vector = await embed_query_cache_get(_query_hash) or \
+                       await embed_query_async(q)  # fallback
 ```
 
-캐시 키: `MD5(query + model)` — 같은 쿼리+모델이면 동일한 벡터를 반환합니다.
+**캐시 전략 세 가지 보호:**
+
+| 보호 | 이유 |
+|---|---|
+| `MD5(query + model_name)` | 모델 변경 시 자동으로 다른 캐시 키 사용 |
+| dimension 검증 | 동일 모델명이라도 차원 불일치 시 stale 벡터 폐기 |
+| NX lock (3초) | 동시 동일 쿼리 → 단 한 번만 OpenAI 호출, 나머지는 캐시 재사용 |
+
 TTL: 24시간 — 반복적인 RAG 검색에서 임베딩 API 호출 40~60% 절감.
 
 ---
