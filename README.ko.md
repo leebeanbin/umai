@@ -33,6 +33,7 @@
   - [확률적 자료구조](#확률적-자료구조)
   - [보안 아키텍처](#보안-아키텍처)
   - [Celery 태스크 큐 설계](#celery-태스크-큐-설계)
+- [데이터 모델](#데이터-모델)
 - [코드베이스 맵](#코드베이스-맵)
 - [기술 스택](#기술-스택)
 - [빠른 시작](#빠른-시작)
@@ -523,6 +524,29 @@ npm run build                                      # 프로덕션 빌드
 ```bash
 cd backend && pytest tests/ -v --tb=short
 ```
+
+---
+
+## 데이터 모델
+
+5개 도메인에 걸쳐 14개 PostgreSQL 테이블. 모든 기본 키는 UUID v4. 전체 ER 다이어그램, 컬럼 레퍼런스, 인덱스 설계 이유는 [`docs/11-data-models.md`](docs/11-data-models.md)를 참조하세요.
+
+```
+도메인          테이블
+─────────────────────────────────────────────────────────────────────────
+인증            users
+채팅            chats · messages · chat_members · folders
+워크스페이스    workspace_items · knowledge_items · knowledge_chunks (pgvector)
+워크플로우      workflows · workflow_runs · workflow_run_steps
+파인튜닝        training_datasets · fine_tune_jobs
+시스템          system_settings  (싱글톤 JSONB)
+```
+
+**핵심 인덱스 결정:**
+- `ix_chats_user_list (user_id, is_archived, is_temporary, updated_at)` — 사이드바 목록 쿼리를 별도 정렬 단계 없이 커버
+- `ix_messages_chat_created (chat_id, created_at)` — 메시지 페이지네이션 조회에 index-only scan 가능
+- `HNSW on knowledge_chunks.embedding` — 평범한 vector 컬럼의 O(n) 브루트포스 대비 O(log n) 코사인 ANN 검색
+- `GIN on knowledge_chunks.tsv` — HNSW와 JSONB 코사인 이후 3단계 폴백 전체 텍스트 검색
 
 ---
 

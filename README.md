@@ -33,6 +33,7 @@
   - [Probabilistic Data Structures](#probabilistic-data-structures)
   - [Security Architecture](#security-architecture)
   - [Celery Task Queue Design](#celery-task-queue-design)
+- [Data Model](#data-model)
 - [Codebase Map](#codebase-map)
 - [Tech Stack](#tech-stack)
 - [Quick Start](#quick-start)
@@ -540,6 +541,29 @@ npm run build                                      # production build
 ```bash
 cd backend && pytest tests/ -v --tb=short
 ```
+
+---
+
+## Data Model
+
+14 PostgreSQL tables across 5 domains. All primary keys are UUID v4. See [`docs/11-data-models.md`](docs/11-data-models.md) for the full ER diagram, column reference, and index rationale.
+
+```
+Domain          Tables
+─────────────────────────────────────────────────────────────────────────
+Auth            users
+Chat            chats · messages · chat_members · folders
+Workspace       workspace_items · knowledge_items · knowledge_chunks (pgvector)
+Workflow        workflows · workflow_runs · workflow_run_steps
+Fine-Tuning     training_datasets · fine_tune_jobs
+System          system_settings  (singleton JSONB)
+```
+
+**Key index decisions:**
+- `ix_chats_user_list (user_id, is_archived, is_temporary, updated_at)` — covers the sidebar list query with no separate sort step
+- `ix_messages_chat_created (chat_id, created_at)` — enables index-only scan for paginated message fetch
+- `HNSW on knowledge_chunks.embedding` — O(log n) cosine ANN search vs O(n) brute-force on plain vector column
+- `GIN on knowledge_chunks.tsv` — full-text search fallback (3rd-tier after HNSW and JSONB cosine)
 
 ---
 
