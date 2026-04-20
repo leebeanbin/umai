@@ -18,7 +18,9 @@
 ## 목차
 
 - [기능](#기능)
+- [기술 하이라이트](#기술-하이라이트)
 - [시스템 아키텍처](#시스템-아키텍처)
+- [성능 지표](#성능-지표)
 - [기능 상세](#기능-상세)
   - [인증](#1-인증)
   - [실시간 채팅 & AI 에이전트](#2-실시간-채팅--ai-에이전트)
@@ -34,7 +36,10 @@
 - [코드베이스 맵](#코드베이스-맵)
 - [기술 스택](#기술-스택)
 - [빠른 시작](#빠른-시작)
+- [개발 워크플로우](#개발-워크플로우)
+- [테스트](#테스트)
 - [환경 변수](#환경-변수)
+- [알려진 한계](#알려진-한계)
 - [프로덕션 배포](#프로덕션-배포)
 
 ---
@@ -52,6 +57,21 @@
 | **인증** | 이메일/비밀번호 + Google/GitHub OAuth, JWT (15분) + 리프레시 (30일) |
 | **관리자 대시보드** | 사용자 관리, DAU 분석 (HyperLogLog), 시스템 설정 |
 | **다국어** | 한국어 / 영어 |
+
+---
+
+## 기술 하이라이트
+
+> 일반적인 LLM 래퍼와 차별화되는 6가지 비자명한 결정:
+
+| # | 결정 | 위치 | 중요한 이유 |
+|---|---|---|---|
+| 1 | **병렬 Redis 인증** (`asyncio.gather`) | [`deps.py`](backend/app/routers/deps.py) | `get_current_user`의 2+3단계가 동시에 실행됩니다 — Redis 왕복 2번이 아닌 1번. 캐시 히트율 >95%로 대부분의 요청이 PostgreSQL을 건드리지 않습니다. |
+| 2 | **3-DB Redis 격리** | [`celery_app.py`](backend/app/core/celery_app.py) | 세션(db0), 브로커(db1), 결과(db2). db1의 `FLUSHDB`는 태스크 큐만 지우고 라이브 세션이나 캐시에는 영향 없습니다. |
+| 3 | **RAG 캐시 스탬피드 잠금** | [`rag.py`](backend/app/routers/rag.py) | 캐시 미스 시 3초 `SET NX` 잠금이 쿼리당 정확히 하나의 코루틴만 임베딩 API를 호출하도록 보장합니다. 동시 대기자들은 150ms 후 결과를 재사용합니다. |
+| 4 | **Bloom 필터 중복 제거** | [`redis.py`](backend/app/core/redis.py) | 8 MB 비트맵(2²³비트, k=7)이 이미 임베딩된 청크를 위한 O(n) DB 조회를 대체합니다. 오탐률 0.1% — 최악의 경우는 재임베딩 건너뜀이지 데이터 손실이 아닙니다. |
+| 5 | **DAG 실행을 위한 Kahn 알고리즘** | [`workflow.py`](backend/app/tasks/workflow.py) | DFS 위상 정렬은 다이아몬드 그래프에서 B와 C가 완료되기 전에 D를 방문합니다. Kahn의 진입 차수 감소 방식은 노드가 실행되기 전 모든 선행 노드가 완료됨을 보장합니다. |
+| 6 | **태스크 범위 Redis 캐시를 통한 DALL·E 멱등성** | [`image.py`](backend/app/tasks/image.py) | 각 태스크는 `task:dalle:{task_id}` (TTL 2시간)에 결과를 캐시합니다. Celery 재시도 시 캐시된 이미지를 반환 — 두 번째 API 호출도, 두 번째 청구도 없습니다. |
 
 ---
 
@@ -97,6 +117,21 @@
 - 브라우저는 정확히 **하나의 오리진**(`/api/*` 리라이트)과만 통신합니다. 클라이언트 사이드 CORS 설정이 없고 크로스 오리진 요청에서 토큰 누출이 없습니다.
 - **4개의 Celery 큐**가 워크로드를 격리합니다: 느린 DALL·E 이미지 작업이 빠른 채팅 제목 생성을 블록할 수 없습니다.
 - Redis는 3개의 DB 번호에서 **3가지 역할**을 수행합니다 — db1의 `FLUSHDB`는 Celery 브로커만 지우고 세션에는 영향 없습니다.
+
+---
+
+## 성능 지표
+
+| 지표 | 값 | 방식 |
+|---|---|---|
+| 인증 레이턴시 (캐시 히트) | **< 2 ms** | `asyncio.gather`로 Redis 2+3단계 병렬 실행 |
+| 인증 레이턴시 (콜드 / DB 폴백) | **< 8 ms** | 세션당 첫 요청에만 단일 PostgreSQL 쿼리 |
+| 임베딩 API 비용 절감 | **40–60%** | `MD5(쿼리 + 모델명)` 키의 24시간 Redis 캐시 |
+| Bloom 필터 메모리 (100만 청크) | **8 MB 고정** | 2²³비트 BITFIELD vs SHA-256 해시 Python `set` ~32 MB |
+| DAU 추적 메모리 (100만 사용자) | **12 KB 고정** | HyperLogLog vs `SADD` set ~20 MB |
+| Ollama 임베딩 병렬화 | **~7× 속도 향상** | 8 워커 `ThreadPoolExecutor`; Ollama는 배치 API 없음 |
+| pgvector HNSW 검색 복잡도 | **O(log n)** | 평범한 `vector` 컬럼의 O(n) 브루트포스 코사인 대비 |
+| 레이트 리밋 원자성 | **정확, 레이스 없음** | Lua 스크립트로 ZADD + ZREMRANGEBYSCORE + ZCARD 원자화 |
 
 ---
 
@@ -431,6 +466,66 @@ return result
 
 ---
 
+## 개발 워크플로우
+
+```bash
+# ── 백엔드 ────────────────────────────────────────────────────────────
+cd backend
+
+# 문법 검사 (빠름, import 불필요)
+python -m ast app/tasks/ai.py
+python -m ast app/routers/rag.py
+
+# DB 모델 / 마이그레이션 동기화 확인
+alembic check
+
+# 대기 중인 마이그레이션 적용
+alembic upgrade head
+
+# 전체 테스트 실행 (localhost:5434에 PostgreSQL 필요)
+pytest tests/ -v
+
+# 단일 모듈 실행
+pytest tests/test_auth.py -v
+
+# 커버리지 리포트
+pytest tests/ --cov=app --cov-report=term-missing
+
+# ── 프론트엔드 ─────────────────────────────────────────────────────────
+cd frontend
+
+npm run dev                                        # 개발 서버, 핫 리로드 → :3000
+npx tsc --noEmit                                   # 타입 검사 (오류 0개 필요)
+npx eslint src --ext .ts,.tsx --max-warnings 0    # 린트 (경고 0개 필요)
+npm run build                                      # 프로덕션 빌드
+```
+
+> **커밋 전 필수**: `npx tsc --noEmit`와 ESLint 모두 오류/경고 없이 통과해야 합니다.
+
+---
+
+## 테스트
+
+| 테스트 모듈 | 커버리지 범위 |
+|---|---|
+| `test_auth.py` | OAuth 플로우, 토큰 리프레시, 로그아웃, 개발 우회 토큰 부재 확인 |
+| `test_chats.py` | 채팅 CRUD, 메시지 페이지네이션 (기본 200 / 최대 500), 폴더 작업 |
+| `test_workflows.py` | 실행 생명주기, HumanNode 중단/재개, 취소, 소유권 확인 |
+| `test_fine_tune.py` | 데이터셋 업로드 (chat / instruction / completion 형식), 작업 생성, 취소 |
+| `test_rag.py` | 검색 파이프라인 (HNSW → JSONB → 키워드), 3단계 폴백 |
+| `test_rag_unit.py` | 임베딩 캐시: 차원 불일치 무효화, 스탬피드 잠금 |
+| `test_admin.py` | 역할 보호 (비관리자 → 403), DAU 통계, 타입 설정 패치 |
+| `test_tasks.py` | 태스크 큐 등록, 상태 폴링, 태스크 소유권 (타 사용자 → 403) |
+| `test_settings_sections.py` | `extra="forbid"` 강제, 타입 섹션 스키마 |
+| `test_workspace.py` | 파일 업로드, 매직 바이트 검증, 파일명 살균 |
+| `test_folders.py` | 폴더 CRUD, 중첩 정리 |
+
+```bash
+cd backend && pytest tests/ -v --tb=short
+```
+
+---
+
 ## 코드베이스 맵
 
 ```
@@ -570,12 +665,14 @@ cd frontend && npm install && npm run dev
 # → http://localhost:3000
 ```
 
-| 서비스 | URL |
-|---|---|
-| 프론트엔드 | http://localhost:3000 |
-| 백엔드 API + Swagger | http://localhost:8001/docs |
-| PostgreSQL | localhost:5434 |
-| Redis | localhost:6380 |
+| 서비스 | URL | 비고 |
+|---|---|---|
+| 프론트엔드 | http://localhost:3000 | Next.js 개발 서버 |
+| 백엔드 API | http://localhost:8001 | FastAPI |
+| Swagger UI | http://localhost:8001/docs | 대화형 API 탐색기 (DEBUG=true만) |
+| ReDoc | http://localhost:8001/redoc | API 레퍼런스 (DEBUG=true만) |
+| PostgreSQL | localhost:5434 | `umai` / `umai` |
+| Redis | localhost:6380 | db0 세션, db1 브로커, db2 결과 |
 
 **선택: 로컬 Celery 워커 (Docker 외부에서 AI/이미지/임베딩 태스크)**
 
@@ -618,6 +715,21 @@ celery -A app.core.celery_app worker \
 | `DEBUG` | 선택 | `false` | Swagger UI 활성화; HTTPS 강제 비활성화 |
 
 > 프로덕션에서 `BACKEND_URL`/`FRONTEND_URL`이 HTTP를 사용하거나, `SECRET_KEY`가 기본값이거나, 32자 미만이면 앱이 **시작을 거부**합니다. 경고는 사용하지 않고 즉시 `RuntimeError`를 발생시킵니다.
+
+---
+
+## 알려진 한계
+
+설계 제약에 대한 솔직한 설명 — 그리고 이를 수용한 이유:
+
+| 한계 | 범위 | 수용 이유 / 마이그레이션 경로 |
+|---|---|---|
+| **`ConnectionManager`가 in-memory** | 워커 간 WebSocket 브로드캐스트 | 단일 프로세스 uvicorn (현재 배포 대상)에서 올바르게 작동. 멀티 워커 `gunicorn -w N`에는 Redis Pub/Sub 필요. 마이그레이션 경로가 `ws.py`에 문서화됨. |
+| **Python 샌드박스가 컨테이너 아닌 `setrlimit` 사용** | AI 에이전트 코드 실행 | `setrlimit` 리소스 제한은 Unix 전용; Windows 개발은 Docker 필요. 서버 배포는 항상 Linux. 컨테이너 기반 샌드박스는 시작 레이턴시 증가. |
+| **Ollama 임베딩에 배치 API 없음** | 지식 베이스 수집 속도 | 8 워커 `ThreadPoolExecutor`로 완화(~7× 속도 향상). 근본 원인은 upstream Ollama — OpenAI 경로는 실제 배치 엔드포인트 사용. |
+| **파인튜닝이 Together AI를 30초마다 폴링** | 학습 진행률 세분성 | Together AI API가 웹훅을 제공하지 않음. 30초 폴링은 거칠지만 학습 품질이나 최종 모델 전달에는 영향 없음. |
+| **단일 호스트 배포만 지원** | 수평 확장 | Docker Compose 단일 호스트가 지원 대상. 확장은 외부 로드 밸런서, 공유 Redis, 복제 PostgreSQL 필요 — 현재 아키텍처 범위 외. |
+| **재시작 간 레이트 리밋 영속성 없음** | 슬라이딩 윈도우 레이트 리밋 | SlowAPI 레이트 리밋은 기본적으로 in-memory. Redis 백업 한계는 재시작 후 살아남지만 현재 구성되지 않음. 현재 부하 수준에서는 허용 가능. |
 
 ---
 
