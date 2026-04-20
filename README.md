@@ -45,7 +45,7 @@
 | **AI Agent** | Multi-step tool-use loop: web search, Python execution, RAG retrieval |
 | **Knowledge Base** | PDF/DOCX/TXT/MD → auto-chunk → embed → pgvector HNSW search |
 | **Workflow Engine** | Visual DAG builder: LLM, Tool, Branch, HumanNode, Output nodes |
-| **Fine-Tuning** | LoRA/QLoRA wizard for LLaMA 3, Gemma 4, Mistral, Qwen, Phi families |
+| **Fine-Tuning** | LoRA/QLoRA via Together AI — LLaMA 4, Gemma 4, Qwen3, DeepSeek R2, Phi-4 (32 models) |
 | **Image Generation** | DALL·E 3, ComfyUI, Automatic1111 integration |
 | **Authentication** | Email/password + Google/GitHub OAuth, JWT (15 min) + Refresh (30 days) |
 | **Admin Dashboard** | User management, DAU analytics (HyperLogLog), system settings |
@@ -235,7 +235,11 @@ Query string
 
 **Why HNSW over a plain vector column?** A cosine similarity scan on a plain `vector` column without an index is O(n) — performance degrades linearly as documents grow. HNSW (Hierarchical Navigable Small World) finds approximate nearest neighbors in O(log n), trading ~5% accuracy for 100× speed at scale. The `knowledge_chunks` table with a dedicated `vector` column exists specifically because pgvector HNSW indexes cannot be built on JSONB arrays.
 
-**Embedding cache design** — Key: `MD5(query_text + model_name)`. The model name is included so switching providers automatically produces a different cache key. TTL: 24 hours. Estimated API cost reduction: 40–60% on repeated queries.
+**Embedding cache design** — Key: `MD5(query_text + model_name)`. TTL: 24 hours. Estimated API cost reduction: 40–60% on repeated queries.
+
+Two extra protections applied on every cache hit:
+1. **Dimension validation** — if the cached vector's dimension mismatches stored vectors (e.g. after switching from OpenAI 1536-dim to Ollama 768-dim), the stale cache entry is discarded and a fresh embedding is generated.
+2. **Stampede lock** — on cache miss, a 3-second Redis `SET NX` lock ensures only one coroutine calls the embedding API for a given query; concurrent waiters sleep 150 ms and reuse the freshly-cached result.
 
 ---
 
@@ -311,26 +315,30 @@ Chat UI (fine-tune mode toggle)
 POST /fine-tune/datasets   (upload JSONL or auto-collect from chat)
 POST /fine-tune/jobs       (select base model + hyperparameters)
   │
-  └─ FastAPI BackgroundTask: _simulate_training()
-       ├─ dev:  exponential-decay loss simulation, emits progress via WebSocket
-       └─ prod: replace with Celery task → Unsloth / HuggingFace Trainer
+  └─ Celery task: _run_together_fine_tune()
+       ├─ convert examples → OpenAI-compatible JSONL
+       ├─ upload to Together AI Files API
+       ├─ create fine-tuning job (LoRA/QLoRA config)
+       ├─ poll every 30s → update DB progress + WebSocket events
+       └─ TOGETHER_API_KEY unset → simulation fallback (dev)
 
 WebSocket stream → browser shows live loss curve, step count, ETA
-Job cancellation → Celery task revocation + job.status = "cancelled"
+Job cancellation → Together AI job cancel API + job.status = "cancelled"
 ```
 
-**Supported model families:**
+**Supported model families (Together AI, 32 models):**
 
-| Family | Models | Min VRAM | Notes |
-|---|---|---|---|
-| **Gemma 4** *(Apr 2025)* | 1B / 4B / 12B / 27B IT | 4 GB | 128K ctx, multimodal, multilingual SOTA |
-| **Gemma 2** | 2B / 9B / 27B IT | 8 GB | Previous generation |
-| **LLaMA 3.x** | 3B / 8B / 70B Instruct | 8 GB | Meta, broad ecosystem |
-| **Mistral** | 7B / Nemo 12B | 14 GB | Strong code + reasoning |
-| **Qwen 2.5** | 7B / 14B / 72B Instruct | 14 GB | Best CJK language support |
-| **Phi 3.5** | Mini 3.8B / Medium 14B | 8 GB | Microsoft, edge-device ready |
+| Family | Notable Models | Notes |
+|---|---|---|
+| **LLaMA 4** *(2025)* | Scout 17B-16E, Maverick 17B-128E | Meta's latest MoE architecture |
+| **LLaMA 3.x** | 3.3 70B, 3.1 8B/70B/405B | Meta, broad ecosystem |
+| **Gemma 4** | 1B / 4B / 12B / 27B IT | 128K ctx, multimodal, multilingual SOTA |
+| **Qwen3** | 4B / 8B / 14B / 30B / 72B | Best CJK + math reasoning |
+| **DeepSeek** | R2 (MoE), V3, R1 | Top reasoning benchmarks |
+| **Phi-4** | phi-4, phi-4-mini, phi-4-reasoning | Microsoft, edge-device ready |
+| **Mistral** | Mistral Small 3.1 | Strong code + reasoning |
 
-Gemma 4 1B / 4B run on consumer GPUs (4–10 GB VRAM), making fine-tuning viable without cloud infrastructure.
+LLaMA 4 Scout / Gemma 4 4B run on consumer GPUs (8–12 GB VRAM), making fine-tuning viable without cloud infrastructure.
 
 ---
 
@@ -612,7 +620,9 @@ celery -A app.core.celery_app worker \
 | `OPENAI_API_KEY` | opt | — | GPT-4o, DALL·E 3, text-embedding-3-small |
 | `ANTHROPIC_API_KEY` | opt | — | Claude 3.5 / Sonnet / Haiku |
 | `GOOGLE_API_KEY` | opt | — | Gemini 1.5 Pro / Flash |
-| `XAI_API_KEY` | opt | — | Grok |
+| `XAI_API_KEY` | opt | — | Grok (xAI) |
+| `TOGETHER_API_KEY` | opt | — | Together AI fine-tuning. Unset = simulation mode |
+| `TAVILY_API_KEY` | opt | — | Tavily web search |
 | `OLLAMA_URL` | opt | `http://localhost:11434` | Self-hosted models |
 | `OLLAMA_EMBED_MODEL` | opt | `qwen3-embedding:8b` | Local embedding model |
 | `GOOGLE_CLIENT_ID` | opt | — | Google OAuth |
