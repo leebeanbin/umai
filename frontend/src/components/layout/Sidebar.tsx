@@ -748,17 +748,18 @@ const SessionGroup = memo(function SessionGroup({
   return (
     <div className="mb-3">
       <p className="px-2 py-1 text-xs font-medium text-text-muted uppercase tracking-wider">{label}</p>
-      {sessions.map((s) => (
-        <SessionItem
-          key={s.id}
-          session={s}
-          href={sessionHref(s)}
-          active={pathname === sessionHref(s)}
-          isRenaming={renamingId === s.id}
-          renameInputRef={renamingId === s.id ? renameInputRef : undefined}
-          onCommitRename={(val) => onCommitRename(s.id, val)}
-          onContext={(e) => onContext(s.id, e)}
-        />
+      {sessions.map((s, index) => (
+        <div key={s.id} className="animate-stagger-in" style={{ animationDelay: `${index * 20}ms` }}>
+          <SessionItem
+            session={s}
+            href={sessionHref(s)}
+            active={pathname === sessionHref(s)}
+            isRenaming={renamingId === s.id}
+            renameInputRef={renamingId === s.id ? renameInputRef : undefined}
+            onCommitRename={(val) => onCommitRename(s.id, val)}
+            onContext={(e) => onContext(s.id, e)}
+          />
+        </div>
       ))}
     </div>
   );

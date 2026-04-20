@@ -1,0 +1,41 @@
+groups:
+  - name: umai_sli
+    rules:
+      - record: sli:umai_availability:ratio_5m
+        expr: |
+          sum(rate(http_requests_total{status!~"5.."}[5m]))
+          / sum(rate(http_requests_total[5m]))
+
+      - record: sli:umai_latency_p95:seconds_5m
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket[5m]))
+          )
+
+  - name: umai_slo_alerts
+    rules:
+      - alert: UmaiHighErrorRate
+        expr: sli:umai_availability:ratio_5m < 0.99
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Umai error rate > 1% for 5 minutes"
+          description: "Availability SLI {{ $value | humanizePercentage }}"
+
+      - alert: UmaiSlowResponse
+        expr: sli:umai_latency_p95:seconds_5m > 2.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Umai P95 latency > 2s for 5 minutes"
+          description: "P95 = {{ $value }}s"
+
+      - alert: UmaiServiceDown
+        expr: up{job="umai-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Umai backend is unreachable"

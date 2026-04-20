@@ -31,6 +31,7 @@ Unhandled 500 → FastAPI 기본 처리 (로그 + 500 응답).
 
 GET /api/v1/health → DB/Redis 연결 상태 JSON. 로드밸런서 health probe 용도.
 """
+import logging
 import time
 from contextlib import asynccontextmanager
 
@@ -47,6 +48,8 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import create_tables, engine
 from app.core.errors import AppException
+from app.core.logging_config import configure_logging
+from app.core.middleware import RequestIDMiddleware
 from app.core.redis import close_redis, get_redis
 from app.routers import auth, chats, folders, admin, workspace
 from app.routers import tasks as tasks_router
@@ -54,6 +57,9 @@ from app.routers import rag as rag_router
 from app.routers import ws as ws_router
 from app.routers import workflows as workflows_router
 from app.routers import fine_tune as fine_tune_router
+
+configure_logging(debug=settings.DEBUG)
+logger = logging.getLogger(__name__)
 
 # ── Rate Limiter 설정 ─────────────────────────────────────────────────────────
 
@@ -85,6 +91,8 @@ limiter = Limiter(key_func=_get_real_client_ip, default_limits=["200/minute"])
 async def lifespan(app: FastAPI):
     # Startup
     await create_tables()
+    from app.core.telemetry import setup_telemetry
+    setup_telemetry(app, engine)
     yield
     # Shutdown
     await close_redis()
@@ -111,6 +119,18 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
         status_code=exc.code.status,
         content={"detail": exc.detail, "code": exc.code.name},
     )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error("Unhandled exception at %s", request.url.path, exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "code": "INTERNAL_ERROR"},
+    )
+
+
+app.add_middleware(RequestIDMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 
 # Starlette session (OAuth state 저장용) — JWT 키와 분리된 별도 시크릿 사용
@@ -130,6 +150,17 @@ app.add_middleware(
     expose_headers=["Set-Cookie"],
 )
 
+# ── Prometheus instrumentation ────────────────────────────────────────────────
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    Instrumentator(
+        should_group_status_codes=True,
+        should_ignore_untemplated=True,
+        excluded_handlers=["/health", "/metrics"],
+    ).instrument(app).expose(app, endpoint="/metrics")
+except ImportError:
+    pass  # prometheus_fastapi_instrumentator 미설치 시 skip
+
 # ── 라우터 등록 ───────────────────────────────────────────────────────────────
 app.include_router(auth.router,      prefix="/api/v1")
 app.include_router(chats.router,     prefix="/api/v1")
@@ -147,7 +178,8 @@ _health_cache: dict | None = None
 _health_cache_at: float = 0.0
 
 @app.get("/health")
-async def health():
+@limiter.limit("60/minute")
+async def health(request: Request):
     """Liveness + dependency checks. 5초 캐시로 k8s probe 부하 감소."""
     global _health_cache, _health_cache_at
     now = time.monotonic()

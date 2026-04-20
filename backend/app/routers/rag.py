@@ -70,6 +70,7 @@ from app.models.user import User
 from app.models.workspace import KnowledgeItem
 from app.routers.deps import get_current_user
 from app.services.embedding_service import embed_query_async
+from app.services.reranker import rerank as _rerank
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 limiter = Limiter(key_func=get_remote_address)
@@ -105,6 +106,8 @@ async def _pgvector_search(
     """)
 
     try:
+        # ef_search 상향으로 recall 개선 (default 40 → 100)
+        await db.execute(text("SET LOCAL hnsw.ef_search = 100"))
         result = await db.execute(sql, {"vec": vec_literal, "uid": user_id, "top_k": top_k})
         rows = result.fetchall()
     except Exception as exc:
@@ -225,12 +228,19 @@ async def rag_search(
     # ── pgvector HNSW 검색 우선 시도 (O(log n), HNSW 인덱스 활용) ────────────
     # None = 오류 또는 knowledge_chunks 테이블 비어있음 → JSONB fallback
     # [] = pgvector 정상 동작, 단순히 매칭 결과 없음 → 빈 결과 반환 (fallback 불필요)
-    pgvector_results = await _pgvector_search(db, str(current_user.id), query_vector, top_k)
+    _candidate_k = max(top_k * 4, 20)
+    pgvector_results = await _pgvector_search(db, str(current_user.id), query_vector, _candidate_k)
     if pgvector_results is not None:
+        reranked = False
+        if len(pgvector_results) > top_k:
+            ranked_indices = _rerank(q, [r["chunk"] for r in pgvector_results], top_k=top_k)
+            pgvector_results = [pgvector_results[i] for i in ranked_indices]
+            reranked = True
         return {
-            "results": pgvector_results,
+            "results": pgvector_results[:top_k],
             "query": q,
             "method": "pgvector_hnsw",
+            "reranked": reranked,
             "total_searched": len(pgvector_results),
         }
 

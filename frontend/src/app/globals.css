@@ -99,3 +99,33 @@ html, body, #__next {
   opacity: 0;
   animation: waterfall-in 200ms ease forwards;
 }
+
+/* ── 메시지·패널 등장 애니메이션 ── */
+@keyframes slide-up-fade {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-down-fade {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes stagger-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.animate-slide-up   { animation: slide-up-fade  120ms ease-out both; }
+.animate-slide-down { animation: slide-down-fade 120ms ease-out both; }
+.animate-stagger-in { animation: stagger-in      150ms ease-out both; }
+
+/* 모션 감소 설정 존중 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ── 키보드 포커스 링 (전역) ── */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

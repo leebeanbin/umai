@@ -158,7 +158,7 @@ function UsersPanel({ t }: { t: TFn }) {
                 <BarChart3 size={11} className="text-text-muted" />
                 <p className="text-xs text-text-muted">{stat.label}</p>
               </div>
-              <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
+              <p className={`text-3xl font-black ${stat.color}`}>{stat.value}</p>
             </div>
           ))}
         </div>

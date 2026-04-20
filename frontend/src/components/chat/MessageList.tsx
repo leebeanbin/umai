@@ -44,13 +44,22 @@ export default function MessageList({ messages, chatId, onEdit, onRegenerate }: 
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
+  const lastMsg = messages[messages.length - 1];
+  const streamingDone = lastMsg && !lastMsg.streaming && lastMsg.role === "assistant";
+
   if (messages.length === 0) return null;
 
   return (
     <div className="relative flex-1 min-h-0">
+      {/* Screen-reader live region for streaming completion */}
+      <div role="status" aria-live="polite" aria-atomic="false" className="sr-only">
+        {streamingDone ? "응답이 완성되었습니다." : ""}
+      </div>
       <div
         ref={containerRef}
         onScroll={handleScroll}
+        role="feed"
+        aria-label="메시지 목록"
         className="h-full overflow-y-auto overflow-x-hidden overscroll-contain flex flex-col px-2.5"
       >
         <div className="w-full max-w-3xl mx-auto py-6 flex flex-col gap-2">
@@ -138,7 +147,7 @@ function UserMessage({ message, lang, onEdit, t }: UserMessageProps) {
     navigator.clipboard.writeText(message.content).then(() => {
       setCopied(true);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 800);
     });
   }
 
@@ -160,7 +169,7 @@ function UserMessage({ message, lang, onEdit, t }: UserMessageProps) {
   }
 
   return (
-    <div className="flex w-full group justify-end" id={`message-${message.id}`}>
+    <div className="flex w-full group justify-end animate-slide-up" id={`message-${message.id}`}>
       <div className="max-w-[90%] flex flex-col items-end gap-1">
         {message.images && message.images.length > 0 && (
           <div className="mb-1 flex flex-col items-end gap-1 w-full">
@@ -272,12 +281,12 @@ function AssistantMessage({ message, chatId, isLast, lang, onRegenerate, t }: As
     navigator.clipboard.writeText(message.content).then(() => {
       setCopied(true);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 800);
     });
   }
 
   return (
-    <div className="flex w-full group" id={`message-${message.id}`}>
+    <div className="flex w-full group animate-slide-up" id={`message-${message.id}`}>
       {/* 아바타 */}
       <div className="shrink-0 mr-3 mt-1 flex">
         <div className="size-8 rounded-full bg-accent/20 border border-accent/30 flex items-center justify-center text-xs font-bold text-accent">
@@ -502,7 +511,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
     navigator.clipboard.writeText(code).then(() => {
       setCopied(true);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 800);
     });
   }
 

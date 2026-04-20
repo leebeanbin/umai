@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiGetPublicSettings, type PublicSettings } from "@/lib/api/backendClient";
+import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 
 // OAuth links use relative paths — Next.js rewrites proxy them to the backend.
 // This avoids exposing the backend URL in browser JS and eliminates CORS.
@@ -34,6 +35,8 @@ const DEFAULT_PUBLIC: PublicSettings = {
 
 export default function AuthModal() {
   const [publicSettings, setPublicSettings] = useState<PublicSettings>(DEFAULT_PUBLIC);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, true);
 
   useEffect(() => {
     apiGetPublicSettings()
@@ -48,7 +51,7 @@ export default function AuthModal() {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-base/70 backdrop-blur-xl px-4">
       {/* Card */}
-      <div className="relative w-full max-w-xs bg-surface border border-border rounded-2xl shadow-2xl shadow-black/20 p-8 animate-modal">
+      <div ref={modalRef} className="relative w-full max-w-xs bg-surface border border-border rounded-2xl shadow-2xl shadow-black/20 p-8 animate-modal">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8 select-none">
           <div className="size-12 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center mb-3">

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { UserOut, apiOnboard } from "@/lib/api/backendClient";
 import { getPastelColor, getInitials } from "@/lib/utils/avatar";
+import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 
 interface Props {
   user: UserOut;
@@ -14,6 +15,8 @@ export default function OnboardingModal({ user, onComplete }: Props) {
   const [email, setEmail] = useState(user.email ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError]   = useState("");
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, true);
 
   const pastel = getPastelColor(user.id);
 
@@ -36,7 +39,7 @@ export default function OnboardingModal({ user, onComplete }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-base/70 backdrop-blur-xl px-4">
-      <div className="relative w-full max-w-sm bg-surface border border-border rounded-2xl shadow-2xl shadow-black/20 p-8 animate-modal">
+      <div ref={modalRef} className="relative w-full max-w-sm bg-surface border border-border rounded-2xl shadow-2xl shadow-black/20 p-8 animate-modal">
         {/* Avatar preview */}
         <div className="flex flex-col items-center mb-6">
           <div

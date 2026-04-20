@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -138,13 +138,33 @@ async def delete_item(
 
 # ── Knowledge ─────────────────────────────────────────────────────────────────
 
-@router.get("/knowledge", response_model=list[KnowledgeItemOut])
+@router.get("/knowledge")
 async def list_knowledge(
-    svc: WorkspaceService = Depends(get_workspace_service),
+    cursor: Optional[str] = None,
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    items = await svc.list_knowledge(user.id)
-    return [KnowledgeItemOut.model_validate(i) for i in items]
+    """Cursor-based pagination — cursor는 이전 응답의 next_cursor 값."""
+    from sqlalchemy import select as _select
+    from app.models.workspace import KnowledgeItem as _KI
+
+    q = _select(_KI).where(_KI.user_id == user.id)
+    if cursor:
+        try:
+            cursor_dt = datetime.fromisoformat(cursor)
+            q = q.where(_KI.created_at < cursor_dt)
+        except ValueError:
+            pass
+    q = q.order_by(_KI.created_at.desc()).limit(limit + 1)
+    rows = (await db.scalars(q)).all()
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    next_cursor = items[-1].created_at.isoformat() if has_more and items else None
+    return {
+        "items": [KnowledgeItemOut.model_validate(i) for i in items],
+        "next_cursor": next_cursor,
+    }
 
 
 @router.post("/knowledge", response_model=KnowledgeItemOut, status_code=201)

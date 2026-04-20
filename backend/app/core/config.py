@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     XAI_API_KEY: str = ""        # xAI Grok (https://console.x.ai)
     TAVILY_API_KEY: str = ""     # Tavily 웹 검색 (https://tavily.com)
 
+    # ── Observability ────────────────────────────────────────────────────────
+    OTEL_ENDPOINT: str = ""    # OTLP gRPC endpoint (e.g. http://jaeger:4317); "" = disabled
+
     # ── CORS ─────────────────────────────────────────────────────────────────
     @property
     def CORS_ORIGINS(self) -> List[str]:

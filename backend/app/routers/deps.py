@@ -46,6 +46,14 @@ from app.core.redis import user_cache_get, user_cache_set, access_get, dau_add
 from app.models.user import User
 
 bearer = HTTPBearer(auto_error=False)
+_logger = __import__("logging").getLogger(__name__)
+
+
+async def _safe_dau_add(user_id: str, date_str: str) -> None:
+    try:
+        await dau_add(user_id, date_str)
+    except Exception as exc:
+        _logger.warning("DAU recording failed: %s", exc)
 
 
 async def get_current_user(
@@ -84,7 +92,7 @@ async def get_current_user(
         data["id"] = uuid.UUID(data["id"])
         # DAU HyperLogLog 기록 (캐시 히트 경로 — fire-and-forget)
         _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        asyncio.ensure_future(dau_add(user_id, _today))
+        asyncio.get_event_loop().create_task(_safe_dau_add(user_id, _today))
         return SimpleNamespace(**data)  # type: ignore[return-value]
 
     # ── Step 4: DB 조회 (캐시 miss) ──────────────────────────────────────────
@@ -98,7 +106,7 @@ async def get_current_user(
 
     # DAU HyperLogLog 기록 (DB 조회 경로 — fire-and-forget)
     _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    asyncio.ensure_future(dau_add(user_id, _today))
+    asyncio.get_event_loop().create_task(_safe_dau_add(user_id, _today))
 
     await user_cache_set(user_id, json.dumps({
         "id": str(user.id),

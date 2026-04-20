@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Link2, Check, Copy, Download, X, Globe, Lock } from "lucide-react";
+import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 
 interface Props {
   sessionId: string;
@@ -51,6 +52,8 @@ export default function ChatShareModal({ sessionId, sessionTitle, onClose }: Pro
   const [isPublic, setIsPublic] = useState(() => loadShareState(sessionId));
   const [copied, setCopied]     = useState(false);
   const copiedTimer             = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const modalRef                = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, true);
 
   const shareUrl = typeof window !== "undefined"
     ? `${window.location.origin}/chat/${sessionId}?shared=1`
@@ -79,6 +82,7 @@ export default function ChatShareModal({ sessionId, sessionTitle, onClose }: Pro
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4" onClick={onClose} aria-hidden="true">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
       <div
+        ref={modalRef}
         className="relative w-full max-w-sm bg-surface border border-border rounded-2xl shadow-2xl p-5 flex flex-col gap-5"
         onClick={(e) => e.stopPropagation()}
       >

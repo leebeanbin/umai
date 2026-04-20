@@ -1,7 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 import {
   X, Check, Info,
   Monitor, Volume2, User, Database, HelpCircle, LogOut, Download, Trash2,
@@ -60,6 +61,8 @@ function Toggle({ checked, onChange, label, description }: {
 }
 
 export default function SettingsModal({ open, onClose }: Props) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, open);
   const [tab, setTab]     = useState<Tab>("general");
   const [saved, setSaved] = useState(false);
   const [inputLang, setInputLang]   = useState<LangOverride>("auto");
@@ -202,7 +205,7 @@ export default function SettingsModal({ open, onClose }: Props) {
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="w-full max-w-2xl bg-elevated/98 backdrop-blur-sm border border-border rounded-3xl shadow-2xl flex flex-col max-h-[88vh] animate-modal">
+      <div ref={modalRef} className="w-full max-w-2xl bg-elevated/98 backdrop-blur-sm border border-border rounded-3xl shadow-2xl flex flex-col max-h-[88vh] animate-modal">
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">

@@ -4,14 +4,48 @@ Celery 태스크 공통 유틸리티
 publish_task_done: 태스크 완료를 소유자 전용 Redis 채널에 발행.
   - ai.py / knowledge.py / image.py 3곳에 있던 동일 코드를 통합.
   - 동기 컨텍스트(Celery worker)에서만 사용.
+
+ai_api_retry: tenacity 지수 백오프 데코레이터 (일시적 네트워크 오류 대상).
+move_to_dlq: 최대 재시도 초과 태스크를 Redis DLQ 리스트에 보존.
 """
 import json
 import logging
+from datetime import datetime, timezone
 
 import redis as _sync_redis
 
 from app.core.config import settings
-from app.core.redis_keys import key_task_notification
+from app.core.redis_keys import key_task_notification, key_dlq
+
+try:
+    import httpx as _httpx
+    from tenacity import (
+        retry,
+        retry_if_exception_type,
+        stop_after_attempt,
+        wait_exponential_jitter,
+        before_sleep_log,
+    )
+
+    _TRANSIENT_ERRORS = (
+        ConnectionError,
+        TimeoutError,
+        _httpx.ConnectError,
+        _httpx.ReadTimeout,
+        _httpx.ConnectTimeout,
+    )
+
+    ai_api_retry = retry(
+        retry=retry_if_exception_type(_TRANSIENT_ERRORS),
+        stop=stop_after_attempt(4),
+        wait=wait_exponential_jitter(initial=2, max=60),
+        before_sleep=before_sleep_log(logging.getLogger(__name__), logging.WARNING),
+        reraise=True,
+    )
+except ImportError:
+    # tenacity 미설치 시 no-op 데코레이터
+    def ai_api_retry(fn):  # type: ignore[misc]
+        return fn
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +75,21 @@ def publish_task_done(task_id: str, task: str) -> None:
             }))
     except Exception as exc:
         logger.warning("publish_task_done failed: %s", exc)
+
+
+def move_to_dlq(task_name: str, kwargs: dict, error: str) -> None:
+    """영구 실패 태스크를 Redis DLQ 리스트에 보존 (최대 1000건)."""
+    try:
+        r = _get_redis()
+        r.lpush(key_dlq(), json.dumps({
+            "task": task_name,
+            "kwargs": kwargs,
+            "error": error,
+            "failed_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        r.ltrim(key_dlq(), 0, 999)
+    except Exception as exc:
+        logger.warning("move_to_dlq failed: %s", exc)
 
 
 def publish_workflow_event(owner_id: str, event_type: str, payload: dict) -> None:

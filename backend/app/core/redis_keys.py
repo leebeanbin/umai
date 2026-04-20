@@ -96,3 +96,10 @@ def key_http_rate_limit(user_id: str, endpoint: str) -> str:
 def key_dau(date_str: str) -> str:
     """날짜별 DAU HyperLogLog 키. date_str 형식: YYYY-MM-DD."""
     return f"dau:{date_str}"
+
+
+# ── Dead Letter Queue ─────────────────────────────────────────────────────────
+
+def key_dlq() -> str:
+    """영구 실패 Celery 태스크 DLQ Redis 리스트 키."""
+    return "umai:dlq"

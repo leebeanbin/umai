@@ -35,10 +35,13 @@ export default function PlaygroundPage() {
           <FlaskConical size={16} className="text-accent" />
           <h1 className="text-sm font-semibold text-text-primary">{t("playground.title")}</h1>
         </div>
-        <div className="flex items-center gap-1 ml-2">
+        <div role="tablist" className="flex items-center gap-1 ml-2">
           {(["chat", "completions", "images"] as Tab[]).map((tab) => (
             <button
               key={tab}
+              role="tab"
+              aria-selected={activeTab === tab}
+              tabIndex={activeTab === tab ? 0 : -1}
               onClick={() => setActiveTab(tab)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                 activeTab === tab
