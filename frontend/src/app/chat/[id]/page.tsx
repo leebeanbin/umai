@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { Clock, BookmarkPlus } from "lucide-react";
+import { Clock, BookmarkPlus, WifiOff, RotateCcw, X } from "lucide-react";
 import ChatNavbar from "@/components/chat/ChatNavbar";
 import MessageList from "@/components/chat/MessageList";
 import MessageInput from "@/components/chat/MessageInput";
@@ -36,6 +36,7 @@ export default function ChatSession() {
   const {
     messages, setMessages, generating, setGenerating,
     msgRef, push, send, stop, editMessage, regenerate, sendAsAgent,
+    saveError, retrySave, dismissSaveError,
   } = useChat(id);
 
   // DB에서 채팅 히스토리 로드 (페이지 마운트 시 1회)
@@ -357,6 +358,22 @@ export default function ChatSession() {
         )}
       </div>
 
+      {saveError && (
+        <div className="flex items-center gap-2.5 px-4 py-2.5 bg-danger/8 border-t border-danger/15 text-xs text-danger">
+          <WifiOff size={13} className="shrink-0" />
+          <span className="flex-1">대화를 저장하지 못했습니다. 네트워크를 확인하세요.</span>
+          <button
+            onClick={retrySave}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-danger/10 hover:bg-danger/20 transition-colors font-medium"
+          >
+            <RotateCcw size={11} />
+            재시도
+          </button>
+          <button onClick={dismissSaveError} className="p-0.5 hover:opacity-60 transition-opacity">
+            <X size={12} />
+          </button>
+        </div>
+      )}
       <MessageInput
         onSend={handleSend}
         onStop={stop}

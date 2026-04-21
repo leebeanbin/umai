@@ -117,17 +117,18 @@ export function inferProvider(model: string): "openai" | "anthropic" | "google" 
  * 스트리밍 완료 후 user+assistant 쌍을 Celery write-back 배치 엔드포인트로 저장.
  * - 즉시 202 반환 → WS messages_saved 이벤트로 완료 확인
  * - 실패해도 localStorage에는 존재하므로 non-fatal
+ * - 호출자가 .catch()로 실패를 처리할 수 있도록 Promise를 반환
  */
-export async function saveToDb(chatId: string, userMsg: Message, asstMsg: Message) {
+export async function saveToDb(chatId: string, userMsg: Message, asstMsg: Message): Promise<void> {
   if (!isAuthenticated()) return;
   const messages = [
     { id: userMsg.id, role: userMsg.role, content: userMsg.content, images: userMsg.images ?? null },
     { id: asstMsg.id, role: asstMsg.role, content: asstMsg.content, images: null },
   ];
-  apiFetch(`/api/v1/chats/${chatId}/messages/batch`, {
+  await apiFetch(`/api/v1/chats/${chatId}/messages/batch`, {
     method: "POST",
     body: JSON.stringify({ messages }),
-  }).catch((e) => { console.error("saveToDb failed:", e); });
+  });
 }
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
@@ -137,6 +138,8 @@ export function useChat(chatId?: string) {
     chatId ? loadMessages(chatId) : []
   );
   const [generating, setGenerating] = useState(false);
+  const [saveError, setSaveError]   = useState(false);
+  const lastSavePairRef = useRef<{ userMsg: Message; asstMsg: Message } | null>(null);
   const msgRef          = useRef<Message[]>([]);
   const abortRef        = useRef<AbortController | null>(null);
   const lastSendOptsRef = useRef<SendOpts | undefined>(undefined);
@@ -311,7 +314,8 @@ export function useChat(chatId?: string) {
           setGenerating(false);
           abortRef.current = null;
           if (chatId && _userMsg && _asstMsg) {
-            saveToDb(chatId, _userMsg, _asstMsg);
+            lastSavePairRef.current = { userMsg: _userMsg, asstMsg: _asstMsg };
+            saveToDb(chatId, _userMsg, _asstMsg).catch(() => setSaveError(true));
           }
         },
 
@@ -411,5 +415,14 @@ export function useChat(chatId?: string) {
     }
   }, [chatId, push, msgRef]);
 
-  return { messages, setMessages, generating, setGenerating, msgRef, push, addMessage, send, stop, editMessage, regenerate, clear, sendAsAgent };
+  const retrySave = useCallback(() => {
+    if (!chatId || !lastSavePairRef.current) return;
+    const { userMsg, asstMsg } = lastSavePairRef.current;
+    setSaveError(false);
+    saveToDb(chatId, userMsg, asstMsg).catch(() => setSaveError(true));
+  }, [chatId]);
+
+  const dismissSaveError = useCallback(() => setSaveError(false), []);
+
+  return { messages, setMessages, generating, setGenerating, msgRef, push, addMessage, send, stop, editMessage, regenerate, clear, sendAsAgent, saveError, retrySave, dismissSaveError };
 }
