@@ -73,7 +73,9 @@ export function useChatSocket(
       ws.onmessage = (e) => {
         try {
           onEventRef.current(JSON.parse(e.data) as WsEvent);
-        } catch { /* malformed JSON — ignore */ }
+        } catch (err) {
+          console.warn("[WS] Failed to parse message:", e.data, err);
+        }
       };
 
       ws.onerror = () => { /* reconnect handled by onclose */ };
@@ -139,7 +141,9 @@ export function useTaskSocket(
         if (event.type === "task_done") {
           callbackRef.current(event.task_id as string, event.task as string);
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn("[WS] Failed to parse message:", e.data, err);
+      }
     };
 
     // keepalive ping 30초마다
@@ -205,7 +209,9 @@ export function useWorkflowSocket(onEvent: (event: WsEvent) => void) {
     ws.onmessage = (e) => {
       try {
         onEventRef.current(JSON.parse(e.data) as WsEvent);
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn("[WS] Failed to parse message:", e.data, err);
+      }
     };
 
     // keepalive ping

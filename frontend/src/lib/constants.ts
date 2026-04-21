@@ -35,3 +35,7 @@ export const IMAGE_EDIT_DEFAULT_SIZE        = "1024x1024";
 export const WEBSEARCH_MAX_QUERY_LEN = 500;
 export const WEBSEARCH_MAX_RESULTS   = 6;
 export const WEBSEARCH_TIMEOUT_MS    = 10_000;
+
+// ── chat 보조 호출 타임아웃 ────────────────────────────────────────────────────
+export const RAG_TIMEOUT_MS          = 10_000;  // RAG 검색 타임아웃
+export const OCR_TIMEOUT_MS          = 30_000;  // OCR 타임아웃

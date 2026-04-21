@@ -6,6 +6,21 @@ import { useLanguage } from "@/components/providers/LanguageProvider";
 import { type TranslationKey } from "@/lib/i18n";
 import { apiRateMessage } from "@/lib/api/backendClient";
 
+function copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    return Promise.resolve();
+  } catch {
+    return Promise.reject();
+  }
+}
+
 // Import from canonical location and re-export for backward compatibility
 import type { Message, SearchSource } from "@/lib/hooks/useChat";
 export type { Message };
@@ -144,11 +159,11 @@ function UserMessage({ message, lang, onEdit, t }: UserMessageProps) {
   }, []);
 
   function handleCopy() {
-    navigator.clipboard.writeText(message.content).then(() => {
+    copyToClipboard(message.content).then(() => {
       setCopied(true);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setCopied(false), 800);
-    });
+    }).catch(() => {});
   }
 
   function startEdit() {
@@ -278,11 +293,11 @@ function AssistantMessage({ message, chatId, isLast, lang, onRegenerate, t }: As
   useEffect(() => () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); }, []);
 
   function handleCopy() {
-    navigator.clipboard.writeText(message.content).then(() => {
+    copyToClipboard(message.content).then(() => {
       setCopied(true);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setCopied(false), 800);
-    });
+    }).catch(() => {});
   }
 
   return (
@@ -508,11 +523,11 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   useEffect(() => () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); }, []);
 
   function handleCopy() {
-    navigator.clipboard.writeText(code).then(() => {
+    copyToClipboard(code).then(() => {
       setCopied(true);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setCopied(false), 800);
-    });
+    }).catch(() => {});
   }
 
   return (
