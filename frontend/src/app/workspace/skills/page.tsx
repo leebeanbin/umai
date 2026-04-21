@@ -13,6 +13,22 @@ import {
   deleteWorkspaceItem,
 } from "@/lib/workspaceStore";
 import { type WorkspaceItem } from "@/lib/api/backendClient";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
+
+function copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    return Promise.resolve();
+  } catch {
+    return Promise.reject();
+  }
+}
 
 type Skill = {
   id: string;
@@ -103,6 +119,8 @@ export default function SkillsPage() {
   );
   const [showCreate, setShowCreate] = useState(false);
   const [copiedId, setCopiedId]     = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [form, setForm]             = useState({
     name: "", description: "", language: "javascript" as "javascript" | "python", code: "",
   });
@@ -119,43 +137,63 @@ export default function SkillsPage() {
   );
 
   async function toggleSkill(skill: Skill) {
-    const updated = await updateWorkspaceItem(
-      skill.id,
-      { is_enabled: !skill.enabled },
-      LOCAL_KEY,
-      toLocal,
-      skills,
-      applyPatch,
-    );
-    setSkills(updated);
+    try {
+      const updated = await updateWorkspaceItem(
+        skill.id,
+        { is_enabled: !skill.enabled },
+        LOCAL_KEY,
+        toLocal,
+        skills,
+        applyPatch,
+      );
+      setSkills(updated);
+    } catch {
+      setMutationError("스킬 상태 변경에 실패했습니다");
+    }
   }
 
   async function handleCreate() {
     if (!form.name.trim() || saving) return;
     setSaving(true);
-    const updated = await createWorkspaceItem(
-      "skill",
-      form.name.trim(),
-      { description: form.description, language: form.language, code: form.code, builtin: false },
-      LOCAL_KEY,
-      toLocal,
-      skills,
-    );
-    setSkills(updated);
-    setForm({ name: "", description: "", language: "javascript", code: "" });
-    setShowCreate(false);
-    setSaving(false);
+    setMutationError(null);
+    try {
+      const updated = await createWorkspaceItem(
+        "skill",
+        form.name.trim(),
+        { description: form.description, language: form.language, code: form.code, builtin: false },
+        LOCAL_KEY,
+        toLocal,
+        skills,
+      );
+      setSkills(updated);
+      setForm({ name: "", description: "", language: "javascript", code: "" });
+      setShowCreate(false);
+    } catch {
+      setMutationError("스킬 생성에 실패했습니다");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  async function handleDelete(id: string) {
-    const updated = await deleteWorkspaceItem(id, LOCAL_KEY, skills);
-    setSkills(updated);
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    const id = deleteTarget;
+    setDeleteTarget(null);
+    const prev = skills;
+    try {
+      const updated = await deleteWorkspaceItem(id, LOCAL_KEY, skills);
+      setSkills(updated);
+    } catch {
+      setSkills(prev);
+      setMutationError("스킬 삭제에 실패했습니다");
+    }
   }
 
   function handleCopy(skill: Skill) {
-    navigator.clipboard.writeText(skill.code);
-    setCopiedId(skill.id);
-    setTimeout(() => setCopiedId(null), 2000);
+    copyToClipboard(skill.code).then(() => {
+      setCopiedId(skill.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    }).catch(() => {});
   }
 
   const builtins = filtered.filter((s) => s.builtin);
@@ -163,6 +201,20 @@ export default function SkillsPage() {
 
   return (
     <div className="flex flex-col gap-1 mt-4">
+      <ConfirmModal
+        open={deleteTarget !== null}
+        message="이 스킬을 삭제하시겠습니까?"
+        confirmLabel="삭제"
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
+      {mutationError && (
+        <div className="mb-2 px-3 py-2 rounded-xl bg-danger/10 border border-danger/20 text-xs text-danger flex items-center justify-between">
+          <span>{mutationError}</span>
+          <button onClick={() => setMutationError(null)} className="ml-2 hover:opacity-70"><X size={12} /></button>
+        </div>
+      )}
       <div className="flex justify-between items-center mb-3 px-0.5">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold text-text-primary">{t("workspace.skills")}</h2>
@@ -208,7 +260,7 @@ export default function SkillsPage() {
                     copiedId={copiedId}
                     onToggle={() => toggleSkill(skill)}
                     onCopy={() => handleCopy(skill)}
-                    onDelete={() => handleDelete(skill.id)}
+                    onDelete={() => setDeleteTarget(skill.id)}
                     t={t}
                   />
                 ))}
@@ -230,7 +282,7 @@ export default function SkillsPage() {
                     copiedId={copiedId}
                     onToggle={() => toggleSkill(skill)}
                     onCopy={() => handleCopy(skill)}
-                    onDelete={() => handleDelete(skill.id)}
+                    onDelete={() => setDeleteTarget(skill.id)}
                     t={t}
                   />
                 ))}
@@ -313,6 +365,9 @@ export default function SkillsPage() {
               </div>
             </div>
 
+            {mutationError && (
+              <p className="px-5 pb-2 text-xs text-danger">{mutationError}</p>
+            )}
             <div className="flex justify-end gap-2 px-5 py-4 border-t border-border">
               <button onClick={() => setShowCreate(false)} className="px-4 py-2 rounded-xl text-sm text-text-secondary hover:bg-hover transition">
                 {t("common.cancel")}

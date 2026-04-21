@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Search, Plus, X, Globe, Code2, Zap, Wrench } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import {
   loadWs,
   syncWorkspaceFromBackend,
@@ -60,6 +61,7 @@ export default function ToolsPage() {
     loadWs<Tool>(LOCAL_KEY, INITIAL_TOOLS)
   );
   const [showCreate, setShowCreate] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [form, setForm]             = useState({ name: "", description: "" });
   const [saving, setSaving]         = useState(false);
 
@@ -107,8 +109,23 @@ export default function ToolsPage() {
     setTools(updated);
   }
 
+  function confirmDelete() {
+    if (deleteTarget) {
+      handleDelete(deleteTarget);
+      setDeleteTarget(null);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-1 mt-4">
+      <ConfirmModal
+        open={deleteTarget !== null}
+        message="이 도구를 삭제하시겠습니까?"
+        confirmLabel="삭제"
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
       <div className="flex justify-between items-center mb-3 px-0.5">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold text-text-primary">{t("workspace.tools")}</h2>
@@ -157,7 +174,7 @@ export default function ToolsPage() {
               <div className="flex items-center gap-2 shrink-0">
                 {tool.type === "custom" && (
                   <button
-                    onClick={() => handleDelete(tool.id)}
+                    onClick={() => setDeleteTarget(tool.id)}
                     className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-red-400 transition"
                   >
                     <X size={13} />

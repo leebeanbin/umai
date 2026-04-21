@@ -38,16 +38,22 @@ export default function KnowledgePage() {
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging]   = useState(false);
   const [error, setError]         = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   // id → task status ("queued" | "running" | "success" | "failed")
   const [taskStatus, setTaskStatus] = useState<Record<string, string>>({});
   const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
+  function load() {
+    setLoading(true);
+    setLoadError(null);
     apiListKnowledge()
       .then(setFiles)
-      .catch(() => setError(t("workspace.loadError")))
+      .catch(() => setLoadError(t("workspace.loadError")))
       .finally(() => setLoading(false));
-  }, [t]);
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, []);
 
   const filtered = files.filter((f) =>
     !query || f.name.toLowerCase().includes(query.toLowerCase())
@@ -169,6 +175,12 @@ export default function KnowledgePage() {
         </div>
       </div>
 
+      {loadError && (
+        <div className="mb-2 px-4 py-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-sm flex items-center justify-between gap-3">
+          <span>{loadError}</span>
+          <button onClick={load} className="text-xs underline shrink-0">다시 시도</button>
+        </div>
+      )}
       {error && (
         <p className="text-xs text-red-400 px-1 mb-1">{error}</p>
       )}

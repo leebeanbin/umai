@@ -54,15 +54,19 @@ export default function FineTunePage() {
   const [datasets, setDatasets] = useState<DatasetOut[]>([]);
   const [tab, setTab]           = useState<"jobs" | "datasets">("jobs");
   const [loading, setLoading]   = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoadError(null);
     try {
       const [j, d] = await Promise.all([apiListJobs(), apiListDatasets()]);
       setJobs(j);
       setDatasets(d);
-    } catch {/* ignore */} finally {
+    } catch {
+      setLoadError("데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
       setLoading(false);
     }
   }, []);
@@ -119,6 +123,12 @@ export default function FineTunePage() {
         onConfirm={() => { const id = deleteTarget!; setDeleteTarget(null); handleDeleteDataset(id); }}
         onCancel={() => setDeleteTarget(null)}
       />
+      {loadError && (
+        <div className="px-4 py-3 rounded-lg bg-danger/10 border border-danger/20 text-sm text-danger flex items-center justify-between gap-3">
+          <span>{loadError}</span>
+          <button onClick={load} className="text-xs underline shrink-0">다시 시도</button>
+        </div>
+      )}
       {mutationError && (
         <div className="px-4 py-2 rounded-lg bg-danger/10 border border-danger/20 text-sm text-danger">
           {mutationError}

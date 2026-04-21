@@ -19,13 +19,21 @@ export default function WorkflowListPage() {
   const [creating, setCreating] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (authLoading) return;
-    if (!user) { setLoading(false); return; }
+  function load() {
+    if (!user) return;
+    setLoading(true);
+    setLoadError(null);
     apiListWorkflows()
       .then(setWorkflows)
       .catch(() => setLoadError("워크플로우를 불러오지 못했습니다. 잠시 후 다시 시도해주세요."))
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) { setLoading(false); return; }
+    load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, authLoading]);
 
   async function handleCreate() {
@@ -66,8 +74,9 @@ export default function WorkflowListPage() {
       {/* 본문 */}
       <div className="flex-1 overflow-y-auto p-6">
         {loadError && (
-          <div className="mb-4 px-4 py-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-sm">
-            {loadError}
+          <div className="mb-4 px-4 py-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-sm flex items-center justify-between gap-3">
+            <span>{loadError}</span>
+            <button onClick={load} className="text-xs underline shrink-0">다시 시도</button>
           </div>
         )}
         {loading ? (

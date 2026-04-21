@@ -46,10 +46,21 @@ export default function AdminEvaluationsPage() {
   const models  = ["all", ...Array.from(new Set(ratings.map((r) => r.model ?? "unknown")))];
   const filtered = modelFilter === "all" ? ratings : ratings.filter((r) => (r.model ?? "unknown") === modelFilter);
 
+  function escapeCsv(v: string) {
+    return `"${v.replace(/"/g, '""').replace(/\r?\n/g, " ").replace(/\r/g, " ")}"`;
+  }
+
   function exportCsv() {
     const rows = [
       ["message_id", "model", "rating", "message_preview", "user_email", "created_at"],
-      ...ratings.map((r) => [r.message_id, r.model ?? "", r.rating, `"${r.message_preview.replace(/"/g, '""')}"`, r.user_email, r.created_at]),
+      ...ratings.map((r) => [
+        escapeCsv(r.message_id),
+        escapeCsv(r.model ?? ""),
+        escapeCsv(r.rating),
+        escapeCsv(r.message_preview),
+        escapeCsv(r.user_email),
+        escapeCsv(r.created_at),
+      ]),
     ];
     const blob = new Blob([rows.map((r) => r.join(",")).join("\n")], { type: "text/csv" });
     const a = document.createElement("a");

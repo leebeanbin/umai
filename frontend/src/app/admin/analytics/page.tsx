@@ -144,21 +144,26 @@ export default function AdminAnalyticsPage() {
   const [stats, setStats] = useState<AdminStatsOut | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const ko = lang === "ko";
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     else setRefreshing(true);
+    setLoadError(null);
     try {
       const s = await apiAdminStats();
       setStats(s);
-    } catch { /* ignore */ } finally {
+    } catch {
+      setLoadError(ko ? "통계 데이터를 불러오지 못했습니다." : "Failed to load analytics data.");
+    } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
 
   if (me && me.role !== "admin") {
@@ -202,6 +207,12 @@ export default function AdminAnalyticsPage() {
             </button>
           </div>
 
+          {loadError && (
+            <div className="mb-4 px-4 py-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-sm flex items-center justify-between gap-3">
+              <span>{loadError}</span>
+              <button onClick={() => load()} className="text-xs underline shrink-0">{ko ? "다시 시도" : "Retry"}</button>
+            </div>
+          )}
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-text-muted py-20 justify-center">
               <Activity size={16} className="animate-pulse" />
@@ -270,7 +281,7 @@ export default function AdminAnalyticsPage() {
                       +{stats?.new_this_week ?? 0} {ko ? "명" : "users"}
                     </span>
                   </div>
-                  <div className="text-text-muted">
+                  <div className="text-text-muted" role="img" aria-label={ko ? "주간 채팅 생성 막대 그래프" : "Weekly chat activity bar chart"}>
                     <BarChart values={weeklyBars} color="#7c6af5" />
                   </div>
                 </div>
@@ -318,7 +329,9 @@ export default function AdminAnalyticsPage() {
                 <div className="bg-surface border border-border rounded-2xl p-5">
                   <p className="text-sm font-semibold text-text-primary mb-4">{ko ? "모델 사용 분포" : "Model Distribution"}</p>
                   <div className="flex items-center gap-5">
-                    <DonutChart segments={modelSegments} size={88} />
+                    <div role="img" aria-label={ko ? "모델별 사용 분포 도넛 차트 (샘플 데이터)" : "Model usage distribution donut chart (sample data)"}>
+                      <DonutChart segments={modelSegments} size={88} />
+                    </div>
                     <div className="flex-1 space-y-2.5">
                       {modelSegments.map((seg) => (
                         <div key={seg.label} className="flex items-center justify-between">

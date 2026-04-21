@@ -186,16 +186,21 @@ export default function FineTuneJobPage() {
   const { user, loading: authLoading } = useAuth();
   const [job, setJob] = useState<JobOut | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
     try {
       const j = await apiGetJob(id);
       setJob(j);
+      setLoadError(null);
       if (j.status !== "running" && j.status !== "pending") {
         if (pollRef.current) clearInterval(pollRef.current);
       }
-    } catch {/* ignore */} finally {
+    } catch {
+      setLoadError("작업 정보를 불러오지 못했습니다.");
+      if (pollRef.current) clearInterval(pollRef.current);
+    } finally {
       setLoading(false);
     }
   }, [id]);
@@ -217,10 +222,21 @@ export default function FineTuneJobPage() {
     }
   }
 
-  if (loading || !job) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-48 text-text-muted">
         <Loader2 size={18} className="animate-spin mr-2" /> 불러오는 중...
+      </div>
+    );
+  }
+
+  if (!job) {
+    return (
+      <div className="flex flex-col items-center justify-center h-48 gap-3">
+        <p className="text-sm text-danger">{loadError ?? "작업을 찾을 수 없습니다."}</p>
+        {loadError && (
+          <button onClick={load} className="text-xs underline text-text-muted">다시 시도</button>
+        )}
       </div>
     );
   }

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Search, Plus, X, Copy, Check } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import {
   loadWs,
   syncWorkspaceFromBackend,
@@ -42,6 +43,7 @@ export default function PromptsPage() {
     loadWs<Prompt>(LOCAL_KEY, INITIAL_PROMPTS)
   );
   const [showCreate, setShowCreate] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [copiedId, setCopiedId]     = useState<string | null>(null);
   const [form, setForm]             = useState({ command: "", title: "", content: "" });
   const [saving, setSaving]         = useState(false);
@@ -80,13 +82,48 @@ export default function PromptsPage() {
   }
 
   function handleCopy(p: Prompt) {
-    navigator.clipboard.writeText(p.content);
+    const text = p.content;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).catch(() => {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+        } catch { /* clipboard unavailable */ }
+      });
+    } else {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch { /* clipboard unavailable */ }
+    }
     setCopiedId(p.id);
     setTimeout(() => setCopiedId(null), 2000);
   }
 
   return (
     <div className="flex flex-col gap-1 mt-4">
+      <ConfirmModal
+        open={deleteTarget !== null}
+        message="이 프롬프트를 삭제하시겠습니까?"
+        confirmLabel="삭제"
+        danger
+        onConfirm={() => { if (deleteTarget) { handleDelete(deleteTarget); setDeleteTarget(null); } }}
+        onCancel={() => setDeleteTarget(null)}
+      />
       <div className="flex justify-between items-center mb-3 px-0.5">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold text-text-primary">{t("workspace.prompts")}</h2>
@@ -130,7 +167,7 @@ export default function PromptsPage() {
                   <button onClick={() => handleCopy(p)} aria-label="Copy prompt" className="p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-text-secondary transition">
                     {copiedId === p.id ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
                   </button>
-                  <button onClick={() => handleDelete(p.id)} aria-label="Delete prompt" className="p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-danger transition">
+                  <button onClick={() => setDeleteTarget(p.id)} aria-label="Delete prompt" className="p-1.5 rounded-lg hover:bg-white/5 text-text-muted hover:text-danger transition">
                     <X size={13} />
                   </button>
                 </div>

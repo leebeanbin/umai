@@ -50,10 +50,11 @@ export default function ModelsPage() {
   const [form, setForm]             = useState({ name: "", baseModel: "gpt-4o", systemPrompt: "", description: "" });
   const [builtinModels, setBuiltinModels] = useState<ReturnType<typeof loadModels>>([]);
   const [saving, setSaving]         = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   // 마운트 후 localStorage 로드 → 인증 후 백엔드 동기화
   useEffect(() => {
-    setBuiltinModels(loadModels()); // eslint-disable-line react-hooks/set-state-in-effect
+    setBuiltinModels(loadModels());
     setCustom(loadWs<CustomModel>(LOCAL_KEY, INITIAL_CUSTOM));
   }, []);
 
@@ -72,27 +73,45 @@ export default function ModelsPage() {
   async function handleCreate() {
     if (!form.name.trim() || saving) return;
     setSaving(true);
-    const updated = await createWorkspaceItem(
-      "model",
-      form.name.trim(),
-      { baseModel: form.baseModel, systemPrompt: form.systemPrompt, description: form.description },
-      LOCAL_KEY,
-      toLocal,
-      customModels,
-    );
-    setCustom(updated);
-    setForm({ name: "", baseModel: "gpt-4o", systemPrompt: "", description: "" });
-    setShowCreate(false);
-    setSaving(false);
+    setMutationError(null);
+    try {
+      const updated = await createWorkspaceItem(
+        "model",
+        form.name.trim(),
+        { baseModel: form.baseModel, systemPrompt: form.systemPrompt, description: form.description },
+        LOCAL_KEY,
+        toLocal,
+        customModels,
+      );
+      setCustom(updated);
+      setForm({ name: "", baseModel: "gpt-4o", systemPrompt: "", description: "" });
+      setShowCreate(false);
+    } catch (e) {
+      setMutationError(e instanceof Error ? e.message : "모델 생성에 실패했습니다.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleDelete(id: string) {
-    const updated = await deleteWorkspaceItem(id, LOCAL_KEY, customModels);
-    setCustom(updated);
+    const prev = customModels;
+    try {
+      const updated = await deleteWorkspaceItem(id, LOCAL_KEY, customModels);
+      setCustom(updated);
+    } catch (e) {
+      setCustom(prev);
+      setMutationError(e instanceof Error ? e.message : "삭제에 실패했습니다.");
+    }
   }
 
   return (
     <div className="flex flex-col gap-1 mt-4">
+      {mutationError && (
+        <div className="mb-2 px-4 py-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-sm flex items-center justify-between gap-3">
+          <span>{mutationError}</span>
+          <button onClick={() => setMutationError(null)} className="text-xs underline shrink-0">닫기</button>
+        </div>
+      )}
       {/* 헤더 */}
       <div className="flex justify-between items-center mb-3 px-0.5">
         <div className="flex items-center gap-2">
