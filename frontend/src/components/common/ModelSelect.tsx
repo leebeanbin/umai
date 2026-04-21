@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Search, Check, Sliders } from "lucide-react";
+import { ChevronDown, Search, Check, Sliders, Loader2 } from "lucide-react";
 import { loadModels, fetchModels, type DynamicModel } from "@/lib/appStore";
 import { useLanguage } from "@/components/providers/LanguageProvider";
 
@@ -26,6 +26,8 @@ export default function ModelSelect({ value, onChange, showTuning = true }: Prop
 
   // [] on SSR — localStorage는 클라이언트 전용이므로 lazy init 대신 useEffect로 로드
   const [models, setModels] = useState<DynamicModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState(false);
   const [open, setOpen]           = useState(false);
   const [query, setQuery]         = useState("");
   const [tagFilter, setTagFilter] = useState<TagFilter>("All");
@@ -40,10 +42,19 @@ export default function ModelSelect({ value, onChange, showTuning = true }: Prop
 
   // 마운트 후: localStorage 초기값 로드 → API에서 최신 목록으로 갱신 (stale-while-revalidate)
   useEffect(() => {
-    setModels(loadModels()); // eslint-disable-line react-hooks/set-state-in-effect
+    const cached = loadModels();
+    setModels(cached); // eslint-disable-line react-hooks/set-state-in-effect
+    if (cached.length > 0) setModelsLoading(false);
     fetchModels().then((fresh) => {
-      if (fresh.length > 0) setModels(fresh);
-    }).catch(() => {});
+      if (fresh.length > 0) {
+        setModels(fresh);
+        setModelsError(false);
+      }
+      setModelsLoading(false);
+    }).catch(() => {
+      setModelsError(true);
+      setModelsLoading(false);
+    });
   }, []);
 
   useEffect(() => {
@@ -111,7 +122,15 @@ export default function ModelSelect({ value, onChange, showTuning = true }: Prop
 
           {/* Model list */}
           <div className="max-h-56 overflow-y-auto py-1" role="listbox">
-            {filtered.length === 0 ? (
+            {modelsLoading ? (
+              <div className="flex items-center justify-center gap-2 px-4 py-4 text-xs text-text-muted">
+                <Loader2 size={12} className="animate-spin" /> 로딩 중...
+              </div>
+            ) : modelsError ? (
+              <div className="px-4 py-3 text-xs text-danger text-center">
+                모델 목록을 불러오지 못했습니다
+              </div>
+            ) : filtered.length === 0 ? (
               <p className="px-4 py-3 text-xs text-text-muted text-center">{t("navbar.noResults")}</p>
             ) : filtered.map((m) => (
               <button

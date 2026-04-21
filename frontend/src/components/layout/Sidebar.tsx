@@ -16,7 +16,7 @@ import {
   groupByTime,
   type Folder as FolderType, type Session,
 } from "@/lib/store";
-import { apiDeleteChat, apiUpdateFolder, apiDeleteFolder, apiCreateFolder, isAuthenticated } from "@/lib/api/backendClient";
+import { apiDeleteChat, apiUpdateFolder, apiDeleteFolder, apiCreateFolder, apiListFolders, isAuthenticated } from "@/lib/api/backendClient";
 import SettingsModal from "./SettingsModal";
 import FolderModal from "./FolderModal";
 import { useLanguage } from "@/components/providers/LanguageProvider";
@@ -49,6 +49,20 @@ export default function Sidebar() {
     setFolders(loadFolders());
     setSessions(loadSessions());
   }, []);
+  // 인증 후 백엔드 폴더 목록으로 로컬 동기화 (stale-while-revalidate)
+  useEffect(() => {
+    if (!user) return;
+    apiListFolders().then((serverFolders) => {
+      setFolders(serverFolders.map((f) => ({
+        id: f.id,
+        name: f.name,
+        open: f.is_open ?? true,
+        systemPrompt: f.system_prompt ?? undefined,
+        description: f.description ?? undefined,
+      })));
+    }).catch(() => {});
+  }, [user]);
+
   const [showSettings, setShowSettings] = useState(false);
   const [contextMenu, setContextMenu]   = useState<ContextTarget | null>(null);
   const [shareSessionId, setShareSessionId] = useState<string | null>(null);
@@ -99,7 +113,6 @@ export default function Sidebar() {
         const editingId = prev.editing.id;
         setFolders((flds) => flds.map((f) => f.id === editingId ? { ...f, ...data } : f));
         if (isAuthenticated()) {
-          // API 실패 시 로컬 상태를 롤백 (낙관적 업데이트 보정)
           apiUpdateFolder(editingId, { name: data.name, description: data.description, system_prompt: data.systemPrompt })
             .catch(() => {
               setFolders((flds) => flds.map((f) =>
@@ -108,13 +121,16 @@ export default function Sidebar() {
             });
         }
       } else {
-        const newId = crypto.randomUUID();
-        setFolders((flds) => [...flds, { id: newId, open: true, ...data }]);
+        const tempId = crypto.randomUUID();
+        setFolders((flds) => [...flds, { id: tempId, open: true, ...data }]);
         if (isAuthenticated()) {
-          // API 실패 시 생성된 항목 롤백
+          // Replace tempId with server-assigned ID so subsequent edit/delete use correct UUID
           apiCreateFolder(data.name, data.description, data.systemPrompt)
+            .then((created) => {
+              setFolders((flds) => flds.map((f) => f.id === tempId ? { ...f, id: created.id } : f));
+            })
             .catch(() => {
-              setFolders((flds) => flds.filter((f) => f.id !== newId));
+              setFolders((flds) => flds.filter((f) => f.id !== tempId));
             });
         }
       }

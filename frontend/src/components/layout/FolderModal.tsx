@@ -64,6 +64,11 @@ export default function FolderModal({ open, folder, onClose, onSave }: Props) {
   function handleBgChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      alert("배경 이미지는 2MB 이하만 사용할 수 있습니다.");
+      e.target.value = "";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => setBgImageUrl(reader.result as string);
     reader.readAsDataURL(file);
@@ -73,7 +78,6 @@ export default function FolderModal({ open, folder, onClose, onSave }: Props) {
   async function handleSave() {
     if (!name.trim()) { nameRef.current?.focus(); return; }
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 400));
     onSave({ name: name.trim(), systemPrompt: systemPrompt.trim() || undefined, bgImageUrl: bgImageUrl ?? undefined });
     setSaving(false);
     onClose();
