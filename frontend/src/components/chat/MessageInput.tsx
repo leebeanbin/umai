@@ -148,6 +148,10 @@ export default function MessageInput({ onSend, onStop, generating, disabled }: P
     const files = Array.from(e.target.files ?? []);
     files.forEach((file) => {
       if (!file.type.startsWith("image/")) return;
+      if (file.size > 10 * 1024 * 1024) {
+        alert("이미지는 10MB 이하만 첨부할 수 있습니다.");
+        return;
+      }
       const reader = new FileReader();
       reader.onload = async () => {
         const dataUrl = reader.result as string;

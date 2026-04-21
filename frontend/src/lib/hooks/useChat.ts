@@ -6,6 +6,7 @@ import { loadSettings } from "@/lib/appStore";
 import { getModelCapabilities } from "@/lib/modelCapabilities";
 import { apiFetch, isAuthenticated, apiEnqueueAgentTask } from "@/lib/api/backendClient";
 import { loadWs } from "@/lib/workspaceStore";
+import { RAG_TIMEOUT_MS, OCR_TIMEOUT_MS, WEBSEARCH_TIMEOUT_MS } from "@/lib/constants";
 
 /** Custom model의 systemPrompt를 가져온다. 없으면 undefined. */
 function getCustomModelSystemPrompt(modelId: string): string | undefined {
@@ -136,8 +137,9 @@ export function useChat(chatId?: string) {
     chatId ? loadMessages(chatId) : []
   );
   const [generating, setGenerating] = useState(false);
-  const msgRef   = useRef<Message[]>([]);
-  const abortRef = useRef<AbortController | null>(null);
+  const msgRef          = useRef<Message[]>([]);
+  const abortRef        = useRef<AbortController | null>(null);
+  const lastSendOptsRef = useRef<SendOpts | undefined>(undefined);
 
   // ── 내부 상태 업데이트 ────────────────────────────────────────────────────
   // persistNow: true → localStorage 즉시 저장 (스트리밍 완료, 편집 등)
@@ -161,6 +163,7 @@ export function useChat(chatId?: string) {
   // ── Core send ─────────────────────────────────────────────────────────────
   const send = useCallback(
     async (content: string, images: string[] = [], opts?: SendOpts) => {
+      lastSendOptsRef.current = opts;
       const userId = crypto.randomUUID();
       const asstId = crypto.randomUUID();
 
@@ -198,7 +201,7 @@ export function useChat(chatId?: string) {
         try {
           const body = await apiFetch<{ results?: { chunk: string; source: string; score: number }[] }>(
             `/api/v1/rag/search?q=${encodeURIComponent(content)}&top_k=5`,
-            { signal: AbortSignal.timeout(10_000) },
+            { signal: AbortSignal.timeout(RAG_TIMEOUT_MS) },
           );
           const results = Array.isArray(body.results) ? body.results : [];
           if (results.length > 0) {
@@ -220,7 +223,7 @@ export function useChat(chatId?: string) {
             const { text } = await apiFetch<{ text: string }>("/api/ocr", {
               method: "POST",
               body: JSON.stringify({ image: img }),
-              signal: AbortSignal.timeout(30_000),
+              signal: AbortSignal.timeout(OCR_TIMEOUT_MS),
             });
             if (text.trim()) {
               apiMsgs.push({
@@ -238,7 +241,7 @@ export function useChat(chatId?: string) {
         try {
           const wsBody = await apiFetch<{ results?: SearchSource[] }>(
             `/api/websearch?q=${encodeURIComponent(content)}`,
-            { signal: AbortSignal.timeout(8000) },
+            { signal: AbortSignal.timeout(WEBSEARCH_TIMEOUT_MS) },
           );
           const results = Array.isArray(wsBody.results) ? wsBody.results : [];
           if (results.length > 0) {
@@ -339,19 +342,16 @@ export function useChat(chatId?: string) {
   }, [push]);
 
   const editMessage = useCallback((id: string, content: string) => {
-    // Abort any in-flight generation
     abortRef.current?.abort();
     const snap = msgRef.current;
     const idx = snap.findIndex((m) => m.id === id);
     if (idx < 0) return;
-    // Truncate messages at the edited user message (drop it and everything after)
+    const originalMsg = snap[idx];
     push((prev) => prev.slice(0, idx), false);
-    // Re-send from the edited content
-    send(content, []);
+    send(content, originalMsg?.images ?? [], lastSendOptsRef.current);
   }, [push, send, abortRef]);
 
   const regenerate = useCallback((messageId: string) => {
-    // abort any in-flight generation before starting a new one
     abortRef.current?.abort();
     const snap = msgRef.current;
     const idx  = snap.findIndex((m) => m.id === messageId);
@@ -359,7 +359,7 @@ export function useChat(chatId?: string) {
     const userMsg = snap.slice(0, idx).reverse().find((m) => m.role === "user");
     if (!userMsg) return;
     push((prev) => prev.filter((m) => m.id !== messageId), false);
-    send(userMsg.content, []);
+    send(userMsg.content, userMsg.images ?? [], lastSendOptsRef.current);
   }, [push, send, abortRef]);
 
   const clear = useCallback(() => {

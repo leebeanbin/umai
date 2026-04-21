@@ -71,8 +71,20 @@ export default function NewFineTunePage() {
   }, [user, authLoading]);
 
   // ── 데이터셋 업로드 ────────────────────────────────────────────────────────
+  function validateJsonl(raw: string): number[] {
+    return raw.trim().split("\n").reduce<number[]>((acc, line, i) => {
+      try { JSON.parse(line); } catch { acc.push(i + 1); }
+      return acc;
+    }, []);
+  }
+
   async function handleUploadDataset() {
     if (!newDsName.trim() || !newDsRaw.trim()) return;
+    const badLines = validateJsonl(newDsRaw);
+    if (badLines.length > 0) {
+      alert(`JSONL 형식 오류: ${badLines.slice(0, 5).join(", ")}번 줄을 확인하세요.`);
+      return;
+    }
     setUploadingDs(true);
     try {
       const ds = await apiCreateDataset({ name: newDsName, format: newDsFormat, raw_data: newDsRaw });

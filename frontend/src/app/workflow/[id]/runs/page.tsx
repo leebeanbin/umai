@@ -136,7 +136,9 @@ export default function RunsHistoryPage() {
   const workflowId = params?.id as string;
 
   const { user, loading: authLoading } = useAuth();
+  const PAGE_LIMIT = 20;
   const [runs, setRuns] = useState<RunListItem[]>([]);
+  const [hasNext, setHasNext] = useState(false);
   const [stats, setStats] = useState<WorkflowStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -151,10 +153,11 @@ export default function RunsHistoryPage() {
     setLoading(true);
     setLoadError(null);
     Promise.all([
-      apiListRuns(workflowId, page),
+      apiListRuns(workflowId, page, PAGE_LIMIT + 1),
       apiGetStats(workflowId),
     ]).then(([r, s]) => {
-      setRuns(r);
+      setHasNext(r.length > PAGE_LIMIT);
+      setRuns(r.slice(0, PAGE_LIMIT));
       setStats(s);
     }).catch(() => setLoadError("실행 기록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요."))
       .finally(() => setLoading(false));
@@ -275,8 +278,7 @@ export default function RunsHistoryPage() {
           </div>
         )}
 
-        {/* 페이지네이션: 이전 버튼은 page>1이면 항상 표시, 다음 버튼은 꽉 찬 페이지일 때만 표시 */}
-        {(page > 1 || runs.length === 20) && (
+        {(page > 1 || hasNext) && (
           <div className="flex justify-center gap-2">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
@@ -286,7 +288,7 @@ export default function RunsHistoryPage() {
               이전
             </button>
             <span className="px-3 py-1.5 text-xs text-text-muted">{page}</span>
-            {runs.length === 20 && (
+            {hasNext && (
               <button
                 onClick={() => setPage((p) => p + 1)}
                 className="px-3 py-1.5 rounded-lg border border-border text-xs text-text-primary hover:bg-hover transition-colors"

@@ -63,8 +63,21 @@ export default function ChatShareModal({ sessionId, sessionTitle, onClose }: Pro
     localStorage.setItem(SHARE_KEY(sessionId), JSON.stringify(isPublic));
   }, [isPublic, sessionId]);
 
+  useEffect(() => {
+    return () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); };
+  }, []);
+
   function copyLink() {
-    navigator.clipboard.writeText(shareUrl).then(() => {
+    navigator.clipboard.writeText(shareUrl).catch(() => {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = shareUrl;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch { return; }
+    }).then(() => {
       setCopied(true);
       if (copiedTimer.current) clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopied(false), 2000);
@@ -75,7 +88,7 @@ export default function ChatShareModal({ sessionId, sessionTitle, onClose }: Pro
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handler);
-    return () => { window.removeEventListener("keydown", handler); if (copiedTimer.current) clearTimeout(copiedTimer.current); };
+    return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
   return (

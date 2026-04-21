@@ -8,6 +8,7 @@ import {
   Server, BookOpen, Volume2, BarChart2, RefreshCw, Trash2,
 } from "lucide-react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import {
   apiAdminOllamaModels, apiAdminOllamaModelCapabilities,
   apiAdminOllamaPull, apiAdminOllamaDelete,
@@ -213,6 +214,8 @@ export default function AdminSettingsPage() {
   const [ollamaPulling, setOllamaPulling]           = useState(false);
   const [ollamaPullProgress, setOllamaPullProgress] = useState<{ status: string; pct?: number } | null>(null);
   const [ollamaDeleting, setOllamaDeleting]         = useState<string | null>(null);
+  const [ollamaDeleteTarget, setOllamaDeleteTarget] = useState<string | null>(null);
+  const [isDirty, setIsDirty]                       = useState(false);
 
   // Documents (RAG)
   const [embeddingEngine, setEmbeddingEngine] = useState<"ollama" | "openai">("ollama");
@@ -312,17 +315,24 @@ export default function AdminSettingsPage() {
 
   const deleteOllamaModel = useCallback(async (name: string) => {
     if (ollamaDeleting) return;
+    setOllamaDeleteTarget(name);
+  }, [ollamaDeleting]);
+
+  const confirmDeleteOllamaModel = useCallback(async () => {
+    const name = ollamaDeleteTarget;
+    setOllamaDeleteTarget(null);
+    if (!name) return;
     setOllamaDeleting(name);
     try {
       await apiAdminOllamaDelete(name);
       setOllamaModelNames((prev) => prev.filter((n) => n !== name));
       setOllamaEnabledModels((prev) => prev.filter((n) => n !== name));
     } catch {
-      // silently fail
+      // silently fail — Ollama may have already removed the model
     } finally {
       setOllamaDeleting(null);
     }
-  }, [ollamaDeleting]);
+  }, [ollamaDeleteTarget]);
 
   // Derive which capabilities are available in the currently-enabled Ollama models
   const enabledOllamaCaps = ollamaEnabledModels.flatMap((name) => ollamaCapabilities[name] ?? []);
@@ -538,17 +548,26 @@ export default function AdminSettingsPage() {
     }
   }
 
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
   async function handleSave() {
     setSaveError(null);
     const patch = getCurrentTabPatch();
     if (Object.keys(patch).length === 0) {
       setSaved(true);
+      setIsDirty(false);
       setTimeout(() => setSaved(false), 2500);
       return;
     }
     try {
       await apiPatchAdminSettings(patch);
       setSaved(true);
+      setIsDirty(false);
       setTimeout(() => setSaved(false), 2500);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "저장에 실패했습니다.");
@@ -581,6 +600,13 @@ export default function AdminSettingsPage() {
 
   return (
     <div className="flex h-full bg-base overflow-hidden">
+      <ConfirmModal
+        open={ollamaDeleteTarget !== null}
+        message={`"${ollamaDeleteTarget}" 모델을 삭제하시겠습니까?`}
+        confirmLabel="삭제"
+        onConfirm={confirmDeleteOllamaModel}
+        onCancel={() => setOllamaDeleteTarget(null)}
+      />
       {/* Left sidebar */}
       <nav className="w-52 shrink-0 border-r border-border bg-surface flex flex-col pt-4 gap-0.5 px-2">
         <div className="px-3 mb-3">
@@ -589,7 +615,11 @@ export default function AdminSettingsPage() {
         {TABS.map((t) => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => {
+              if (isDirty && tab !== t.id && !window.confirm("저장되지 않은 변경사항이 있습니다. 탭을 이동하시겠습니까?")) return;
+              setTab(t.id);
+              setIsDirty(false);
+            }}
             className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm transition-colors text-left w-full ${
               tab === t.id
                 ? "bg-accent/10 text-accent font-medium"
