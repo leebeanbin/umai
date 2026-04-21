@@ -669,11 +669,8 @@ export type AdminSettingsDocuments = {
 export type AdminSettingsAudio = {
   stt_provider: string;
   stt_key: string;
-  stt_language: string;
-  vad_auto_send: boolean;
   tts_provider: string;
   tts_key: string;
-  tts_voice: string;
 };
 
 export type AdminSettingsImages = {

@@ -227,14 +227,11 @@ export default function AdminSettingsPage() {
   const [ocrEngine, setOcrEngine]             = useState<"none" | "tesseract">("none");
   const [vectorDbResetConfirm, setVectorDbResetConfirm] = useState(false);
 
-  // Admin Audio
-  const [sttProvider, setSttProvider]       = useState<"none" | "openai">("none");
-  const [sttApiKey, setSttApiKey]           = useState("");
-  const [sttDefaultLang, setSttDefaultLang] = useState("auto");
-  const [ttsProvider, setTtsProvider]       = useState<"none" | "openai">("none");
-  const [ttsDefaultVoice, setTtsDefaultVoice] = useState("alloy");
-  const [ttsApiKey, setTtsApiKey]           = useState("");
-  const [vadAutoSend, setVadAutoSend]       = useState(false);
+  // Admin Audio — engine + API keys only; voice/speed/language are user-level preferences
+  const [sttProvider, setSttProvider] = useState<"none" | "openai">("none");
+  const [sttApiKey, setSttApiKey]     = useState("");
+  const [ttsProvider, setTtsProvider] = useState<"none" | "openai">("none");
+  const [ttsApiKey, setTtsApiKey]     = useState("");
 
   // Images
   const [imageEngine, setImageEngine] = useState<"openai" | "comfyui" | "a1111" | "none">("none");
@@ -412,11 +409,8 @@ export default function AdminSettingsPage() {
         if (s.audio) {
           setSttProvider((s.audio.stt_provider as "none" | "openai") ?? "none");
           setSttApiKey(s.audio.stt_key || "");
-          setSttDefaultLang(s.audio.stt_language || "auto");
-          setVadAutoSend(s.audio.vad_auto_send ?? false);
           setTtsProvider((s.audio.tts_provider as "none" | "openai") ?? "none");
           setTtsApiKey(s.audio.tts_key || "");
-          setTtsDefaultVoice(s.audio.tts_voice || "alloy");
         }
         // Images
         if (s.images) {
@@ -519,11 +513,8 @@ export default function AdminSettingsPage() {
           audio: {
             stt_provider: sttProvider,
             stt_key: sttApiKey,
-            stt_language: sttDefaultLang,
-            vad_auto_send: vadAutoSend,
             tts_provider: ttsProvider,
             tts_key: ttsApiKey,
-            tts_voice: ttsDefaultVoice,
           },
         };
       case "images":
@@ -1211,9 +1202,13 @@ export default function AdminSettingsPage() {
         {tab === "audio" && (
           <div className="max-w-xl">
             <h2 className="text-lg font-semibold text-text-primary mb-2">{lang === "ko" ? "오디오 설정" : "Audio"}</h2>
-            <p className="text-xs text-text-muted mb-6">{lang === "ko" ? "서버사이드 STT/TTS 엔진을 설정합니다." : "Configure server-side speech-to-text and text-to-speech engines."}</p>
+            <p className="text-xs text-text-muted mb-6">
+              {lang === "ko"
+                ? "서버사이드 STT/TTS 엔진과 API 키를 설정합니다. 음성 선택·속도·언어 등 개인 설정은 각 사용자의 설정 모달에서 관리합니다."
+                : "Configure server-side STT/TTS engines and API keys. Voice, speed, and language preferences are managed per user in the user Settings modal."}
+            </p>
 
-            <Section title={lang === "ko" ? "음성 입력 (STT)" : "Speech to Text (STT)"} description={lang === "ko" ? "음성을 텍스트로 변환하는 엔진을 설정합니다." : "Configure the engine for converting speech to text."}>
+            <Section title={lang === "ko" ? "음성 입력 (STT)" : "Speech to Text (STT)"} description={lang === "ko" ? "서버에서 사용할 STT 엔진을 선택합니다." : "Select the STT engine available to all users."}>
               <div className="mb-4">
                 <label className="block text-xs font-medium text-text-secondary mb-1.5">{lang === "ko" ? "STT 공급자" : "STT Provider"}</label>
                 <div className="flex gap-2">
@@ -1232,32 +1227,11 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
               {sttProvider !== "none" && (
-                <>
-                  <Field label="API Key" value={sttApiKey} onChange={setSttApiKey} type="password" placeholder="sk-..." hint={lang === "ko" ? "Connections의 OpenAI 키를 공유 사용하려면 빈칸으로 둡니다." : "Leave blank to reuse the OpenAI key from Connections."} />
-                  <div className="mb-3">
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">{lang === "ko" ? "기본 언어" : "Default Language"}</label>
-                    <div className="flex gap-2">
-                      {([
-                        { val: "auto", label: lang === "ko" ? "자동" : "Auto" },
-                        { val: "ko",   label: "한국어" },
-                        { val: "en",   label: "English" },
-                      ]).map((l) => (
-                        <button key={l.val} onClick={() => setSttDefaultLang(l.val)}
-                          className={`px-3 py-1.5 rounded-xl text-xs border transition-colors ${
-                            sttDefaultLang === l.val ? "bg-accent/10 border-accent/30 text-accent" : "border-border text-text-secondary hover:bg-hover"
-                          }`}
-                        >
-                          {l.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </>
+                <Field label="API Key" value={sttApiKey} onChange={setSttApiKey} type="password" placeholder="sk-..." hint={lang === "ko" ? "Connections의 OpenAI 키를 공유 사용하려면 빈칸으로 둡니다." : "Leave blank to reuse the OpenAI key from Connections."} />
               )}
-              <Toggle checked={vadAutoSend} onChange={setVadAutoSend} label={lang === "ko" ? "VAD 자동 전송" : "VAD Auto-send"} description={lang === "ko" ? "음성 활동 감지 후 자동으로 메시지를 전송합니다." : "Automatically send messages after voice activity detection."} />
             </Section>
 
-            <Section title={lang === "ko" ? "음성 출력 (TTS)" : "Text to Speech (TTS)"} description={lang === "ko" ? "텍스트를 음성으로 변환하는 엔진을 설정합니다." : "Configure the engine for converting text to speech."}>
+            <Section title={lang === "ko" ? "음성 출력 (TTS)" : "Text to Speech (TTS)"} description={lang === "ko" ? "서버에서 사용할 TTS 엔진을 선택합니다." : "Select the TTS engine available to all users."}>
               <div className="mb-4">
                 <label className="block text-xs font-medium text-text-secondary mb-1.5">{lang === "ko" ? "TTS 공급자" : "TTS Provider"}</label>
                 <div className="flex gap-2">
@@ -1276,23 +1250,7 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
               {ttsProvider !== "none" && (
-                <>
-                  <Field label="API Key" value={ttsApiKey} onChange={setTtsApiKey} type="password" placeholder="sk-..." hint={lang === "ko" ? "Connections의 OpenAI 키를 공유 사용하려면 빈칸으로 둡니다." : "Leave blank to reuse the OpenAI key from Connections."} />
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">{lang === "ko" ? "기본 음성" : "Default Voice"}</label>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).map((v) => (
-                        <button key={v} onClick={() => setTtsDefaultVoice(v)}
-                          className={`px-2 py-1.5 rounded-xl text-xs border transition-colors capitalize ${
-                            ttsDefaultVoice === v ? "bg-accent/10 border-accent/30 text-accent" : "border-border text-text-secondary hover:bg-hover"
-                          }`}
-                        >
-                          {v}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </>
+                <Field label="API Key" value={ttsApiKey} onChange={setTtsApiKey} type="password" placeholder="sk-..." hint={lang === "ko" ? "Connections의 OpenAI 키를 공유 사용하려면 빈칸으로 둡니다." : "Leave blank to reuse the OpenAI key from Connections."} />
               )}
             </Section>
 
