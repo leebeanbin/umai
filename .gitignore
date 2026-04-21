@@ -27,9 +27,6 @@ frontend/out/
 # ── nginx certs (절대 커밋 금지) ──────────────────────────────────────────────
 nginx/certs/
 
-# ── Claude Code (global skills/plugins — 프로젝트 전용 agents/commands만 커밋) ─
-.claude/skills/
-.claude/plugins/
-.claude/plans/
-.claude/memory/
-.claude/projects/
+# ── Claude Code (전체 디렉토리 및 가이드라인 — 로컬 전용) ─────────────────────
+.claude/
+CLAUDE.md
