@@ -55,8 +55,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 logger = logging.getLogger(__name__)
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -72,9 +70,11 @@ from app.models.workspace import KnowledgeItem
 from app.routers.deps import get_current_user
 from app.services.embedding_service import embed_query_async
 from app.services.reranker import rerank as _rerank
+from app.services.hybrid_search import reciprocal_rank_fusion as _rrf
+
+from app.core.limiter import limiter
 
 router = APIRouter(prefix="/rag", tags=["rag"])
-limiter = Limiter(key_func=get_remote_address)
 
 
 # ── pgvector HNSW 검색 ────────────────────────────────────────────────────────
@@ -121,7 +121,12 @@ async def _pgvector_search(
         return None
 
     return [
-        {"chunk": r.content, "source": r.source, "score": round(float(r.score), 4)}
+        {
+            "id": hashlib.md5(r.content.encode()).hexdigest(),
+            "chunk": r.content,
+            "source": r.source,
+            "score": round(float(r.score), 4),
+        }
         for r in rows
     ]
 
@@ -262,17 +267,22 @@ async def rag_search(
     _candidate_k = max(top_k * 4, 20)
     pgvector_results = await _pgvector_search(db, str(current_user.id), query_vector, _candidate_k)
     if pgvector_results is not None:
+        # Hybrid RRF: blend vector results with keyword results
+        keyword_results = _keyword_search(q, items_with_embeddings, _candidate_k)
+        for r in keyword_results:
+            r.setdefault("id", f"kw_{hashlib.md5(r['chunk'].encode()).hexdigest()}")
+        blended = _rrf(pgvector_results, keyword_results)
         reranked = False
-        if len(pgvector_results) > top_k:
-            ranked_indices = _rerank(q, [r["chunk"] for r in pgvector_results], top_k=top_k)
-            pgvector_results = [pgvector_results[i] for i in ranked_indices]
+        if len(blended) > top_k:
+            ranked_indices = _rerank(q, [r["chunk"] for r in blended], top_k=top_k)
+            blended = [blended[i] for i in ranked_indices]
             reranked = True
         return {
-            "results": pgvector_results[:top_k],
+            "results": blended[:top_k],
             "query": q,
-            "method": "pgvector_hnsw",
+            "method": "hybrid_rrf",
             "reranked": reranked,
-            "total_searched": len(pgvector_results),
+            "total_searched": len(blended),
         }
 
     # ── JSONB fallback: embeddings_json 컬럼 코사인 유사도 (O(n)) ────────────
