@@ -300,10 +300,11 @@ def _execute_python(code: str, timeout: int = 10) -> dict:
             top = (node.module or "").split(".")[0]
             if top not in _ALLOWED_IMPORTS:
                 return {"error": f"Import not allowed: '{node.module}'", "stdout": "", "stderr": ""}
-        # 위험 내장 함수 호출 차단
+        # 위험 내장 이름 참조 차단 (호출뿐 아니라 별칭 할당도 방지: f = getattr; f(...))
+        elif isinstance(node, ast.Name) and node.id in _BLOCKED_BUILTINS:
+            return {"error": f"Built-in not allowed: '{node.id}'", "stdout": "", "stderr": ""}
+        # 위험 메서드 호출 차단
         elif isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id in _BLOCKED_BUILTINS:
-                return {"error": f"Built-in not allowed: '{node.func.id}'", "stdout": "", "stderr": ""}
             if isinstance(node.func, ast.Attribute) and node.func.attr in _BLOCKED_ATTRS:
                 return {"error": f"Attribute not allowed: '{node.func.attr}'", "stdout": "", "stderr": ""}
         # dunder attribute 접근 차단 (__class__, __subclasses__ 등)
