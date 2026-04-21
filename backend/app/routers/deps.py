@@ -34,7 +34,9 @@ import json
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from fastapi import Depends
+from typing import TypeVar
+
+from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -126,3 +128,31 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
         ErrCode.FORBIDDEN.raise_it()
     return user
+
+
+_T = TypeVar("_T")
+
+
+def assert_owner(resource_owner_id: uuid.UUID, user: User, label: str = "resource") -> None:
+    if resource_owner_id != user.id:
+        raise HTTPException(403, f"{label} not found or access denied")
+
+
+async def get_owned_or_404(
+    db: AsyncSession,
+    model: type[_T],
+    resource_id: str,
+    current_user: User,
+    label: str = "resource",
+    owner_attr: str = "owner_id",
+) -> _T:
+    try:
+        pk = uuid.UUID(resource_id)
+    except ValueError:
+        raise HTTPException(422, f"Invalid UUID: {resource_id!r}")
+    obj = await db.get(model, pk)
+    if obj is None:
+        raise HTTPException(404, f"{label} not found")
+    if getattr(obj, owner_attr) != current_user.id:
+        raise HTTPException(403, f"{label} not found or access denied")
+    return obj  # type: ignore[return-value]

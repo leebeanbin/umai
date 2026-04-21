@@ -42,8 +42,6 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,8 +52,9 @@ from app.models.fine_tune import FineTuneJob, TrainingDataset
 from app.models.user import User
 from app.routers.deps import get_current_user
 
+from app.core.limiter import limiter
+
 router = APIRouter(prefix="/fine-tune", tags=["fine-tune"], redirect_slashes=False)
-limiter = Limiter(key_func=get_remote_address)
 _logger = _ft_logger.getLogger(__name__)
 
 _TOGETHER_BASE = "https://api.together.xyz/v1"

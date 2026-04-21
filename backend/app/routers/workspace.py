@@ -11,8 +11,6 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -26,7 +24,7 @@ from app.models.user import User
 from app.routers.deps import get_current_user
 from app.services.workspace_service import WorkspaceService, WorkspaceItemType
 
-limiter = Limiter(key_func=get_remote_address)
+from app.core.limiter import limiter
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 

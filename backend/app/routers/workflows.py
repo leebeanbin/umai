@@ -61,8 +61,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,11 +73,11 @@ from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.redis_keys import key_workflow_suspend
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
-from app.routers.deps import get_current_user
+from app.core.limiter import limiter
+from app.routers.deps import assert_owner, get_current_user, get_owned_or_404
 from app.models.user import User
 
 router = APIRouter(prefix="/workflow", tags=["workflow"], redirect_slashes=False)
-limiter = Limiter(key_func=get_remote_address)
 
 
 # ── Pydantic 스키마 ───────────────────────────────────────────────────────────
@@ -192,11 +190,6 @@ def _run_out(run: WorkflowRun, steps: list[WorkflowRunStep]) -> RunOut:
     )
 
 
-def _assert_owner(resource_owner_id: uuid.UUID, user: User, resource: str = "resource") -> None:
-    if resource_owner_id != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, f"{resource} not found or access denied")
-
-
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
 @router.post("", response_model=WorkflowOut, status_code=201)
@@ -242,10 +235,7 @@ async def get_run(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> RunOut:
-    run = await db.get(WorkflowRun, uuid.UUID(run_id))
-    if not run:
-        raise HTTPException(404, "Run not found")
-    _assert_owner(run.owner_id, current_user, "Run")
+    run = await get_owned_or_404(db, WorkflowRun, run_id, current_user, "Run")
     steps_result = await db.execute(
         select(WorkflowRunStep)
         .where(WorkflowRunStep.run_id == run.id)
@@ -261,10 +251,7 @@ async def get_workflow(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> WorkflowOut:
-    wf = await db.get(Workflow, uuid.UUID(workflow_id))
-    if not wf:
-        raise HTTPException(404, "Workflow not found")
-    _assert_owner(wf.owner_id, current_user, "Workflow")
+    wf = await get_owned_or_404(db, Workflow, workflow_id, current_user, "Workflow")
     return WorkflowOut.from_orm(wf)
 
 
@@ -277,10 +264,7 @@ async def update_workflow(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> WorkflowOut:
-    wf = await db.get(Workflow, uuid.UUID(workflow_id))
-    if not wf:
-        raise HTTPException(404, "Workflow not found")
-    _assert_owner(wf.owner_id, current_user, "Workflow")
+    wf = await get_owned_or_404(db, Workflow, workflow_id, current_user, "Workflow")
     if body.name is not None:
         wf.name = body.name
     if body.description is not None:
@@ -301,10 +285,7 @@ async def delete_workflow(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    wf = await db.get(Workflow, uuid.UUID(workflow_id))
-    if not wf:
-        raise HTTPException(404, "Workflow not found")
-    _assert_owner(wf.owner_id, current_user, "Workflow")
+    wf = await get_owned_or_404(db, Workflow, workflow_id, current_user, "Workflow")
     await db.delete(wf)
     await db.commit()
 
@@ -320,10 +301,7 @@ async def run_workflow(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> RunOut:
-    wf = await db.get(Workflow, uuid.UUID(workflow_id))
-    if not wf:
-        raise HTTPException(404, "Workflow not found")
-    _assert_owner(wf.owner_id, current_user, "Workflow")
+    wf = await get_owned_or_404(db, Workflow, workflow_id, current_user, "Workflow")
 
     run = WorkflowRun(
         workflow_id=wf.id,
@@ -361,10 +339,7 @@ async def resume_run(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> RunOut:
-    run = await db.get(WorkflowRun, uuid.UUID(run_id))
-    if not run:
-        raise HTTPException(404, "Run not found")
-    _assert_owner(run.owner_id, current_user, "Run")
+    run = await get_owned_or_404(db, WorkflowRun, run_id, current_user, "Run")
 
     if run.status != "suspended":
         raise HTTPException(400, f"Run is not suspended (status: {run.status})")
@@ -441,10 +416,7 @@ async def list_runs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[RunListItem]:
-    wf = await db.get(Workflow, uuid.UUID(workflow_id))
-    if not wf:
-        raise HTTPException(404, "Workflow not found")
-    _assert_owner(wf.owner_id, current_user, "Workflow")
+    wf = await get_owned_or_404(db, Workflow, workflow_id, current_user, "Workflow")
 
     runs_result = await db.execute(
         select(WorkflowRun)
@@ -487,10 +459,7 @@ async def list_runs(
 
 async def _do_cancel_run(run_id: str, db: AsyncSession, current_user: User) -> None:
     """공통 취소 로직 — POST /cancel 과 DELETE 양쪽에서 재사용."""
-    run = await db.get(WorkflowRun, uuid.UUID(run_id))
-    if not run:
-        raise HTTPException(404, "Run not found")
-    _assert_owner(run.owner_id, current_user, "Run")
+    run = await get_owned_or_404(db, WorkflowRun, run_id, current_user, "Run")
 
     if run.status not in ("running", "suspended"):
         raise HTTPException(400, f"Cannot cancel run with status '{run.status}'")
@@ -542,10 +511,7 @@ async def get_workflow_stats(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> WorkflowStats:
-    wf = await db.get(Workflow, uuid.UUID(workflow_id))
-    if not wf:
-        raise HTTPException(404, "Workflow not found")
-    _assert_owner(wf.owner_id, current_user, "Workflow")
+    wf = await get_owned_or_404(db, Workflow, workflow_id, current_user, "Workflow")
 
     # status별 카운트 — DB GROUP BY로 처리 (전체 rows 메모리 로딩 제거)
     counts_result = await db.execute(

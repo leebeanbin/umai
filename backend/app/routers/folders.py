@@ -12,13 +12,10 @@ import uuid
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.limiter import limiter
 from app.core.constants import RATE_FOLDER_WRITE
 from app.core.database import get_db
 from app.models.user import User
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-limiter = Limiter(key_func=get_remote_address)
 from app.routers.deps import get_current_user
 from app.services.folder_service import FolderService
 from app.schemas.chat import ChatOut, CreateFolderRequest, FolderDetailOut, FolderOut, UpdateFolderRequest

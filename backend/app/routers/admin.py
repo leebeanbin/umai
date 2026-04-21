@@ -24,8 +24,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from app.core.config import settings
 from app.core.constants import RATE_ADMIN_USER_WRITE, RATE_ADMIN_SETTINGS_WRITE, RATE_ADMIN_OLLAMA_WRITE
 from app.core.database import get_db
@@ -36,8 +34,9 @@ from app.models.settings import SystemSettings, DEFAULT_SETTINGS
 from app.schemas.chat import RatingEntryOut
 from app.routers.deps import require_admin, get_current_user
 
+from app.core.limiter import limiter
+
 router = APIRouter(prefix="/admin", tags=["admin"])
-limiter = Limiter(key_func=get_remote_address)
 
 
 # ── 스키마 ─────────────────────────────────────────────────────────────────────

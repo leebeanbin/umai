@@ -21,8 +21,6 @@ from typing import Any, Literal
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form, status
 from pydantic import BaseModel, Field
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -41,8 +39,9 @@ from app.routers.deps import get_current_user
 from app.models.user import User
 from app.models.workspace import KnowledgeItem
 
+from app.core.limiter import limiter
+
 router = APIRouter(prefix="/tasks", tags=["tasks"])
-limiter = Limiter(key_func=get_remote_address)
 
 
 # ── 공통 응답 ────────────────────────────────────────────────────────────────

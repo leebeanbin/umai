@@ -18,8 +18,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import RedirectResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from authlib.integrations.starlette_client import OAuth, OAuthError
@@ -47,8 +45,9 @@ from app.schemas.auth import (
 from app.routers.deps import get_current_user
 from app.services.auth_service import get_or_create_oauth_user, make_tokens
 
+from app.core.limiter import limiter
+
 router = APIRouter(prefix="/auth", tags=["auth"])
-limiter = Limiter(key_func=get_remote_address)
 bearer = HTTPBearer(auto_error=False)
 
 # ── Refresh-token 쿠키 설정 ───────────────────────────────────────────────────
