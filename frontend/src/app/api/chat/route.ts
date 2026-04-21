@@ -14,6 +14,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/api/verifyAuth";
+import { checkRateLimit } from "@/lib/api/rateLimit";
+import { RL_CHAT_LIMIT, RL_WINDOW_MS } from "@/lib/constants";
 
 const OLLAMA_URL     = process.env.OLLAMA_URL      ?? "http://localhost:11434";
 const OPENAI_BASE    = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
@@ -62,6 +64,9 @@ export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization") ?? "";
   if (!await verifyToken(authHeader)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!checkRateLimit("chat", authHeader, RL_CHAT_LIMIT, RL_WINDOW_MS)) {
+    return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
   }
 
   const body = await req.json() as RequestBody;

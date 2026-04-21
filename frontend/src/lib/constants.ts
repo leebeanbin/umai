@@ -39,3 +39,11 @@ export const WEBSEARCH_TIMEOUT_MS    = 10_000;
 // ── chat 보조 호출 타임아웃 ────────────────────────────────────────────────────
 export const RAG_TIMEOUT_MS          = 10_000;  // RAG 검색 타임아웃
 export const OCR_TIMEOUT_MS          = 30_000;  // OCR 타임아웃
+
+// ── API 라우트 레이트 리밋 (Next.js proxy routes) ────────────────────────────
+export const RL_WINDOW_MS            = 60_000;  // 1분 슬라이딩 윈도우
+export const RL_CHAT_LIMIT           = 20;      // LLM 스트리밍: 분당 20회
+export const RL_IMAGE_LIMIT          = 5;       // DALL-E 생성: 분당 5회
+export const RL_IMAGE_EDIT_LIMIT     = 5;       // DALL-E 편집: 분당 5회
+export const RL_OCR_LIMIT            = 10;      // OCR: 분당 10회
+export const RL_WEBSEARCH_LIMIT      = 15;      // 웹 검색: 분당 15회

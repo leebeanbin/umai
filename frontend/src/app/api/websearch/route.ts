@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/api/verifyAuth";
 import { resolveSettingsKey } from "@/lib/api/settingsKeyResolver";
-import { WEBSEARCH_MAX_QUERY_LEN, WEBSEARCH_MAX_RESULTS, WEBSEARCH_TIMEOUT_MS } from "@/lib/constants";
+import { checkRateLimit } from "@/lib/api/rateLimit";
+import { WEBSEARCH_MAX_QUERY_LEN, WEBSEARCH_MAX_RESULTS, WEBSEARCH_TIMEOUT_MS, RL_WEBSEARCH_LIMIT, RL_WINDOW_MS } from "@/lib/constants";
 
 export type SearchResult = {
   title: string;
@@ -13,6 +14,9 @@ export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization") ?? "";
   if (!await verifyToken(authHeader)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!checkRateLimit("websearch", authHeader, RL_WEBSEARCH_LIMIT, RL_WINDOW_MS)) {
+    return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
   }
 
   const q = (req.nextUrl.searchParams.get("q") ?? "").slice(0, WEBSEARCH_MAX_QUERY_LEN);
