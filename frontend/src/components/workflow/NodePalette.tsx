@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type DragEvent } from "react";
-import { Brain, GitFork, LogIn, LogOut, UserCheck, Wrench, Zap } from "lucide-react";
+import { Brain, GitFork, LogIn, LogOut, UserCheck, Wrench, Zap, Plus } from "lucide-react";
 import { WORKFLOW_TEMPLATES, type WorkflowTemplate } from "./workflowTemplates";
 import type { Node, Edge } from "@xyflow/react";
 
@@ -95,9 +95,10 @@ const PALETTE_ITEMS: PaletteItem[] = [
 
 interface NodePaletteProps {
   onLoadTemplate?: (nodes: Node[], edges: Edge[]) => void;
+  onAddNode?: (type: string, defaultData: Record<string, unknown>) => void;
 }
 
-export function NodePalette({ onLoadTemplate }: NodePaletteProps) {
+export function NodePalette({ onLoadTemplate, onAddNode }: NodePaletteProps) {
   const [tab, setTab] = useState<"nodes" | "templates">("nodes");
   const [previewId, setPreviewId] = useState<string | null>(null);
 
@@ -148,7 +149,7 @@ export function NodePalette({ onLoadTemplate }: NodePaletteProps) {
               key={item.type}
               draggable
               onDragStart={(e) => onDragStart(e, item)}
-              className="flex items-center gap-2 p-2 rounded-lg border border-border bg-surface hover:bg-hover cursor-grab active:cursor-grabbing select-none transition-colors"
+              className="group flex items-center gap-2 p-2 rounded-lg border border-border bg-surface hover:bg-hover cursor-grab active:cursor-grabbing select-none transition-colors"
             >
               <span
                 className="p-1.5 rounded-md bg-elevated flex items-center justify-center flex-shrink-0"
@@ -156,7 +157,7 @@ export function NodePalette({ onLoadTemplate }: NodePaletteProps) {
               >
                 {item.icon}
               </span>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium text-text-primary leading-none mb-0.5">
                   {item.label}
                 </p>
@@ -164,6 +165,15 @@ export function NodePalette({ onLoadTemplate }: NodePaletteProps) {
                   {item.description}
                 </p>
               </div>
+              {onAddNode && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onAddNode(item.type, item.defaultData); }}
+                  title={`${item.label} 노드 추가`}
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-elevated text-text-muted hover:text-accent transition-all cursor-pointer"
+                >
+                  <Plus size={12} />
+                </button>
+              )}
             </div>
           ))}
         </div>

@@ -49,7 +49,10 @@ export function LLMNode({ id, data, selected }: NodeProps) {
         </div>
         <div className="flex justify-between">
           <span className="text-text-muted">Model</span>
-          <span className="text-text-primary font-medium truncate max-w-[120px]">
+          <span
+            className="text-text-primary font-medium truncate max-w-[120px]"
+            title={d.model || "gpt-4o"}
+          >
             {d.model || "gpt-4o"}
           </span>
         </div>

@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { UserCheck, Check, X } from "lucide-react";
+import { UserCheck, Check, X, Loader2 } from "lucide-react";
 import { NodeHarness } from "./NodeHarness";
 
 export interface HumanNodeData {
@@ -26,6 +27,19 @@ function statusBorder(status?: string) {
 export function HumanNode({ id, data, selected }: NodeProps) {
   const d = data as HumanNodeData;
   const isSuspended = d._status === "suspended";
+  const [pending, setPending] = useState<"approve" | "reject" | null>(null);
+
+  async function handleApprove() {
+    if (pending || !d.onApprove) return;
+    setPending("approve");
+    try { await d.onApprove(); } finally { setPending(null); }
+  }
+
+  async function handleReject() {
+    if (pending || !d.onReject) return;
+    setPending("reject");
+    try { await d.onReject(); } finally { setPending(null); }
+  }
   return (
     <NodeHarness id={id} selected={selected}>
     <div className={`bg-surface rounded-lg border-2 ${statusBorder(d._status)} min-w-[220px] shadow-sm`}>
@@ -49,16 +63,18 @@ export function HumanNode({ id, data, selected }: NodeProps) {
         {isSuspended && d.onApprove && d.onReject && (
           <div className="flex gap-2 pt-1">
             <button
-              onClick={d.onApprove}
-              className="flex-1 flex items-center justify-center gap-1 py-1 rounded bg-success hover:opacity-90 text-white text-xs font-medium transition-opacity"
+              onClick={handleApprove}
+              disabled={pending !== null}
+              className="flex-1 flex items-center justify-center gap-1 py-1 rounded bg-success hover:opacity-90 disabled:opacity-60 text-white text-xs font-medium transition-opacity"
             >
-              <Check size={12} /> 승인
+              {pending === "approve" ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} 승인
             </button>
             <button
-              onClick={d.onReject}
-              className="flex-1 flex items-center justify-center gap-1 py-1 rounded bg-danger hover:opacity-90 text-white text-xs font-medium transition-opacity"
+              onClick={handleReject}
+              disabled={pending !== null}
+              className="flex-1 flex items-center justify-center gap-1 py-1 rounded bg-danger hover:opacity-90 disabled:opacity-60 text-white text-xs font-medium transition-opacity"
             >
-              <X size={12} /> 거부
+              {pending === "reject" ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />} 거부
             </button>
           </div>
         )}

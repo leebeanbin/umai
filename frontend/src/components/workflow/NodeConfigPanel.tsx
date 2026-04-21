@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { type Node } from "@xyflow/react";
-import { X, Plus, Trash2 } from "lucide-react";
+import { X, Plus, Trash2, ChevronDown } from "lucide-react";
 
 interface NodeConfigPanelProps {
   node: Node | null;
@@ -116,6 +117,8 @@ const BRANCH_EXAMPLES = [
 ];
 
 export function NodeConfigPanel({ node, onChange, onClose }: NodeConfigPanelProps) {
+  const [outputExpanded, setOutputExpanded] = useState(false);
+
   if (!node) return null;
 
   const d = node.data as Record<string, unknown>;
@@ -462,10 +465,19 @@ export function NodeConfigPanel({ node, onChange, onClose }: NodeConfigPanelProp
           typeof d._output_data === "object" &&
           Object.keys(d._output_data as Record<string, unknown>).length > 0 && (
             <div className="mt-2 pt-3 border-t border-border">
-              <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-2">
-                마지막 실행 출력
-              </p>
-              <pre className="text-[11px] text-text-primary bg-elevated rounded-lg px-3 py-2 whitespace-pre-wrap font-mono overflow-x-auto max-h-48 overflow-y-auto">
+              <button
+                onClick={() => setOutputExpanded((v) => !v)}
+                className="flex items-center justify-between w-full text-left mb-2"
+              >
+                <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide">
+                  마지막 실행 출력
+                </p>
+                <ChevronDown
+                  size={12}
+                  className={`text-text-muted transition-transform duration-150 ${outputExpanded ? "rotate-180" : ""}`}
+                />
+              </button>
+              <pre className={`text-[11px] text-text-primary bg-elevated rounded-lg px-3 py-2 whitespace-pre-wrap font-mono overflow-x-auto overflow-y-auto transition-all duration-150 ${outputExpanded ? "max-h-[600px]" : "max-h-48"}`}>
                 {JSON.stringify(d._output_data, null, 2)}
               </pre>
             </div>

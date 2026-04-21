@@ -184,6 +184,22 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
     [nodes, edges, setNodes, debounceSave],
   );
 
+  // ── 키보드 대안: 팔레트 "+" 버튼으로 캔버스 중앙에 노드 추가 ─────────────
+  const handleAddNode = useCallback(
+    (type: string, defaultData: Record<string, unknown>) => {
+      const newNode: Node = {
+        id: newNodeId(type),
+        type,
+        position: { x: 200 + nodes.length * 20, y: 150 + nodes.length * 20 },
+        data: { ...defaultData },
+      };
+      const newNodes = [...nodes, newNode];
+      setNodes(newNodes);
+      debounceSave(newNodes, edges);
+    },
+    [nodes, edges, setNodes, debounceSave],
+  );
+
   // ── 노드 데이터 변경 (설정 패널) ─────────────────────────────────────────
   const onNodeDataChange = useCallback(
     (nodeId: string, newData: Record<string, unknown>) => {
@@ -465,7 +481,7 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
       )}
 
       {/* 왼쪽: 노드 팔레트 */}
-      <NodePalette onLoadTemplate={handleLoadTemplate} />
+      <NodePalette onLoadTemplate={handleLoadTemplate} onAddNode={handleAddNode} />
 
       {/* 중앙: ReactFlow 캔버스 */}
       <div className="flex flex-col flex-1 min-w-0">
