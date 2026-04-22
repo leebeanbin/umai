@@ -58,8 +58,8 @@ class FolderService:
             select(Chat)
             .where(
                 Chat.folder_id == folder_id,
-                Chat.is_archived == False,
-                Chat.is_temporary == False,
+                ~Chat.is_archived,
+                ~Chat.is_temporary,
             )
             .order_by(Chat.updated_at.desc())
         )

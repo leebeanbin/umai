@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -497,7 +497,6 @@ async def _run_together_fine_tune(job_id: uuid.UUID, examples: list[dict], fmt: 
 
                 await db.commit()
 
-            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
             await _append_log(job_id, f"상태: {api_status}, steps: {steps_done}, loss: {train_losses[-1]:.4f if train_losses else '—'}")
 
             if local_status in ("done", "failed", "cancelled"):

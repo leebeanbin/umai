@@ -47,14 +47,11 @@ knowledge_chunks 테이블에 별도 저장/인덱스를 만드는 이유:
 
 import asyncio
 import hashlib
-import json
 import logging
 import math
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-
-logger = logging.getLogger(__name__)
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,6 +71,7 @@ from app.services.hybrid_search import reciprocal_rank_fusion as _rrf
 
 from app.core.limiter import limiter
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/rag", tags=["rag"])
 
 
