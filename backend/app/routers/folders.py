@@ -9,7 +9,7 @@
 - DELETE /folders/{id}         폴더 삭제
 """
 import uuid
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.limiter import limiter
