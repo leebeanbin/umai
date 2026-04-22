@@ -4,6 +4,11 @@ import withPWA from "@ducanh2912/next-pwa";
 const nextConfig: NextConfig = {
   output: "standalone",
 
+  // @ducanh2912/next-pwa injects a webpack config; acknowledge Turbopack to
+  // suppress the Next.js 16 error. The webpack plugin is a no-op under
+  // Turbopack but the build completes cleanly.
+  turbopack: {},
+
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "lh3.googleusercontent.com" },

@@ -58,11 +58,10 @@ SIGTERM을 보낸 뒤 run.status = "failed"로 마킹.
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, case
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
@@ -74,7 +73,7 @@ from app.core.redis import get_redis
 from app.core.redis_keys import key_workflow_suspend
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.core.limiter import limiter
-from app.routers.deps import assert_owner, get_current_user, get_owned_or_404
+from app.routers.deps import get_current_user, get_owned_or_404
 from app.models.user import User
 
 router = APIRouter(prefix="/workflow", tags=["workflow"], redirect_slashes=False)

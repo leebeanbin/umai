@@ -27,7 +27,7 @@ from celery.utils.log import get_task_logger
 
 from app.core.config import settings
 from app.core.http_headers import openai_auth_headers, anthropic_auth_headers
-from app.core.model_registry import OPENAI_GPT_4O, CONTEXT_WINDOW, MAX_TOKENS_RESERVE
+from app.core.model_registry import CONTEXT_WINDOW, MAX_TOKENS_RESERVE
 from app.tasks._utils import UmaiBaseTask, publish_task_done
 from app.services.embedding_service import embed_query_sync
 

@@ -23,7 +23,6 @@ from PIL import Image
 from app.core.config import settings
 from app.core.redis_keys import key_task_dalle_cache
 from app.core.model_registry import OPENAI_DALLE_3, OPENAI_GPT_IMAGE_1
-from app.core.http_headers import openai_auth_headers
 from app.tasks._utils import UmaiBaseTask, publish_task_done
 
 logger = get_task_logger(__name__)
