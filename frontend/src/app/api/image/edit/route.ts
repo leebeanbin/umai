@@ -14,11 +14,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/api/verifyAuth";
 import { resolveSettingsKey } from "@/lib/api/settingsKeyResolver";
+import { checkRateLimit } from "@/lib/api/rateLimit";
+import { RL_IMAGE_EDIT_LIMIT, RL_WINDOW_MS } from "@/lib/constants";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization") ?? "";
   if (!await verifyToken(authHeader)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!checkRateLimit("image-edit", authHeader, RL_IMAGE_EDIT_LIMIT, RL_WINDOW_MS)) {
+    return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
   }
 
   const apiKey = await resolveSettingsKey(

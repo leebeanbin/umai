@@ -10,13 +10,19 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/api/verifyAuth";
+import { checkRateLimit } from "@/lib/api/rateLimit";
+import { RL_OCR_LIMIT, RL_WINDOW_MS } from "@/lib/constants";
 
 const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
 const DEFAULT_OCR_MODEL = process.env.OCR_MODEL ?? "llava";
 
 export async function POST(req: NextRequest) {
-  if (!await verifyToken(req.headers.get("authorization"))) {
+  const authHeader = req.headers.get("authorization");
+  if (!await verifyToken(authHeader)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!checkRateLimit("ocr", authHeader!, RL_OCR_LIMIT, RL_WINDOW_MS)) {
+    return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
   }
 
   const body = await req.json() as {
