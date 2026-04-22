@@ -15,8 +15,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-logger = logging.getLogger(__name__)
-
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -36,6 +34,7 @@ from app.routers.deps import require_admin, get_current_user
 
 from app.core.limiter import limiter
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
@@ -91,7 +90,7 @@ async def get_stats(
     row = (await db.execute(
         select(
             func.count(User.id).label("total_users"),
-            func.count(case((User.is_active == True, 1))).label("active_users"),
+            func.count(case((User.is_active.is_(True), 1))).label("active_users"),
             func.count(case((User.created_at >= week_ago, 1))).label("new_this_week"),
         )
     )).one()

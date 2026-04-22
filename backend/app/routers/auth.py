@@ -13,7 +13,6 @@ import logging
 import secrets
 from urllib.parse import urlparse
 
-logger = logging.getLogger(__name__)
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -47,6 +46,7 @@ from app.services.auth_service import get_or_create_oauth_user, make_tokens
 
 from app.core.limiter import limiter
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 bearer = HTTPBearer(auto_error=False)
 

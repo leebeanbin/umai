@@ -154,9 +154,12 @@ async def update_chat(
     await svc.require_member(chat, user, min_role="owner")
 
     updates = {}
-    if body.title is not None:      updates["title"] = body.title
-    if body.is_pinned is not None:  updates["is_pinned"] = body.is_pinned
-    if body.is_archived is not None: updates["is_archived"] = body.is_archived
+    if body.title is not None:
+        updates["title"] = body.title
+    if body.is_pinned is not None:
+        updates["is_pinned"] = body.is_pinned
+    if body.is_archived is not None:
+        updates["is_archived"] = body.is_archived
     if body.folder_id is not None:
         updates["folder_id"] = uuid.UUID(body.folder_id) if body.folder_id else None
 

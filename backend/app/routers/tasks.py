@@ -16,6 +16,7 @@
 - GET  /tasks/{task_id}                 태스크 상태/결과 조회
 """
 import base64
+import logging
 from typing import Any, Literal
 
 from celery.result import AsyncResult
@@ -25,12 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.celery_app import celery_app
-from app.core.redis_keys import key_task_owner, key_chat_channel
+from app.core.redis_keys import key_task_owner
 from app.core.constants import (
     SUPPORTED_DOCUMENT_TYPES,
     TASK_OWNER_TTL, MAX_FILE_SIZE_BYTES, MAX_DOCUMENT_CHARS, MAX_DOCUMENT_PAGES,
-    RATE_TASK_KNOWLEDGE, RATE_TASK_EXTRACT,
-    RATE_TASK_IMAGE, RATE_TASK_IMAGE_GEN, RATE_TASK_IMAGE_EDIT,
+    RATE_TASK_KNOWLEDGE, RATE_TASK_IMAGE, RATE_TASK_IMAGE_GEN, RATE_TASK_IMAGE_EDIT,
     RATE_TASK_AI_AGENT, RATE_TASK_AI_SEARCH,
 )
 from app.core.database import get_db
@@ -361,7 +361,7 @@ async def extract_document(
     try:
         text = await run_in_threadpool(_extract_sync)
     except Exception as exc:
-        import logging; logging.getLogger(__name__).warning("Document extraction error: %s", exc)
+        logging.getLogger(__name__).warning("Document extraction error: %s", exc)
         raise HTTPException(status_code=422, detail="Failed to extract text from document") from exc
 
     # 컨텍스트 윈도우 절약: max_chars 기준 잘림

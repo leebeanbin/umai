@@ -14,7 +14,6 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.constants import CHAT_MSG_DEFAULT_LIMIT, CHAT_MSG_MAX_LIMIT
 from app.core.errors import ErrCode
@@ -73,7 +72,7 @@ class ChatService:
         q = (
             select(Chat, member_subq.c.role)
             .join(member_subq, Chat.id == member_subq.c.chat_id)
-            .where(Chat.is_archived == archived, Chat.is_temporary == False)
+            .where(Chat.is_archived == archived, ~Chat.is_temporary)
             .order_by(Chat.updated_at.desc())
             .offset((page - 1) * limit)
             .limit(limit)

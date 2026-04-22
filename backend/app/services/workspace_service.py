@@ -98,9 +98,12 @@ class WorkspaceService:
         data: dict | None,
         is_enabled: bool | None,
     ) -> WorkspaceItem:
-        if name is not None:       item.name = name
-        if data is not None:       item.data = data
-        if is_enabled is not None: item.is_enabled = is_enabled
+        if name is not None:
+            item.name = name
+        if data is not None:
+            item.data = data
+        if is_enabled is not None:
+            item.is_enabled = is_enabled
         item.updated_at = datetime.now(timezone.utc)
         await self.db.flush()
         return item
