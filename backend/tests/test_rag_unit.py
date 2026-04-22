@@ -27,12 +27,12 @@ RAG 순수 함수 단위 테스트 (DB/네트워크 불필요).
     - Ollama 응답에 embedding 키 없음 → None
 """
 
-import json
 import math
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.routers.rag import _cosine_similarity, _keyword_search, _embed_query
+from app.routers.rag import _cosine_similarity, _keyword_search
+from app.services.embedding_service import embed_query_async as _embed_query
 
 
 # ── _cosine_similarity ─────────────────────────────────────────────────────────
@@ -141,16 +141,16 @@ class TestKeywordSearch:
     def test_uses_embeddings_json_chunks_when_present(self):
         """embeddings_json에 chunks 있으면 content 대신 chunks 사용."""
         chunks = ["chunk about python", "chunk about java"]
-        emb_json = json.dumps({"chunks": chunks, "vectors": []})
-        items = [FakeItem("doc.txt", "irrelevant content", embeddings_json=emb_json)]
+        # embeddings_json is JSONB — SQLAlchemy returns a dict, never a raw string
+        items = [FakeItem("doc.txt", "irrelevant content", embeddings_json={"chunks": chunks, "vectors": []})]
 
         results = _keyword_search("python", items, top_k=5)
         assert len(results) == 1
         assert "python" in results[0]["chunk"]
 
-    def test_invalid_embeddings_json_falls_back_to_content(self):
-        """embeddings_json 파싱 실패 시 content로 fallback."""
-        items = [FakeItem("doc.txt", "python is great", embeddings_json="INVALID{JSON")]
+    def test_none_embeddings_json_falls_back_to_content(self):
+        """embeddings_json=None 이면 content로 fallback."""
+        items = [FakeItem("doc.txt", "python is great", embeddings_json=None)]
         results = _keyword_search("python", items, top_k=5)
         assert len(results) == 1
 
@@ -180,16 +180,20 @@ class TestEmbedQuery:
 
     @pytest.fixture
     def mock_settings(self):
-        with patch("app.routers.rag.settings") as m:
+        with patch("app.services.embedding_service.settings") as m:
             m.OPENAI_API_KEY = "sk-test"
+            m.OPENAI_EMBED_MODEL = "text-embedding-3-small"
             m.OLLAMA_URL = "http://localhost:11434"
+            m.OLLAMA_EMBED_MODEL = "nomic-embed-text"
             yield m
 
     @pytest.fixture
     def mock_settings_no_openai(self):
-        with patch("app.routers.rag.settings") as m:
+        with patch("app.services.embedding_service.settings") as m:
             m.OPENAI_API_KEY = ""
+            m.OPENAI_EMBED_MODEL = "text-embedding-3-small"
             m.OLLAMA_URL = "http://localhost:11434"
+            m.OLLAMA_EMBED_MODEL = "nomic-embed-text"
             yield m
 
     def _make_mock_response(self, status: int, json_body: dict):
@@ -202,7 +206,7 @@ class TestEmbedQuery:
         fake_embedding = [0.1] * 1536
         fake_resp = self._make_mock_response(200, {"data": [{"embedding": fake_embedding}]})
 
-        with patch("app.routers.rag.httpx.AsyncClient") as mock_cls:
+        with patch("app.services.embedding_service.httpx.AsyncClient") as mock_cls:
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=fake_resp)
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
@@ -224,7 +228,7 @@ class TestEmbedQuery:
             call_count += 1
             return openai_resp if call_count == 1 else ollama_resp
 
-        with patch("app.routers.rag.httpx.AsyncClient") as mock_cls:
+        with patch("app.services.embedding_service.httpx.AsyncClient") as mock_cls:
             instance = AsyncMock()
             instance.post = AsyncMock(side_effect=side_effect)
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
@@ -238,7 +242,7 @@ class TestEmbedQuery:
         fake_embedding = [0.3] * 768
         ollama_resp = self._make_mock_response(200, {"embedding": fake_embedding})
 
-        with patch("app.routers.rag.httpx.AsyncClient") as mock_cls:
+        with patch("app.services.embedding_service.httpx.AsyncClient") as mock_cls:
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=ollama_resp)
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
@@ -252,7 +256,7 @@ class TestEmbedQuery:
         assert all("openai" not in str(c) for c in call_args_list)
 
     async def test_both_fail_returns_none(self, mock_settings):
-        with patch("app.routers.rag.httpx.AsyncClient") as mock_cls:
+        with patch("app.services.embedding_service.httpx.AsyncClient") as mock_cls:
             instance = AsyncMock()
             instance.post = AsyncMock(side_effect=Exception("connection refused"))
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
@@ -266,7 +270,7 @@ class TestEmbedQuery:
         """Ollama 응답에 embedding 키가 없으면 None."""
         resp = self._make_mock_response(200, {"no_embedding_here": []})
 
-        with patch("app.routers.rag.httpx.AsyncClient") as mock_cls:
+        with patch("app.services.embedding_service.httpx.AsyncClient") as mock_cls:
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=resp)
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
@@ -288,7 +292,7 @@ class TestEmbedQuery:
                 raise TimeoutError("request timed out")
             return ollama_resp
 
-        with patch("app.routers.rag.httpx.AsyncClient") as mock_cls:
+        with patch("app.services.embedding_service.httpx.AsyncClient") as mock_cls:
             instance = AsyncMock()
             instance.post = AsyncMock(side_effect=side_effect)
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
