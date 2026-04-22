@@ -7,7 +7,6 @@
 - 각 테스트: 엔진에서 새 Session + 테스트 후 TRUNCATE
 - FastAPI app: SlowAPI/Session 미들웨어 제거로 루프 충돌 방지
 """
-import asyncio
 import os
 import sys
 import pytest
@@ -24,9 +23,10 @@ from app.models import user, chat, workspace   # noqa: F401
 from app.models import settings as _           # noqa: F401
 from app.models import workflow, fine_tune     # noqa: F401
 
-_ASYNC_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://umai:umai@localhost:5434/umai_test",
+_ASYNC_URL = (
+    os.getenv("TEST_DATABASE_URL")
+    or os.getenv("DATABASE_URL")
+    or "postgresql+asyncpg://umai:umai@localhost:5434/umai_test"
 )
 _SYNC_URL = _ASYNC_URL.replace("+asyncpg", "")
 
