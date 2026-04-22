@@ -86,13 +86,11 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [collapseCode, setCollapseCode]       = useState(false);
   const [tempChatDefault, setTempChatDefault] = useState(false);
 
-  // Audio
-  const [sttEngine, setSttEngine] = useState<"none" | "whisper">("none");
-  const [sttLang, setSttLang]     = useState("auto");
-  const [ttsEngine, setTtsEngine] = useState<"none" | "openai">("none");
-  const [ttsVoice, setTtsVoice]   = useState("alloy");
-  const [ttsSpeed, setTtsSpeed]   = useState(1.0);
-  const [autoSend, setAutoSend]   = useState(false);
+  // Audio (engine is admin-managed; only personal preferences here)
+  const [sttLang, setSttLang]   = useState("auto");
+  const [ttsVoice, setTtsVoice] = useState("alloy");
+  const [ttsSpeed, setTtsSpeed] = useState(1.0);
+  const [autoSend, setAutoSend] = useState(false);
 
   // Data
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -366,42 +364,23 @@ export default function SettingsModal({ open, onClose }: Props) {
 
                 <Section title={lang === "ko" ? "음성 입력 (STT)" : "Speech to Text (STT)"}>
                   <div className="mb-3">
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">{lang === "ko" ? "엔진" : "Engine"}</label>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">{lang === "ko" ? "언어" : "Language"}</label>
                     <div className="flex gap-2">
                       {([
-                        { val: "none"    as const, label: lang === "ko" ? "비활성화" : "Disabled" },
-                        { val: "whisper" as const, label: "Whisper (OpenAI)" },
-                      ]).map((e) => (
-                        <button key={e.val} onClick={() => setSttEngine(e.val)}
+                        { val: "auto", label: lang === "ko" ? "자동 감지" : "Auto detect" },
+                        { val: "ko",   label: "한국어" },
+                        { val: "en",   label: "English" },
+                      ]).map((l) => (
+                        <button key={l.val} onClick={() => setSttLang(l.val)}
                           className={`px-3 py-1.5 rounded-xl text-xs border transition-colors ${
-                            sttEngine === e.val ? "bg-accent/10 border-accent/30 text-accent" : "border-border text-text-secondary hover:bg-hover"
+                            sttLang === l.val ? "bg-accent/10 border-accent/30 text-accent" : "border-border text-text-secondary hover:bg-hover"
                           }`}
                         >
-                          {e.label}
+                          {l.label}
                         </button>
                       ))}
                     </div>
                   </div>
-                  {sttEngine !== "none" && (
-                    <div className="mb-3">
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">{lang === "ko" ? "언어" : "Language"}</label>
-                      <div className="flex gap-2">
-                        {([
-                          { val: "auto", label: lang === "ko" ? "자동 감지" : "Auto detect" },
-                          { val: "ko",   label: "한국어" },
-                          { val: "en",   label: "English" },
-                        ]).map((l) => (
-                          <button key={l.val} onClick={() => setSttLang(l.val)}
-                            className={`px-3 py-1.5 rounded-xl text-xs border transition-colors ${
-                              sttLang === l.val ? "bg-accent/10 border-accent/30 text-accent" : "border-border text-text-secondary hover:bg-hover"
-                            }`}
-                          >
-                            {l.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                   <Toggle checked={autoSend} onChange={setAutoSend}
                     label={lang === "ko" ? "음성 인식 후 자동 전송" : "Auto-send after recognition"}
                     description={lang === "ko" ? "음성 인식이 완료되면 자동으로 메시지를 전송합니다." : "Automatically send the message after voice recognition completes."}
@@ -410,54 +389,33 @@ export default function SettingsModal({ open, onClose }: Props) {
 
                 <Section title={lang === "ko" ? "음성 출력 (TTS)" : "Text to Speech (TTS)"}>
                   <div className="mb-3">
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">{lang === "ko" ? "엔진" : "Engine"}</label>
-                    <div className="flex gap-2">
-                      {([
-                        { val: "none"   as const, label: lang === "ko" ? "비활성화" : "Disabled" },
-                        { val: "openai" as const, label: "OpenAI TTS" },
-                      ]).map((e) => (
-                        <button key={e.val} onClick={() => setTtsEngine(e.val)}
-                          className={`px-3 py-1.5 rounded-xl text-xs border transition-colors ${
-                            ttsEngine === e.val ? "bg-accent/10 border-accent/30 text-accent" : "border-border text-text-secondary hover:bg-hover"
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">{lang === "ko" ? "음성" : "Voice"}</label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).map((v) => (
+                        <button key={v} onClick={() => setTtsVoice(v)}
+                          className={`px-2 py-1.5 rounded-xl text-xs border transition-colors capitalize ${
+                            ttsVoice === v ? "bg-accent/10 border-accent/30 text-accent" : "border-border text-text-secondary hover:bg-hover"
                           }`}
                         >
-                          {e.label}
+                          {v}
                         </button>
                       ))}
                     </div>
                   </div>
-                  {ttsEngine !== "none" && (
-                    <>
-                      <div className="mb-3">
-                        <label className="block text-xs font-medium text-text-secondary mb-1.5">{lang === "ko" ? "음성" : "Voice"}</label>
-                        <div className="grid grid-cols-3 gap-1.5">
-                          {(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).map((v) => (
-                            <button key={v} onClick={() => setTtsVoice(v)}
-                              className={`px-2 py-1.5 rounded-xl text-xs border transition-colors capitalize ${
-                                ttsVoice === v ? "bg-accent/10 border-accent/30 text-accent" : "border-border text-text-secondary hover:bg-hover"
-                              }`}
-                            >
-                              {v}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between mb-1.5">
-                          <label className="text-xs font-medium text-text-secondary">{lang === "ko" ? "속도" : "Speed"}</label>
-                          <span className="text-xs font-mono text-text-primary">{ttsSpeed.toFixed(2)}x</span>
-                        </div>
-                        <input
-                          type="range" min={0.25} max={4} step={0.25} value={ttsSpeed}
-                          onChange={(e) => setTtsSpeed(Number(e.target.value))}
-                          className="w-full h-1.5 rounded-full cursor-pointer accent-accent"
-                        />
-                        <div className="flex justify-between text-[10px] text-text-muted mt-1">
-                          <span>0.25x</span><span>4.0x</span>
-                        </div>
-                      </div>
-                    </>
-                  )}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-medium text-text-secondary">{lang === "ko" ? "속도" : "Speed"}</label>
+                      <span className="text-xs font-mono text-text-primary">{ttsSpeed.toFixed(2)}x</span>
+                    </div>
+                    <input
+                      type="range" min={0.25} max={4} step={0.25} value={ttsSpeed}
+                      onChange={(e) => setTtsSpeed(Number(e.target.value))}
+                      className="w-full h-1.5 rounded-full cursor-pointer accent-accent"
+                    />
+                    <div className="flex justify-between text-[10px] text-text-muted mt-1">
+                      <span>0.25x</span><span>4.0x</span>
+                    </div>
+                  </div>
                 </Section>
               </div>
             )}
