@@ -19,7 +19,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -103,7 +103,7 @@ async def get_stats(
             func.count(Chat.id).label("cnt"),
         )
         .where(Chat.created_at >= week_ago)
-        .group_by(func.date_trunc("day", Chat.created_at))
+        .group_by(text("1"))
     )).all()
     chat_by_day: dict[str, int] = {str(r.day.date()): r.cnt for r in chat_rows}
 
@@ -114,7 +114,7 @@ async def get_stats(
             func.count(User.id).label("cnt"),
         )
         .where(User.created_at >= week_ago)
-        .group_by(func.date_trunc("day", User.created_at))
+        .group_by(text("1"))
     )).all()
     signup_by_day: dict[str, int] = {str(r.day.date()): r.cnt for r in signup_rows}
 
