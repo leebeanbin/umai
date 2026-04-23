@@ -193,7 +193,7 @@ if query_vector is None:
 |---|---|
 | `MD5(query + model_name)` | 모델 변경 시 자동으로 다른 캐시 키 사용 |
 | dimension 검증 | 동일 모델명이라도 차원 불일치 시 stale 벡터 폐기 |
-| NX lock (3초) | 동시 동일 쿼리 → 단 한 번만 OpenAI 호출, 나머지는 캐시 재사용 |
+| NX lock (3초 TTL) | 동시 동일 쿼리 → 첫 번째만 API 호출·캐시 저장; lock 실패 시 150ms 대기 후 캐시 재확인, 그래도 미스면 fallback으로 직접 임베딩 |
 
 TTL: 24시간 — 반복적인 RAG 검색에서 임베딩 API 호출 40~60% 절감.
 

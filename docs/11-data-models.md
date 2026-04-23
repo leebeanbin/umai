@@ -113,7 +113,7 @@ Umai의 PostgreSQL 스키마는 14개 테이블로 구성됩니다.
 
 **복합 인덱스:** `ix_messages_chat_created (chat_id, created_at)`
 → `WHERE chat_id=X ORDER BY created_at [DESC] LIMIT N` 페이지네이션 쿼리 최적화
-→ 정렬 없는 단순 FK 인덱스 대비 index-only scan 가능
+→ B-tree 인덱스로 정렬 단계 제거 (content 컬럼이 포함되지 않아 index-only scan은 불가하지만 sequential scan과 별도 filesort는 방지)
 
 #### `chat_members`
 
