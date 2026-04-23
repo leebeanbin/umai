@@ -4,12 +4,11 @@
 TDD 커버 항목:
 - GET /auth/me  : 인증된 유저 정보 반환
 - GET /auth/me  : 토큰 없으면 401
-- GET /auth/me  : dev 토큰으로 admin 유저 반환 (DEBUG=True 환경)
+- GET /auth/me  : 'Bearer dev' bypass는 항상 401 (보안 정책)
 - POST /auth/refresh : 유효한 refresh 토큰으로 갱신
 - OAuth 비활성화 시 403 반환
 """
-import pytest
-from app.core.security import create_access_token, create_refresh_token
+from app.core.security import create_refresh_token
 from app.core.redis import session_set
 
 
@@ -36,11 +35,10 @@ async def test_me_invalid_token(client):
     assert res.status_code == 401
 
 
-async def test_dev_token_returns_admin(client, admin_user):
-    """DEBUG=True 환경에서 Bearer dev 토큰은 첫 admin 유저로 통과."""
+async def test_dev_bypass_token_rejected(client, admin_user):
+    """'Bearer dev' bypass is forbidden even in DEBUG mode."""
     res = await client.get("/api/v1/auth/me", headers={"Authorization": "Bearer dev"})
-    assert res.status_code == 200
-    assert res.json()["role"] == "admin"
+    assert res.status_code == 401
 
 
 # ── /auth/refresh ─────────────────────────────────────────────────────────────
