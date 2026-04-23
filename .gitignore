@@ -20,6 +20,7 @@ node_modules/
 frontend/.next/
 frontend/out/
 *.tsbuildinfo
+coverage/
 
 # ── macOS / IDE ───────────────────────────────────────────────────────────────
 .DS_Store
