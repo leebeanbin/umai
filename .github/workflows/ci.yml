@@ -46,13 +46,19 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
-          cache: "pip"
-      - run: cd backend && pip install -r requirements.txt -r requirements-dev.txt
-      - run: cd backend && python -m ruff check app/
-      - run: cd backend && python -m pytest tests/ -x --timeout=60 -q
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+      - run: cd backend && uv sync --frozen --dev
+      - name: Verify requirements.txt is in sync with uv.lock
+        run: |
+          cd backend && uv export --no-dev --no-hashes -o requirements.check.txt
+          diff requirements.txt requirements.check.txt || (echo "requirements.txt is out of sync. Run: uv export --no-dev --no-hashes -o requirements.txt" && exit 1)
+          rm requirements.check.txt
+      - run: cd backend && uv run ruff check app/
+      - run: cd backend && uv run pytest tests/ -x --timeout=60 -q
         env:
           DATABASE_URL: postgresql+asyncpg://umai:test@localhost:5432/umai_test
           REDIS_URL: redis://localhost:6379/0
