@@ -489,6 +489,10 @@ return result
 ```bash
 # ── Backend ──────────────────────────────────────────────────────────
 cd backend
+uv sync                                            # install / sync dependencies
+
+# Lint (required before every commit)
+uv run ruff check app/
 
 # Syntax check (fast, no imports needed)
 python -m ast app/tasks/ai.py
@@ -501,13 +505,13 @@ alembic check
 alembic upgrade head
 
 # Run all tests (requires PostgreSQL at localhost:5434)
-pytest tests/ -v
+uv run pytest tests/ -v
 
 # Run a single module
-pytest tests/test_auth.py -v
+uv run pytest tests/test_auth.py -v
 
 # With coverage report
-pytest tests/ --cov=app --cov-report=term-missing
+uv run pytest tests/ --cov=app --cov-report=term-missing
 
 # ── Frontend ──────────────────────────────────────────────────────────
 cd frontend
@@ -539,7 +543,7 @@ npm run build                                      # production build
 | `test_folders.py` | Folder CRUD, nested organization |
 
 ```bash
-cd backend && pytest tests/ -v --tb=short
+cd backend && uv run pytest tests/ -v --tb=short
 ```
 
 ---

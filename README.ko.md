@@ -472,6 +472,10 @@ return result
 ```bash
 # ── 백엔드 ────────────────────────────────────────────────────────────
 cd backend
+uv sync                                            # 의존성 설치 / 동기화
+
+# 린트 (커밋 전 필수)
+uv run ruff check app/
 
 # 문법 검사 (빠름, import 불필요)
 python -m ast app/tasks/ai.py
@@ -484,13 +488,13 @@ alembic check
 alembic upgrade head
 
 # 전체 테스트 실행 (localhost:5434에 PostgreSQL 필요)
-pytest tests/ -v
+uv run pytest tests/ -v
 
 # 단일 모듈 실행
-pytest tests/test_auth.py -v
+uv run pytest tests/test_auth.py -v
 
 # 커버리지 리포트
-pytest tests/ --cov=app --cov-report=term-missing
+uv run pytest tests/ --cov=app --cov-report=term-missing
 
 # ── 프론트엔드 ─────────────────────────────────────────────────────────
 cd frontend
@@ -522,7 +526,7 @@ npm run build                                      # 프로덕션 빌드
 | `test_folders.py` | 폴더 CRUD, 중첩 정리 |
 
 ```bash
-cd backend && pytest tests/ -v --tb=short
+cd backend && uv run pytest tests/ -v --tb=short
 ```
 
 ---
