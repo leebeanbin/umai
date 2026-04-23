@@ -105,13 +105,14 @@ async def test_connections_ollama_url(client, admin_headers):
 async def test_connections_openai_key(client, admin_headers):
     await patch_section(client, admin_headers, "connections", {"openai_key": "sk-test-key"})
     data = await get_settings(client, admin_headers)
-    assert data["connections"]["openai_key"] == "sk-test-key"
+    # Admin GET masks API keys to "**set**" for security
+    assert data["connections"]["openai_key"] == "**set**"
 
 
 async def test_connections_anthropic_key(client, admin_headers):
     await patch_section(client, admin_headers, "connections", {"anthropic_key": "sk-ant-test"})
     data = await get_settings(client, admin_headers)
-    assert data["connections"]["anthropic_key"] == "sk-ant-test"
+    assert data["connections"]["anthropic_key"] == "**set**"
 
 
 async def test_connections_custom_provider(client, admin_headers):

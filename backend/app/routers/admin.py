@@ -518,16 +518,31 @@ async def get_settings(
 # ── PATCH /admin/settings (admin only) ──────────────────────────────────────────
 
 class GeneralSettings(BaseModel):
-    allow_signup:    bool | None = None
-    default_locale:  str  | None = Field(None, max_length=10)
-    instance_name:   str  | None = Field(None, max_length=100)
+    allow_signup:           bool | None = None
+    default_locale:         str  | None = Field(None, max_length=10)
+    instance_name:          str  | None = Field(None, max_length=100)
+    instance_url:           str  | None = Field(None, max_length=512)
+    default_role:           str  | None = Field(None, pattern="^(user|admin)$")
+    show_admin_on_pending:  bool | None = None
+    admin_email:            str  | None = Field(None, max_length=256)
+    max_users:              int  | None = Field(None, ge=0)
+    jwt_expiry:             str  | None = Field(None, max_length=20)
     model_config = ConfigDict(extra="forbid")
 
 
 class ConnectionsSettings(BaseModel):
-    ollama_url:   str | None = Field(None, max_length=512)
-    comfyui_url:  str | None = Field(None, max_length=512)
-    a1111_url:    str | None = Field(None, max_length=512)
+    ollama_url:      str | None = Field(None, max_length=512)
+    openai_key:      str | None = Field(None, max_length=256)
+    openai_base_url: str | None = Field(None, max_length=512)
+    anthropic_key:   str | None = Field(None, max_length=256)
+    google_key:      str | None = Field(None, max_length=256)
+    xai_key:         str | None = Field(None, max_length=256)
+    tavily_key:      str | None = Field(None, max_length=256)
+    custom_name:     str | None = Field(None, max_length=100)
+    custom_base_url: str | None = Field(None, max_length=512)
+    custom_key:      str | None = Field(None, max_length=256)
+    comfyui_url:     str | None = Field(None, max_length=512)
+    a1111_url:       str | None = Field(None, max_length=512)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -541,15 +556,24 @@ class ModelsSettings(BaseModel):
 
 
 class OauthSettings(BaseModel):
-    google_enabled: bool | None = None
-    github_enabled: bool | None = None
+    google_enabled:        bool | None = None
+    google_client_id:      str  | None = Field(None, max_length=256)
+    google_client_secret:  str  | None = Field(None, max_length=256)
+    github_enabled:        bool | None = None
+    github_client_id:      str  | None = Field(None, max_length=256)
+    github_client_secret:  str  | None = Field(None, max_length=256)
     model_config = ConfigDict(extra="forbid")
 
 
 class FeaturesSettings(BaseModel):
-    enable_web_search: bool | None = None
-    enable_image_gen:  bool | None = None
-    enable_rag:        bool | None = None
+    web_search:        bool | None = None
+    file_upload:       bool | None = None
+    temp_chats:        bool | None = None
+    memories:          bool | None = None
+    user_api_keys:     bool | None = None
+    user_webhooks:     bool | None = None
+    community_sharing: bool | None = None
+    message_rating:    bool | None = None
     model_config = ConfigDict(extra="forbid")
 
 
@@ -576,7 +600,7 @@ class AudioSettings(BaseModel):
 
 
 class ImagesSettings(BaseModel):
-    engine:      str | None = Field(None, pattern="^(none|openai|comfyui|a1111)$")
+    engine:      str | None = Field(None, pattern="^(disabled|none|openai|comfyui|a1111|automatic1111)$")
     dalle_key:   str | None = Field(None, max_length=256)
     dalle_model: str | None = Field(None, max_length=100)
     comfyui_url: str | None = Field(None, max_length=512)
