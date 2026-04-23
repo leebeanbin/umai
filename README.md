@@ -720,7 +720,7 @@ cd frontend && npm install && npm run dev
 
 ```bash
 cd backend
-pip install -r requirements.txt
+uv sync
 celery -A app.core.celery_app worker \
   -Q ai,image,knowledge,default \
   -c 2 --loglevel=info
