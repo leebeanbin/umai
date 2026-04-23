@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.constants import CHAT_MSG_DEFAULT_LIMIT, CHAT_MSG_MAX_LIMIT
 from app.core.errors import ErrCode
@@ -139,7 +140,7 @@ class ChatService:
             .order_by(Message.created_at.asc())
             .limit(capped)
         )
-        chat.messages = list(msgs_result.scalars().all())
+        set_committed_value(chat, "messages", list(msgs_result.scalars().all()))
         return chat
 
     async def get_chat_with_messages_or_404(
