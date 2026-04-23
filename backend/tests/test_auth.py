@@ -44,24 +44,21 @@ async def test_dev_bypass_token_rejected(client, admin_user):
 # ── /auth/refresh ─────────────────────────────────────────────────────────────
 
 async def test_refresh_issues_new_tokens(client, admin_user):
-    import asyncio
     refresh_token = create_refresh_token(str(admin_user.id))
     await session_set(refresh_token, str(admin_user.id))
 
-    await asyncio.sleep(1)  # iat가 달라져야 새 토큰이 다름
-
+    # refresh token은 HttpOnly 쿠키로 전달 (request body 아님)
     res = await client.post(
         "/api/v1/auth/refresh",
-        json={"refresh_token": refresh_token},
+        cookies={"umai_refresh": refresh_token},
     )
     assert res.status_code == 200
     body = res.json()
     assert "access_token" in body
-    assert "refresh_token" in body
     # 기존 refresh 토큰은 폐기되어야 함
     res2 = await client.post(
         "/api/v1/auth/refresh",
-        json={"refresh_token": refresh_token},
+        cookies={"umai_refresh": refresh_token},
     )
     assert res2.status_code == 401
 
@@ -69,7 +66,7 @@ async def test_refresh_issues_new_tokens(client, admin_user):
 async def test_refresh_invalid_token(client):
     res = await client.post(
         "/api/v1/auth/refresh",
-        json={"refresh_token": "invalid-token"},
+        cookies={"umai_refresh": "invalid-token"},
     )
     assert res.status_code == 401
 
