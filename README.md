@@ -694,7 +694,7 @@ umai/
 
 ```bash
 # 1. Clone
-git clone https://github.com/<your-org>/umai.git && cd umai
+git clone https://github.com/leebeanbin/umai.git && cd umai
 
 # 2. Environment
 cp backend/.env.example backend/.env
